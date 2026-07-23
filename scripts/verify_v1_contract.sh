@@ -43,6 +43,7 @@ FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
+DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -55,6 +56,7 @@ require_file "$FINAL_ROADMAP"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
+require_file "$DEVELOPMENT_SEQUENCE"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -89,9 +91,22 @@ require_text "$FINAL_ROADMAP" 'Slot 1 is intentionally inert until F2'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f2-two-page-lab-harness-plan.md'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f3-page-local-patch-records-plan.md'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4-hook-routing-by-page-record-plan.md'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-development-sequence.md'
 require_text "$FINAL_ROADMAP" 'Plan checkpoints are docs/contract only.'
+require_text "$FINAL_ROADMAP" 'No hook-family migration starts unless'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_device.sh'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_hook_routing_device.sh'
+require_text "$DEVELOPMENT_SEQUENCE" 'wxshadow Planned Development Sequence'
+require_text "$DEVELOPMENT_SEQUENCE" 'This document turns the roadmap into a fixed development queue.'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.1: Abort Hook Routing'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.2: Fault Hook Routing'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.3: GUP Hook Routing'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.4: Fork Hook Routing'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.5: Syscall And Prctl Routing'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6: Exit Hook Routing'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.7: F4 Integration Gate'
+require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_hook_routing_device.sh'
+require_text "$DEVELOPMENT_SEQUENCE" 'Do not pull these behaviors into F4 source checkpoints.'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
 require_text "$F2_PLAN" 'scripts/test_raw_page_table_device.sh'
