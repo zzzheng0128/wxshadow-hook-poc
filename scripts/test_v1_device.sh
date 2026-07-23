@@ -145,6 +145,7 @@ run_phase raw_fork_hook scripts/test_raw_fork_hook_device.sh
 run_phase raw_fault_hook scripts/test_raw_fault_hook_device.sh
 run_phase raw_fault_data_probe scripts/test_raw_fault_data_probe_device.sh
 run_phase raw_abort_probe scripts/test_raw_abort_probe_device.sh
+run_phase raw_abort_read_cycle scripts/test_raw_abort_read_cycle_device.sh
 run_phase raw_abort_write_probe scripts/test_raw_abort_write_probe_device.sh
 run_phase raw_abort_write_release scripts/test_raw_abort_write_release_device.sh
 

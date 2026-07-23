@@ -438,6 +438,57 @@ out_unlock_mmap:
     return result;
 }
 
+int r0lab_raw_begin_fault_read_cycle(struct r0lab_raw_page *page)
+{
+    struct mm_struct *mm;
+    struct vm_area_struct *vma;
+    pte_t *ptep;
+    spinlock_t *ptl;
+    pte_t current_pte;
+    pte_t source_uxn;
+    unsigned long current_value;
+    int result;
+
+    if (!page || !page->mm || !page->address ||
+        page->state != R0LAB_RAW_SHADOW_RX || !page->original_pte ||
+        !page->source_uxn_pte || !page->shadow_rx_pte || !page->shadow_pfn ||
+        page->gup_hide_active || page->fork_hide_active ||
+        page->read_cycle_active)
+        return R0LAB_RAW_EINVAL;
+
+    mm = (struct mm_struct *)page->mm;
+    mmap_read_lock(mm);
+    result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
+    if (result)
+        goto out_unlock_mmap;
+
+    current_pte = READ_ONCE(*ptep);
+    current_value = r0lab_raw_pte_value(current_pte);
+    if (!current_value || current_value == page->source_uxn_pte ||
+        (current_value != page->shadow_rx_pte &&
+         pte_pfn(current_pte) != page->shadow_pfn)) {
+        result = R0LAB_RAW_EAGAIN;
+        goto out_unlock_pte;
+    }
+
+    source_uxn = r0lab_raw_pte_from_value(page->source_uxn_pte);
+    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+                                      source_uxn);
+    if (!result) {
+        page->read_cycle_saved_pte = page->shadow_rx_pte;
+        page->read_cycle_active = 1;
+        page->active_pte = page->source_uxn_pte;
+        page->state = R0LAB_RAW_ORIGINAL_READ;
+        ++page->read_cycle_begin_events;
+    }
+
+out_unlock_pte:
+    spin_unlock(ptl);
+out_unlock_mmap:
+    mmap_read_unlock(mm);
+    return result;
+}
+
 int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page)
 {
     struct mm_struct *mm;
