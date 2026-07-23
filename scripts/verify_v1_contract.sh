@@ -146,7 +146,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-fork-hook-routing-20260
 require_text "$DEVELOPMENT_SEQUENCE" 'The next source checkpoint is'
 require_text "$DEVELOPMENT_SEQUENCE" 'D0 plan gate is complete.'
 require_text "$DEVELOPMENT_SEQUENCE" 'D1-D3 syscall/getpid read-cycle routing is implemented and gate-passed'
-require_text "$DEVELOPMENT_SEQUENCE" 'D4-D6 Lab-private prctl dispatch/patch routing is plan-locked'
+require_text "$DEVELOPMENT_SEQUENCE" 'D4-D6 Lab-private prctl dispatch/patch routing is implemented and'
+require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-prctl-hook-routing-20260724-035944.log'
 require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-syscall-hook-routing-20260724-033233.log'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
@@ -265,7 +266,8 @@ require_text "$F44_FORK_PLAN" 'raw slot fork hook status <token> 0'
 require_text "$F44_FORK_PLAN" 'Do not change `dup_mmap` callbacks for this case.'
 require_text "$F44_FORK_PLAN" 'Partial pause mismatch'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'wxshadow F4.5 Syscall And Prctl Routing Plan'
-require_text "$F45_SYSCALL_PRCTL_PLAN" 'Status: D1-D3 syscall routing is implemented and gate-passed.'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'Status: D1-D3 syscall routing and D4-D6 prctl routing are implemented'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'build/evidence/raw-prctl-hook-routing-20260724-035944.log'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D0 plan lock'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D1 syscall source scaffold'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D2 syscall slot-0 regression'
@@ -288,7 +290,7 @@ require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_prctl_hook_routing_devi
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'Stale generation accepted'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'build/evidence/raw-syscall-hook-routing-20260724-033233.log'
 require_text "$F45_PRCTL_CHECKPOINT" 'wxshadow F4.5 D4-D6 Prctl Routing Source Checkpoint'
-require_text "$F45_PRCTL_CHECKPOINT" 'Status: plan locked. D4 KPM source is in progress'
+require_text "$F45_PRCTL_CHECKPOINT" 'Status: D4-D6 implemented and gate-passed on Pixel 7'
 require_text "$F45_PRCTL_CHECKPOINT" 'D4-D7 Execution Contract'
 require_text "$F45_PRCTL_CHECKPOINT" 'No development step is allowed to discover a new scope hole'
 require_text "$F45_PRCTL_CHECKPOINT" 'r0lab_raw_prctl_before()'
@@ -298,6 +300,10 @@ require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook select <token> <slot> 
 require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook status <token> <slot>'
 require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook clear <token> <slot> <generation>'
 require_text "$F45_PRCTL_CHECKPOINT" 'event-ring truncation fix'
+require_text "$F45_PRCTL_CHECKPOINT" 'build/evidence/raw-prctl-hook-routing-20260724-035944.log'
+require_text "$F45_PRCTL_CHECKPOINT" 'build/evidence/raw-prctl-read-cycle-20260724-040015.log'
+require_text "$F45_PRCTL_CHECKPOINT" 'build/evidence/raw-prctl-patch-records-20260724-040036.log'
+require_text "$F45_PRCTL_CHECKPOINT" 'build/evidence/raw-syscall-hook-routing-20260724-040056.log'
 require_text "$F45_PRCTL_CHECKPOINT" 'R0LAB_PRCTL_OP_READ_CYCLE` has no address argument'
 require_text "$F45_PRCTL_CHECKPOINT" 'route by `current_mm + address`'
 require_text "$F45_PRCTL_CHECKPOINT" 'route by `current_mm + request.address`'
@@ -412,6 +418,8 @@ scripts/test_raw_read_cycle_device.sh
 scripts/test_raw_syscall_read_cycle_device.sh
 scripts/test_raw_syscall_hook_routing_device.sh
 scripts/test_raw_prctl_read_cycle_device.sh
+scripts/test_raw_prctl_patch_records_device.sh
+scripts/test_raw_prctl_hook_routing_device.sh
 scripts/test_raw_gup_hide_device.sh
 scripts/test_raw_gup_hook_device.sh
 scripts/test_raw_gup_hook_routing_device.sh
@@ -700,6 +708,9 @@ require_text lab-app/src/main/cpp/labprobe.c 'raw mode=syscall-read-cycle failur
 require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_syscall_read_cycle_routing_run'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=syscall-read-cycle-routing failures=%d trigger=syscall_getpid read_cycle=uxn_original_exec_resume route=selected_slot page_record_routed=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw syscall read cycle routing run ", 35)'
+require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_prctl_hook_routing_run'
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=prctl-routing failures=%d trigger=prctl_magic route=selected_slot,address page_record_routed=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw prctl hook routing run ", 27)'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=gup-hook failures=%d reader=external'
 require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_gup_hook_routing_run'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=gup-hook-routing failures=%d reader=external target_mm_scoped=1 page_record_routed=%d status_source=cross_inspect_clear'
@@ -816,6 +827,17 @@ require_text scripts/test_raw_prctl_patch_records_device.sh 'capacity_boundary=p
 require_text scripts/test_raw_prctl_patch_records_device.sh 'active_progress=1,2,1,1,0,1,1024'
 require_text scripts/test_raw_prctl_patch_records_device.sh 'dirty_progress=8,12,8,4,0,4,1027'
 require_text scripts/test_raw_prctl_patch_records_device.sh 'op=45 result=-28'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'raw prctl hook routing run'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'raw mode=prctl-routing failures=0'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'route=selected_slot,address'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'page_record_routed=1'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'stale_generation_rc=-11'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'read_status=1/1'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'patch_isolation=1'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'release_isolation=1'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'capacity_fill_records=1023'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'capacity_boundary=pass'
+require_text scripts/test_raw_prctl_hook_routing_device.sh 'raw_prctl_hook_routing=pass'
 require_text lab-app/src/main/cpp/labprobe.c '#include <stdatomic.h>'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_prctl_passthrough_stress_thread \

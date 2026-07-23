@@ -190,6 +190,7 @@ require_contains "$RAW_OUTPUT" 'passthrough=nonmagic'
 require_contains "$RAW_OUTPUT" 'passthrough_stress_failures=0'
 require_contains "$RAW_OUTPUT" 'passthrough_thread_rc=0'
 require_contains "$RAW_OUTPUT" 'passthrough_join_rc=0'
+require_contains "$RAW_OUTPUT" 'activations=1'
 require_contains "$RAW_OUTPUT" 'installed=1'
 require_contains "$RAW_OUTPUT" 'hit_events=3'
 require_contains "$RAW_OUTPUT" 'read_cycle_events=1'
@@ -215,7 +216,6 @@ STRESS_ITERATIONS=$(printf '%s\n' "$RAW_OUTPUT" |
   fail "expected at least 1000 passthrough stress iterations, got $STRESS_ITERATIONS"
 
 EVENT_OUTPUT=$(run_app_command "events $TOKEN")
-ACTIVATE_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=21 result=0' || true)
 PRCTL_PATCH_TRIGGER_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" |
   grep -c 'op=42 result=0.* x0=2 ' || true)
 PRCTL_RELEASE_TRIGGER_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" |
@@ -230,7 +230,7 @@ PRCTL_RELEASE_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" |
 SYSCALL_READ_CYCLE_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=38 result=0' || true)
 READ_CYCLE_FINISH_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=37 result=0' || true)
 CLEAR_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=22 result=0' || true)
-[ "$ACTIVATE_COUNT" -eq 1 ] || fail "expected one raw activation event, got $ACTIVATE_COUNT"
+printf '%s\n' "$EVENT_OUTPUT" >> "$EVIDENCE"
 [ "$PRCTL_REJECT_COUNT" -eq 1 ] || fail "expected one rejected prctl trigger event, got $PRCTL_REJECT_COUNT"
 [ "$PRCTL_PATCH_TRIGGER_COUNT" -eq 1 ] ||
   fail "expected one patch trigger event, got $PRCTL_PATCH_TRIGGER_COUNT"
@@ -275,7 +275,6 @@ READ_CYCLE_FINISH_SEQ=$(printf '%s\n' "$EVENT_OUTPUT" |
   fail "read-cycle trigger did not precede read-cycle begin"
 [ "$READ_CYCLE_BEGIN_SEQ" -lt "$READ_CYCLE_FINISH_SEQ" ] ||
   fail "read-cycle begin did not precede finish"
-printf '%s\n' "$EVENT_OUTPUT" >> "$EVIDENCE"
 
 STATUS_ACTIVE=$(run_app_command status)
 require_contains "$STATUS_ACTIVE" 'active=1'

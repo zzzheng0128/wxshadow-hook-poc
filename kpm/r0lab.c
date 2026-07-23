@@ -684,6 +684,7 @@ static uint64_t r0lab_record_values(enum r0lab_event_op op, int result,
                                     uint64_t pc, uint64_t x0, uint64_t x30);
 static int r0lab_raw_wait_for_callbacks(void);
 static unsigned int r0lab_raw_syscall_hook_users_locked(void);
+static unsigned int r0lab_raw_prctl_hook_users_locked(void);
 static void r0lab_raw_unhook_except_exit(void);
 static void r0lab_raw_unhook(void);
 static void r0lab_raw_reset(struct mm_struct *mm);
@@ -4858,6 +4859,9 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
 {
     struct r0lab_patch_record old_record = {0};
     struct r0lab_prctl_patch_request request = {0};
+    struct r0lab_raw_hook_page_token route_token = {0};
+    struct r0lab_raw_shadow_page *event_page = NULL;
+    struct r0lab_raw_shadow_page *page = NULL;
     struct pt_regs *syscall_regs;
     struct mm_struct *current_mm = NULL;
     void *patch_kaddr = NULL;
@@ -4886,6 +4890,7 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
     unsigned int rebuild_length = 0;
     unsigned int record_index = 0;
     bool admitted = false;
+    bool session_valid = false;
     bool installed;
     bool should_begin_read_cycle = false;
     bool should_patch = false;
@@ -4897,7 +4902,7 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
     (void)udata;
     flags = r0lab_lock();
     ++g_raw_inflight;
-    installed = g_raw_page.prctl_hook_installed;
+    installed = r0lab_raw_prctl_hook_users_locked() != 0;
     r0lab_unlock(flags);
 
     syscall_regs = (struct pt_regs *)(unsigned long)args->arg0;
@@ -4908,171 +4913,200 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
     token = syscall_regs->regs[1];
     operation = syscall_regs->regs[2];
     current_mm = g_get_task_mm ? g_get_task_mm(current) : NULL;
+    session_valid = current_uid() == g_session.lab_uid && g_session.active &&
+                    token == g_session.token &&
+                    g_session.owner_tgid == r0lab_current_tgid() &&
+                    current_mm;
 
-    flags = r0lab_lock();
-    if (!g_raw_page.prctl_hook_installed) {
-        r0lab_unlock(flags);
-        goto out;
-    }
-    page_address = g_raw_page.raw.address;
-    address = page_address;
-    state = g_raw_page.raw.state;
-    if (current_uid() != g_session.lab_uid || !g_session.active ||
-        token != g_session.token ||
-        g_session.owner_tgid != r0lab_current_tgid() ||
-        !current_mm || current_mm != g_raw_page.raw.mm) {
-        result = R0LAB_EPERM;
-    } else if (!g_raw_page.armed || g_raw_page.clearing ||
-               g_raw_page.transitioning ||
-               g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
-               g_raw_page.raw.gup_hide_active ||
-               g_raw_page.raw.fork_hide_active ||
-               g_raw_page.raw.read_cycle_active) {
-        result = R0LAB_EAGAIN;
-    } else if (operation == R0LAB_PRCTL_OP_READ_CYCLE) {
+    if (operation == R0LAB_PRCTL_OP_READ_CYCLE) {
         if (syscall_regs->regs[3] || syscall_regs->regs[4]) {
             result = R0LAB_EINVAL;
-            goto unlock_dispatch;
+        } else {
+            should_begin_read_cycle = true;
         }
-        g_raw_page.transitioning = true;
-        generation = g_raw_page.generation;
-        admitted = true;
-        should_begin_read_cycle = true;
     } else if (operation == R0LAB_PRCTL_OP_PATCH_WORD) {
         address = syscall_regs->regs[3];
-        if (!g_sync_icache_aliases || !g_vmalloc || !g_vfree ||
-            !g_raw_page.raw.shadow_kaddr) {
+        if (!g_sync_icache_aliases || !g_vmalloc || !g_vfree) {
             result = R0LAB_ENOSYS;
         } else if (syscall_regs->regs[4] >> 32 ||
-                   (address & (sizeof(uint32_t) - 1UL)) ||
-                   address < page_address ||
-                   address > page_address + R0LAB_RAW_PAGE_SIZE -
-                             sizeof(uint32_t)) {
+                   (address & (sizeof(uint32_t) - 1UL))) {
             result = R0LAB_EINVAL;
         } else {
             patch_after = (uint32_t)syscall_regs->regs[4];
-            range_offset = (unsigned int)(address - page_address);
             range_length = sizeof(uint32_t);
-            g_raw_page.transitioning = true;
-            generation = g_raw_page.generation;
-            admitted = true;
             should_patch = true;
         }
     } else if (operation == R0LAB_PRCTL_OP_RELEASE_PATCH) {
         address = syscall_regs->regs[3];
         if (syscall_regs->regs[4] ||
-            (address & (sizeof(uint32_t) - 1UL)) ||
-            address < page_address ||
-                   address > page_address + R0LAB_RAW_PAGE_SIZE -
-                      sizeof(uint32_t)) {
+            (address & (sizeof(uint32_t) - 1UL))) {
             result = R0LAB_EINVAL;
-        } else if (!g_sync_icache_aliases ||
-                   !g_raw_page.raw.shadow_kaddr) {
+        } else if (!g_sync_icache_aliases) {
             result = R0LAB_ENOSYS;
         } else {
-            range_offset = (unsigned int)(address - page_address);
-            g_raw_page.transitioning = true;
-            generation = g_raw_page.generation;
-            admitted = true;
+            range_length = sizeof(uint32_t);
             should_release = true;
         }
     } else if (operation == R0LAB_PRCTL_OP_PATCH_RANGE) {
         user_request = syscall_regs->regs[3];
         user_request_size = syscall_regs->regs[4];
+        range_operation = true;
         if (!g_copy_from_user_nofault || !g_sync_icache_aliases ||
-            !g_vmalloc || !g_vfree || !g_raw_page.raw.shadow_kaddr) {
+            !g_vmalloc || !g_vfree) {
             result = R0LAB_ENOSYS;
         } else if (!user_request ||
                    user_request_size <= sizeof(request) ||
                    user_request_size >
                        sizeof(request) + R0LAB_RAW_PAGE_SIZE) {
             result = R0LAB_EINVAL;
+        } else if (g_copy_from_user_nofault(
+                       &request, (const void __user *)user_request,
+                       sizeof(request))) {
+            result = R0LAB_EFAULT;
+        } else if (!request.length ||
+                   request.length > R0LAB_RAW_PAGE_SIZE ||
+                   request.flags ||
+                   user_request_size != sizeof(request) + request.length) {
+            result = R0LAB_EINVAL;
         } else {
-            g_raw_page.transitioning = true;
-            generation = g_raw_page.generation;
-            admitted = true;
+            address = (unsigned long)request.address;
+            range_length = request.length;
             should_patch = true;
-            range_operation = true;
         }
     } else if (operation == R0LAB_PRCTL_OP_RELEASE_RANGE) {
         address = syscall_regs->regs[3];
-        if (syscall_regs->regs[4] || address < page_address ||
-            address >= page_address + R0LAB_RAW_PAGE_SIZE) {
+        range_operation = true;
+        if (syscall_regs->regs[4]) {
             result = R0LAB_EINVAL;
-        } else if (!g_sync_icache_aliases ||
-                   !g_raw_page.raw.shadow_kaddr) {
+        } else if (!g_sync_icache_aliases) {
             result = R0LAB_ENOSYS;
         } else {
-            range_offset = (unsigned int)(address - page_address);
-            g_raw_page.transitioning = true;
-            generation = g_raw_page.generation;
-            admitted = true;
+            range_length = 1U;
             should_release = true;
-            range_operation = true;
         }
     } else {
         result = R0LAB_EINVAL;
     }
 
-unlock_dispatch:
+    flags = r0lab_lock();
+    if (should_begin_read_cycle) {
+        event_page = r0lab_raw_selected_page_locked();
+        if (event_page) {
+            page_address = event_page->raw.address;
+            address = page_address;
+            state = event_page->raw.state;
+        }
+    } else if ((should_patch || should_release || range_operation) &&
+               current_mm && address) {
+        event_page = r0lab_raw_page_find_by_fault_locked(current_mm, address,
+                                                         0);
+        if (event_page) {
+            page_address = event_page->raw.address;
+            state = event_page->raw.state;
+        }
+    }
+    if (!session_valid) {
+        result = R0LAB_EPERM;
+    } else if (result == R0LAB_EPERM) {
+        if (should_begin_read_cycle) {
+            if (!event_page || !event_page->prctl_hook_installed) {
+                result = R0LAB_EAGAIN;
+            } else {
+                result = r0lab_raw_hook_page_token_acquire_locked(
+                    R0LAB_RAW_HOOK_PRCTL, current_mm, event_page->raw.address,
+                    event_page->generation,
+                    R0LAB_RAW_HOOK_ROUTE_MUTATING |
+                    R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX, &route_token);
+            }
+        } else if (should_patch || should_release) {
+            if (!event_page || !event_page->prctl_hook_installed) {
+                result = R0LAB_EINVAL;
+            } else if (operation == R0LAB_PRCTL_OP_PATCH_WORD &&
+                       (address < page_address ||
+                        address > page_address + R0LAB_RAW_PAGE_SIZE -
+                                  sizeof(uint32_t))) {
+                result = R0LAB_EINVAL;
+            } else if (operation == R0LAB_PRCTL_OP_RELEASE_PATCH &&
+                       (address < page_address ||
+                        address > page_address + R0LAB_RAW_PAGE_SIZE -
+                                  sizeof(uint32_t))) {
+                result = R0LAB_EINVAL;
+            } else if (operation == R0LAB_PRCTL_OP_PATCH_RANGE &&
+                       (address < page_address ||
+                        address - page_address >
+                            R0LAB_RAW_PAGE_SIZE - range_length)) {
+                result = R0LAB_EINVAL;
+            } else if (operation == R0LAB_PRCTL_OP_RELEASE_RANGE &&
+                       (address < page_address ||
+                        address >= page_address + R0LAB_RAW_PAGE_SIZE)) {
+                result = R0LAB_EINVAL;
+            } else {
+                result = r0lab_raw_hook_page_token_acquire_locked(
+                    R0LAB_RAW_HOOK_PRCTL, current_mm, address, 0,
+                    R0LAB_RAW_HOOK_ROUTE_MUTATING |
+                    R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX, &route_token);
+            }
+        }
+        if (!result && route_token.page &&
+            !route_token.page->prctl_hook_installed) {
+            (void)r0lab_raw_hook_page_token_release_locked(&route_token,
+                                                           true);
+            result = R0LAB_EAGAIN;
+        }
+        if (!result && route_token.page) {
+            page = route_token.page;
+            page_address = page->raw.address;
+            state = page->raw.state;
+            generation = route_token.generation;
+            if (should_begin_read_cycle)
+                address = page_address;
+            else
+                range_offset = (unsigned int)(address - page_address);
+            admitted = true;
+        }
+    }
     r0lab_unlock(flags);
 
     if (admitted)
         result = 0;
-    if (should_patch && !range_operation) {
+    if (should_patch && !range_operation && !result) {
         patch_data = g_vmalloc(range_length);
-        if (!patch_data)
+        if (!patch_data) {
             result = R0LAB_ENOMEM;
-        else
-            memcpy(patch_data, &patch_after, sizeof(patch_after));
-    } else if (should_patch && range_operation) {
-        if (g_copy_from_user_nofault(
-                &request, (const void __user *)user_request,
-                sizeof(request))) {
-            result = R0LAB_EFAULT;
-        } else if (!request.length ||
-                   request.length > R0LAB_RAW_PAGE_SIZE ||
-                   request.flags ||
-                   user_request_size != sizeof(request) + request.length ||
-                   request.address < page_address ||
-                   request.address - page_address >
-                       R0LAB_RAW_PAGE_SIZE - request.length) {
-            result = R0LAB_EINVAL;
         } else {
-            address = (unsigned long)request.address;
-            range_offset = (unsigned int)(address - page_address);
-            range_length = request.length;
-            patch_data = g_vmalloc(range_length);
-            if (!patch_data) {
-                result = R0LAB_ENOMEM;
-            } else if (g_copy_from_user_nofault(
-                           patch_data,
-                           (const char __user *)user_request +
-                               sizeof(request),
-                           range_length)) {
-                result = R0LAB_EFAULT;
-            } else if (range_length >= sizeof(patch_after)) {
-                memcpy(&patch_after, patch_data, sizeof(patch_after));
-            }
+            memcpy(patch_data, &patch_after, sizeof(patch_after));
+        }
+    } else if (should_patch && range_operation && !result) {
+        range_offset = (unsigned int)(address - page_address);
+        patch_data = g_vmalloc(range_length);
+        if (!patch_data) {
+            result = R0LAB_ENOMEM;
+        } else if (g_copy_from_user_nofault(
+                       patch_data,
+                       (const char __user *)user_request + sizeof(request),
+                       range_length)) {
+            result = R0LAB_EFAULT;
+        } else if (range_length >= sizeof(patch_after)) {
+            memcpy(&patch_after, patch_data, sizeof(patch_after));
         }
     }
 
     if (should_begin_read_cycle && !result)
-        result = r0lab_raw_begin_read_cycle(&g_raw_page.raw);
+        result = r0lab_raw_begin_read_cycle(&page->raw);
     else if ((should_patch || should_release) && !result) {
         flags = r0lab_lock();
-        if (g_raw_page.generation != generation ||
-            !g_raw_page.transitioning || !g_raw_page.raw.shadow_kaddr ||
-            g_raw_page.raw.address != page_address ||
-            g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX) {
+        if (!page || page->generation != generation ||
+            !page->transitioning || !page->raw.shadow_kaddr ||
+            page->raw.address != page_address ||
+            page->raw.state != R0LAB_RAW_SHADOW_RX) {
             result = R0LAB_EAGAIN;
         } else {
-            patch_kaddr = (char *)g_raw_page.raw.shadow_kaddr + range_offset;
+            patch_kaddr = (char *)page->raw.shadow_kaddr + range_offset;
             if (R0LAB_RAW_PAGE_SIZE - range_offset >= sizeof(patch_before))
                 memcpy(&patch_before, patch_kaddr, sizeof(patch_before));
             if (should_patch) {
                 result = r0lab_raw_upsert_patch_locked(
-                    &g_raw_page, range_offset, range_length, patch_data,
+                    page, range_offset, range_length, patch_data,
                     &record_index, &old_record, &rebuild_length);
                 if (!result) {
                     new_record_data = patch_data;
@@ -5081,7 +5115,7 @@ unlock_dispatch:
                 }
             } else {
                 result = r0lab_raw_release_patch_locked(
-                    &g_raw_page, range_offset, &record_index, &old_record);
+                    page, range_offset, &record_index, &old_record);
                 if (!result) {
                     range_length = old_record.length;
                     rebuild_length = old_record.length;
@@ -5092,13 +5126,13 @@ unlock_dispatch:
         r0lab_unlock(flags);
 
         if (record_changed)
-            result = r0lab_raw_rebuild_patch_range(
-                &g_raw_page, range_offset, rebuild_length);
+            result = r0lab_raw_rebuild_patch_range(page, range_offset,
+                                                   rebuild_length);
         if (record_changed && result) {
             flags = r0lab_lock();
-            if (g_raw_page.generation == generation) {
-                g_raw_page.patch_records[record_index] = old_record;
-                r0lab_raw_sync_patch_metadata_locked(&g_raw_page);
+            if (page && page->generation == generation) {
+                page->patch_records[record_index] = old_record;
+                r0lab_raw_sync_patch_metadata_locked(page);
             }
             r0lab_unlock(flags);
             if (should_patch) {
@@ -5107,49 +5141,58 @@ unlock_dispatch:
             }
         } else if (record_changed) {
             old_data_to_free = old_record.data;
-            if (R0LAB_RAW_PAGE_SIZE - range_offset >= sizeof(patch_after))
+            if (page && R0LAB_RAW_PAGE_SIZE - range_offset >=
+                    sizeof(patch_after))
                 memcpy(&patch_after,
-                       (char *)g_raw_page.raw.shadow_kaddr + range_offset,
+                       (char *)page->raw.shadow_kaddr + range_offset,
                        sizeof(patch_after));
         }
     }
 
     flags = r0lab_lock();
-    if (admitted && g_raw_page.generation == generation) {
-        g_raw_page.transitioning = false;
+    if (admitted && page && page->generation == generation) {
+        page->transitioning = false;
+        route_token.page = NULL;
         if (!result && should_begin_read_cycle &&
-            g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_READ) {
-            ++g_raw_page.prctl_hook_events;
-            ++g_raw_page.prctl_hook_read_cycle_events;
-            g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+            page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
+            ++page->prctl_hook_events;
+            ++page->prctl_hook_read_cycle_events;
+            page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
         } else if (!result && should_patch &&
-                   g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
-            ++g_raw_page.prctl_hook_events;
-            ++g_raw_page.prctl_hook_patch_events;
+                   page->raw.state == R0LAB_RAW_SHADOW_RX) {
+            ++page->prctl_hook_events;
+            ++page->prctl_hook_patch_events;
         } else if (!result && should_release &&
-                   g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
-            ++g_raw_page.prctl_hook_events;
-            ++g_raw_page.prctl_hook_release_events;
+                   page->raw.state == R0LAB_RAW_SHADOW_RX) {
+            ++page->prctl_hook_events;
+            ++page->prctl_hook_release_events;
         } else {
             if (!result)
                 result = R0LAB_EAGAIN;
-            ++g_raw_page.prctl_hook_failures;
+            ++page->prctl_hook_failures;
         }
         if (!result) {
-            events = g_raw_page.prctl_hook_events;
-            read_cycle_events = g_raw_page.prctl_hook_read_cycle_events;
-            patch_events = g_raw_page.prctl_hook_patch_events;
-            release_events = g_raw_page.prctl_hook_release_events;
-            state = g_raw_page.raw.state;
+            events = page->prctl_hook_events;
+            read_cycle_events = page->prctl_hook_read_cycle_events;
+            patch_events = page->prctl_hook_patch_events;
+            release_events = page->prctl_hook_release_events;
+            state = page->raw.state;
         }
-    } else if (admitted) {
+        reject_events = page->prctl_hook_reject_events;
+        active_patch_count = page->patch_active_count;
+    } else if (admitted && page) {
         result = R0LAB_EAGAIN;
-        ++g_raw_page.prctl_hook_failures;
-    } else {
-        ++g_raw_page.prctl_hook_reject_events;
+        ++page->prctl_hook_failures;
+        reject_events = page->prctl_hook_reject_events;
+        active_patch_count = page->patch_active_count;
+    } else if (event_page && event_page->prctl_hook_installed) {
+        if (session_valid && operation == R0LAB_PRCTL_OP_PATCH_RANGE)
+            ++event_page->prctl_hook_failures;
+        else
+            ++event_page->prctl_hook_reject_events;
+        reject_events = event_page->prctl_hook_reject_events;
+        active_patch_count = event_page->patch_active_count;
     }
-    reject_events = g_raw_page.prctl_hook_reject_events;
-    active_patch_count = g_raw_page.patch_active_count;
     r0lab_unlock(flags);
 
     args->skip_origin = 1;
@@ -5179,6 +5222,11 @@ unlock_dispatch:
                             patch_after | ((uint64_t)release_events << 32));
 
 out:
+    if (route_token.page) {
+        flags = r0lab_lock();
+        (void)r0lab_raw_hook_page_token_release_locked(&route_token, true);
+        r0lab_unlock(flags);
+    }
     if (old_data_to_free && g_vfree)
         g_vfree(old_data_to_free);
     if (patch_data && g_vfree)
@@ -5574,13 +5622,52 @@ static void r0lab_raw_syscall_unhook(void)
         (void)r0lab_raw_wait_for_callbacks();
 }
 
+static unsigned int r0lab_raw_prctl_hook_users_locked(void)
+{
+    unsigned int index;
+    unsigned int count = 0;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (g_raw_page_table.slots[index].prctl_hook_installed)
+            ++count;
+    }
+    return count;
+}
+
+static void r0lab_raw_prctl_hook_release(
+    struct r0lab_raw_shadow_page *page)
+{
+    bool installed = false;
+    bool should_detach = false;
+    unsigned long flags;
+
+    if (!page)
+        return;
+    flags = r0lab_lock();
+    if (page->prctl_hook_installed) {
+        page->prctl_hook_installed = false;
+        installed = true;
+        should_detach = r0lab_raw_prctl_hook_users_locked() == 0;
+    }
+    r0lab_unlock(flags);
+
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+    if (should_detach)
+        r0lab_hook_detach(g_sys_prctl, r0lab_raw_prctl_before, NULL);
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+}
+
 static void r0lab_raw_prctl_unhook(void)
 {
     bool installed;
+    unsigned int index;
     unsigned long flags = r0lab_lock();
 
-    installed = g_raw_page.prctl_hook_installed;
-    g_raw_page.prctl_hook_installed = false;
+    installed = r0lab_raw_prctl_hook_users_locked() != 0;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index)
+        g_raw_page_table.slots[index].prctl_hook_installed = false;
     r0lab_unlock(flags);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
@@ -5773,6 +5860,7 @@ static void r0lab_raw_unhook_page(struct r0lab_raw_shadow_page *page,
     r0lab_raw_fault_hook_release(page);
     r0lab_raw_abort_hook_release(page);
     r0lab_raw_syscall_hook_release(page);
+    r0lab_raw_prctl_hook_release(page);
 }
 
 static void r0lab_raw_unhook(void)
@@ -8640,7 +8728,7 @@ static long r0lab_raw_syscall_hook_arm_common(uint64_t token,
     installed = page->syscall_hook_installed;
     should_install = !installed && r0lab_raw_syscall_hook_users_locked() == 0;
     existing_read_cycle_mode = page->syscall_hook_read_cycle_mode;
-    if (g_raw_page.prctl_hook_installed) {
+    if (r0lab_raw_prctl_hook_users_locked()) {
         r0lab_unlock(flags);
         result = R0LAB_EBUSY;
         goto record;
@@ -8915,12 +9003,18 @@ static long r0lab_raw_syscall_hook_clear(uint64_t token, char __user *out_msg,
         token, R0LAB_RAW_PRIMARY_SLOT, 0, out_msg, outlen, true);
 }
 
-static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
-                                     int outlen)
+static long r0lab_raw_prctl_hook_arm_common(uint64_t token,
+                                            uint16_t slot_id,
+                                            uint64_t generation,
+                                            char __user *out_msg,
+                                            int outlen,
+                                            bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
+    bool should_install;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -8929,11 +9023,18 @@ static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
         result = R0LAB_ENOSYS;
         goto record;
     }
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
 
     flags = r0lab_lock();
-    if (!g_raw_page.armed || g_raw_page.clearing ||
-        g_raw_page.transitioning ||
-        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || page->clearing ||
+        page->transitioning || page->raw.state != R0LAB_RAW_SHADOW_RX ||
+        page->raw.gup_hide_active || page->raw.fork_hide_active ||
+        page->raw.read_cycle_active ||
+        (!legacy_reply && page->generation != generation) ||
         g_session.owner_tgid != r0lab_current_tgid()) {
         r0lab_unlock(flags);
         result = R0LAB_EAGAIN;
@@ -8944,45 +9045,81 @@ static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
         result = R0LAB_EBUSY;
         goto record;
     }
-    installed = g_raw_page.prctl_hook_installed;
+    installed = page->prctl_hook_installed;
+    should_install = !installed && r0lab_raw_prctl_hook_users_locked() == 0;
+    generation = page->generation;
     if (!installed) {
-        g_raw_page.prctl_hook_events = 0;
-        g_raw_page.prctl_hook_read_cycle_events = 0;
-        g_raw_page.prctl_hook_patch_events = 0;
-        g_raw_page.prctl_hook_release_events = 0;
-        g_raw_page.prctl_hook_reject_events = 0;
-        g_raw_page.prctl_hook_failures = 0;
+        page->prctl_hook_events = 0;
+        page->prctl_hook_read_cycle_events = 0;
+        page->prctl_hook_patch_events = 0;
+        page->prctl_hook_release_events = 0;
+        page->prctl_hook_reject_events = 0;
+        page->prctl_hook_failures = 0;
     }
     r0lab_unlock(flags);
 
-    if (!installed) {
+    if (should_install) {
         result = hook_wrap1(g_sys_prctl, r0lab_raw_prctl_before, NULL, NULL);
         if (result)
             goto record;
+    }
+    if (!installed) {
         flags = r0lab_lock();
-        if (g_raw_page.armed && !g_raw_page.clearing &&
-            g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
+        page = r0lab_raw_page_slot_locked(slot_id);
+        if (page && page->armed && !page->clearing &&
+            page->generation == generation &&
+            page->raw.state == R0LAB_RAW_SHADOW_RX &&
             !r0lab_raw_syscall_hook_users_locked()) {
-            g_raw_page.prctl_hook_installed = true;
+            page->prctl_hook_installed = true;
+            g_raw_page_table.selected_slot = slot_id;
         } else {
             result = R0LAB_EAGAIN;
         }
         r0lab_unlock(flags);
-        if (result) {
+        if (result && should_install) {
             r0lab_hook_detach(g_sys_prctl, r0lab_raw_prctl_before, NULL);
             goto record;
         }
+    } else {
+        flags = r0lab_lock();
+        if (page && page->generation == generation)
+            g_raw_page_table.selected_slot = slot_id;
+        r0lab_unlock(flags);
     }
 
-    snprintf(reply, sizeof(reply),
-             "raw_prctl_hook_ready symbol=prctl installed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u read_cycle_op=%u patch_word_op=%u release_patch_op=%u patch_range_op=%u release_range_op=%u token_arg=2 operation_arg=3 request_arg=4 request_size_arg=5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending passthrough=nonmagic\n",
-             R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
-             R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
-             R0LAB_PRCTL_OP_PATCH_RANGE, R0LAB_PRCTL_OP_RELEASE_RANGE,
-             R0LAB_PRCTL_OP_READ_CYCLE, R0LAB_PRCTL_OP_PATCH_WORD,
-             R0LAB_PRCTL_OP_RELEASE_PATCH, R0LAB_PRCTL_OP_PATCH_RANGE,
-             R0LAB_PRCTL_OP_RELEASE_RANGE, R0LAB_PATCH_RECORD_CAPACITY,
-             g_copy_from_user_nofault ? "copy_from_user_nofault" : "absent");
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_prctl_hook_ready symbol=prctl installed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u read_cycle_op=%u patch_word_op=%u release_patch_op=%u patch_range_op=%u release_range_op=%u token_arg=2 operation_arg=3 request_arg=4 request_size_arg=5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending passthrough=nonmagic\n",
+                 R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+                 R0LAB_PRCTL_OP_PATCH_WORD,
+                 R0LAB_PRCTL_OP_RELEASE_PATCH,
+                 R0LAB_PRCTL_OP_PATCH_RANGE,
+                 R0LAB_PRCTL_OP_RELEASE_RANGE,
+                 R0LAB_PRCTL_OP_READ_CYCLE,
+                 R0LAB_PRCTL_OP_PATCH_WORD,
+                 R0LAB_PRCTL_OP_RELEASE_PATCH,
+                 R0LAB_PRCTL_OP_PATCH_RANGE,
+                 R0LAB_PRCTL_OP_RELEASE_RANGE,
+                 R0LAB_PATCH_RECORD_CAPACITY,
+                 g_copy_from_user_nofault ? "copy_from_user_nofault" :
+                 "absent");
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_prctl_hook_ready slot=%u generation=%llu symbol=prctl installed=1 selected=1 page_record_routed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u read_cycle_op=%u patch_word_op=%u release_patch_op=%u patch_range_op=%u release_range_op=%u token_arg=2 operation_arg=3 request_arg=4 request_size_arg=5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending route=selected_slot,address passthrough=nonmagic\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+                 R0LAB_PRCTL_OP_PATCH_WORD,
+                 R0LAB_PRCTL_OP_RELEASE_PATCH,
+                 R0LAB_PRCTL_OP_PATCH_RANGE,
+                 R0LAB_PRCTL_OP_RELEASE_RANGE,
+                 R0LAB_PRCTL_OP_READ_CYCLE,
+                 R0LAB_PRCTL_OP_PATCH_WORD,
+                 R0LAB_PRCTL_OP_RELEASE_PATCH,
+                 R0LAB_PRCTL_OP_PATCH_RANGE,
+                 R0LAB_PRCTL_OP_RELEASE_RANGE,
+                 R0LAB_PATCH_RECORD_CAPACITY,
+                 g_copy_from_user_nofault ? "copy_from_user_nofault" :
+                 "absent");
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -8990,12 +9127,62 @@ record:
     return result;
 }
 
-static long r0lab_raw_prctl_hook_status(uint64_t token, char __user *out_msg,
-                                        int outlen)
+static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
+                                     int outlen)
+{
+    return r0lab_raw_prctl_hook_arm_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, 0, out_msg, outlen, true);
+}
+
+static long r0lab_raw_prctl_hook_select(uint64_t token, uint16_t slot_id,
+                                        uint64_t generation,
+                                        char __user *out_msg, int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    unsigned long flags;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->prctl_hook_installed ||
+        page->generation != generation || !page->armed ||
+        page->clearing || page->raw.state != R0LAB_RAW_SHADOW_RX) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    g_raw_page_table.selected_slot = slot_id;
+    r0lab_unlock(flags);
+
+    snprintf(reply, sizeof(reply),
+             "raw_slot_prctl_hook_selected slot=%u generation=%llu symbol=prctl selected=1 page_record_routed=1 route=selected_slot\n",
+             (unsigned int)slot_id, (unsigned long long)generation);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+
+record:
+    r0lab_record(R0LAB_EVENT_REJECT, result);
+    return result;
+}
+
+static long r0lab_raw_prctl_hook_status_common(uint64_t token,
+                                               uint16_t slot_id,
+                                               char __user *out_msg,
+                                               int outlen,
+                                               bool legacy_reply)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
+    bool selected;
+    uint64_t generation;
     uint32_t hit_events;
     uint32_t read_cycle_events;
     uint32_t patch_events;
@@ -9010,60 +9197,109 @@ static long r0lab_raw_prctl_hook_status(uint64_t token, char __user *out_msg,
     uint16_t patch_dirty_bytes;
     uint64_t patch_version;
     unsigned long read_cycle_finish_events;
+    uint32_t route_hits;
+    uint32_t route_rejects;
     unsigned int index;
     int result = r0lab_validate_owner(token);
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    installed = g_raw_page.prctl_hook_installed;
-    hit_events = g_raw_page.prctl_hook_events;
-    read_cycle_events = g_raw_page.prctl_hook_read_cycle_events;
-    patch_events = g_raw_page.prctl_hook_patch_events;
-    release_events = g_raw_page.prctl_hook_release_events;
-    reject_events = g_raw_page.prctl_hook_reject_events;
-    failures = g_raw_page.prctl_hook_failures;
-    patch_record_slots = g_raw_page.patch_record_slots;
-    patch_active_count = g_raw_page.patch_active_count;
-    patch_dirty_bytes = g_raw_page.patch_dirty_bytes;
-    patch_version = g_raw_page.patch_version;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->prctl_hook_installed;
+    selected = g_raw_page_table.selected_slot == slot_id;
+    generation = page->generation;
+    hit_events = page->prctl_hook_events;
+    read_cycle_events = page->prctl_hook_read_cycle_events;
+    patch_events = page->prctl_hook_patch_events;
+    release_events = page->prctl_hook_release_events;
+    reject_events = page->prctl_hook_reject_events;
+    failures = page->prctl_hook_failures;
+    patch_record_slots = page->patch_record_slots;
+    patch_active_count = page->patch_active_count;
+    patch_dirty_bytes = page->patch_dirty_bytes;
+    patch_version = page->patch_version;
     patch_active = patch_active_count != 0;
     patch_address = 0;
     patch_word = 0;
     for (index = 0; index < patch_record_slots; ++index) {
-        const struct r0lab_patch_record *record =
-            &g_raw_page.patch_records[index];
+        const struct r0lab_patch_record *record = &page->patch_records[index];
 
         if (!record->active)
             continue;
-        patch_address = g_raw_page.raw.address + record->offset;
+        patch_address = page->raw.address + record->offset;
         if (record->data && record->length >= sizeof(patch_word))
             memcpy(&patch_word, record->data, sizeof(patch_word));
         break;
     }
-    read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
+    read_cycle_finish_events = page->raw.read_cycle_finish_events;
+    route_hits = page->hook_route_stats.route_hits;
+    route_rejects = page->hook_route_stats.route_rejects;
     r0lab_unlock(flags);
 
-    snprintf(reply, sizeof(reply),
-             "raw_prctl_hook_status symbol=%s installed=%u abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_address=%lx patch_word=%08x patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s passthrough=nonmagic\n",
-             g_sys_prctl ? "prctl" : "absent", installed ? 1 : 0,
-             R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
-             R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
-             R0LAB_PRCTL_OP_PATCH_RANGE, R0LAB_PRCTL_OP_RELEASE_RANGE,
-             hit_events, read_cycle_events, patch_events, release_events,
-             reject_events, failures, patch_active ? 1 : 0, patch_address,
-             patch_word, patch_record_slots, patch_active_count,
-             patch_dirty_bytes, patch_version, R0LAB_PATCH_RECORD_CAPACITY,
-             g_copy_from_user_nofault ? "copy_from_user_nofault" : "absent",
-             read_cycle_finish_events ? "proven" :
-             (read_cycle_events ? "pending" : "absent"));
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_prctl_hook_status symbol=%s installed=%u abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_address=%lx patch_word=%08x patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s passthrough=nonmagic\n",
+                 g_sys_prctl ? "prctl" : "absent", installed ? 1 : 0,
+                 R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+                 R0LAB_PRCTL_OP_PATCH_WORD,
+                 R0LAB_PRCTL_OP_RELEASE_PATCH,
+                 R0LAB_PRCTL_OP_PATCH_RANGE,
+                 R0LAB_PRCTL_OP_RELEASE_RANGE,
+                 hit_events, read_cycle_events, patch_events, release_events,
+                 reject_events, failures, patch_active ? 1 : 0,
+                 patch_address, patch_word, patch_record_slots,
+                 patch_active_count, patch_dirty_bytes, patch_version,
+                 R0LAB_PATCH_RECORD_CAPACITY,
+                 g_copy_from_user_nofault ? "copy_from_user_nofault" :
+                 "absent",
+                 read_cycle_finish_events ? "proven" :
+                 (read_cycle_events ? "pending" : "absent"));
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_prctl_hook_status slot=%u generation=%llu symbol=%s installed=%u selected=%u hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u page_record_routed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u patch_active=%u patch_address=%lx patch_word=%08x patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s route_hits=%u route_rejects=%u route=selected_slot,address passthrough=nonmagic\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_sys_prctl ? "prctl" : "absent", installed ? 1 : 0,
+                 selected ? 1 : 0, hit_events, read_cycle_events,
+                 patch_events, release_events, reject_events, failures,
+                 R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+                 R0LAB_PRCTL_OP_PATCH_WORD,
+                 R0LAB_PRCTL_OP_RELEASE_PATCH,
+                 R0LAB_PRCTL_OP_PATCH_RANGE,
+                 R0LAB_PRCTL_OP_RELEASE_RANGE,
+                 patch_active ? 1 : 0, patch_address, patch_word,
+                 patch_record_slots, patch_active_count, patch_dirty_bytes,
+                 patch_version, R0LAB_PATCH_RECORD_CAPACITY,
+                 g_copy_from_user_nofault ? "copy_from_user_nofault" :
+                 "absent",
+                 read_cycle_finish_events ? "proven" :
+                 (read_cycle_events ? "pending" : "absent"), route_hits,
+                 route_rejects);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_prctl_hook_clear(uint64_t token, char __user *out_msg,
-                                       int outlen)
+static long r0lab_raw_prctl_hook_status(uint64_t token, char __user *out_msg,
+                                        int outlen)
+{
+    return r0lab_raw_prctl_hook_status_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_prctl_hook_clear_common(uint64_t token,
+                                              uint16_t slot_id,
+                                              uint64_t generation,
+                                              char __user *out_msg,
+                                              int outlen,
+                                              bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     uint32_t hit_events;
     uint32_t read_cycle_events;
@@ -9079,26 +9315,62 @@ static long r0lab_raw_prctl_hook_clear(uint64_t token, char __user *out_msg,
 
     if (result)
         return result;
-    r0lab_raw_prctl_unhook();
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    hit_events = g_raw_page.prctl_hook_events;
-    read_cycle_events = g_raw_page.prctl_hook_read_cycle_events;
-    patch_events = g_raw_page.prctl_hook_patch_events;
-    release_events = g_raw_page.prctl_hook_release_events;
-    reject_events = g_raw_page.prctl_hook_reject_events;
-    failures = g_raw_page.prctl_hook_failures;
-    patch_record_slots = g_raw_page.patch_record_slots;
-    patch_active_count = g_raw_page.patch_active_count;
-    patch_dirty_bytes = g_raw_page.patch_dirty_bytes;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || (!legacy_reply && page->generation != generation)) {
+        r0lab_unlock(flags);
+        return R0LAB_EAGAIN;
+    }
+    r0lab_unlock(flags);
+
+    if (legacy_reply)
+        r0lab_raw_prctl_unhook();
+    else
+        r0lab_raw_prctl_hook_release(page);
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    generation = page->generation;
+    hit_events = page->prctl_hook_events;
+    read_cycle_events = page->prctl_hook_read_cycle_events;
+    patch_events = page->prctl_hook_patch_events;
+    release_events = page->prctl_hook_release_events;
+    reject_events = page->prctl_hook_reject_events;
+    failures = page->prctl_hook_failures;
+    patch_record_slots = page->patch_record_slots;
+    patch_active_count = page->patch_active_count;
+    patch_dirty_bytes = page->patch_dirty_bytes;
     patch_active = patch_active_count != 0;
     r0lab_unlock(flags);
-    snprintf(reply, sizeof(reply),
-             "raw_prctl_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u\n",
-             g_sys_prctl ? "prctl" : "absent", hit_events,
-             read_cycle_events, patch_events, release_events, reject_events,
-             failures, patch_active ? 1 : 0, patch_record_slots,
-             patch_active_count, patch_dirty_bytes);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_prctl_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u\n",
+                 g_sys_prctl ? "prctl" : "absent", hit_events,
+                 read_cycle_events, patch_events, release_events,
+                 reject_events, failures, patch_active ? 1 : 0,
+                 patch_record_slots, patch_active_count, patch_dirty_bytes);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_prctl_hook_cleared slot=%u generation=%llu symbol=%s installed=0 hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u page_record_routed=1 patch_active=%u patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u route=selected_slot,address\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_sys_prctl ? "prctl" : "absent", hit_events,
+                 read_cycle_events, patch_events, release_events,
+                 reject_events, failures, patch_active ? 1 : 0,
+                 patch_record_slots, patch_active_count, patch_dirty_bytes);
     return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_prctl_hook_clear(uint64_t token, char __user *out_msg,
+                                       int outlen)
+{
+    return r0lab_raw_prctl_hook_clear_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, 0, out_msg, outlen, true);
 }
 
 static long r0lab_raw_exit_hook_arm(uint64_t token, char __user *out_msg,
@@ -10694,6 +10966,41 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_syscall_hook_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot prctl hook arm ", 24)) {
+        value = args + 24;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_prctl_hook_arm_common(
+            token, slot_id, generation, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot prctl hook status ", 27)) {
+        value = args + 27;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_prctl_hook_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot prctl hook select ", 27)) {
+        value = args + 27;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_prctl_hook_select(token, slot_id, generation,
+                                           out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot prctl hook clear ", 26)) {
+        value = args + 26;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_prctl_hook_clear_common(
+            token, slot_id, generation, out_msg, outlen, false);
     }
     if (!strncmp(args, "raw prctl hook arm ", 19)) {
         value = args + 19;

@@ -7245,6 +7245,634 @@ finish:
     return failures ? -1 : 0;
 }
 
+static int r0lab_raw_prctl_hook_routing_run(const char *token_text,
+                                            char *output,
+                                            size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    struct r0lab_prctl_patch_request request = {0};
+    uint32_t *code0;
+    uint32_t *code1;
+    volatile uint32_t *readable0;
+    volatile uint32_t *readable1;
+    uint64_t token;
+    uint64_t generation0 = 0;
+    uint64_t generation1 = 0;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    size_t page_size;
+    char command[192];
+    char reply[256] = {0};
+    char ready0[512] = {0};
+    char ready1[512] = {0};
+    char observed0[512] = {0};
+    char observed1[512] = {0};
+    char hook0_reply[1024] = {0};
+    char hook1_reply[1024] = {0};
+    char select0_reply[512] = {0};
+    char select1_reply[512] = {0};
+    char stale_select_reply[512] = {0};
+    char status0_after_read[2048] = {0};
+    char status0_after_exec[2048] = {0};
+    char status0_after_slot1[2048] = {0};
+    char status1_after_slot0[2048] = {0};
+    char status1_after_read[2048] = {0};
+    char status1_after_exec[2048] = {0};
+    char status0_after_patch0[2048] = {0};
+    char status1_after_patch0[2048] = {0};
+    char status0_after_patch1[2048] = {0};
+    char status1_after_patch1[2048] = {0};
+    char status0_after_release0[2048] = {0};
+    char status1_after_release0[2048] = {0};
+    char status0_after_release1[2048] = {0};
+    char status1_after_release1[2048] = {0};
+    char status0_capacity[2048] = {0};
+    char status1_capacity[2048] = {0};
+    char hook0_clear_reply[1024] = {0};
+    char hook1_clear_reply[1024] = {0};
+    unsigned int slot0_activations = 0;
+    unsigned int slot1_activations = 0;
+    unsigned long slot0_state = 0;
+    unsigned long slot1_state = 0;
+    uint32_t word0_before = 0;
+    uint32_t word1_before = 0;
+    uint32_t word0_shadow = 0;
+    uint32_t word1_shadow = 0;
+    uint32_t original0_read_word = 0;
+    uint32_t original1_read_word = 0;
+    uint32_t word0_after_resume = 0;
+    uint32_t word1_after_resume = 0;
+    uint32_t word0_after_clear = 0;
+    uint32_t word1_after_clear = 0;
+    uint32_t word0_after_patch0 = 0;
+    uint32_t word1_after_patch0 = 0;
+    uint32_t word0_after_patch1 = 0;
+    uint32_t word1_after_patch1 = 0;
+    long arm0_rc = -1;
+    long arm1_rc = -1;
+    long ready0_rc = -1;
+    long ready1_rc = -1;
+    long observed0_rc = -1;
+    long observed1_rc = -1;
+    long hook0_arm_rc = -1;
+    long hook1_arm_rc = -1;
+    long select0_rc = -1;
+    long select1_rc = -1;
+    long stale_select_rc = -1;
+    long trigger0_rc = -1;
+    long trigger1_rc = -1;
+    long status0_after_read_rc = -1;
+    long status0_after_exec_rc = -1;
+    long status0_after_slot1_rc = -1;
+    long status1_after_slot0_rc = -1;
+    long status1_after_read_rc = -1;
+    long status1_after_exec_rc = -1;
+    long patch0_rc = -1;
+    long patch1_rc = -1;
+    long release0_rc = -1;
+    long release1_rc = -1;
+    long cleanup_patch_rc = -1;
+    long status0_after_patch0_rc = -1;
+    long status1_after_patch0_rc = -1;
+    long status0_after_patch1_rc = -1;
+    long status1_after_patch1_rc = -1;
+    long status0_after_release0_rc = -1;
+    long status1_after_release0_rc = -1;
+    long status0_after_release1_rc = -1;
+    long status1_after_release1_rc = -1;
+    long status0_capacity_rc = -1;
+    long status1_capacity_rc = -1;
+    long hook0_clear_rc = -1;
+    long hook1_clear_rc = -1;
+    long clear0_rc = -1;
+    long clear1_rc = -1;
+    long cleared0_rc = -1;
+    long cleared1_rc = -1;
+    long capacity_fill_failures = 0;
+    long capacity_overflow_rc = -2;
+    unsigned int capacity_fill_records = 0;
+    unsigned int capacity_index;
+    uint32_t cleanup_word = R0LAB_CODE_MOV_W0_77;
+    int capacity_overflow_errno = 0;
+    int normal0 = -1;
+    int normal1 = -1;
+    int shadow0 = -1;
+    int shadow1 = -1;
+    int resume0 = -1;
+    int resume1 = -1;
+    int patch0_slot0 = -1;
+    int patch0_slot1 = -1;
+    int patch1_slot0 = -1;
+    int patch1_slot1 = -1;
+    int release0_slot0 = -1;
+    int release0_slot1 = -1;
+    int release1_slot0 = -1;
+    int release1_slot1 = -1;
+    int final0 = -1;
+    int final1 = -1;
+    int handler_installed = 0;
+    int read_route_ok = 0;
+    int patch_isolation_ok = 0;
+    int release_isolation_ok = 0;
+    int capacity_ok = 0;
+    int route_ok = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw prctl routing token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    page0 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page1 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page0 == MAP_FAILED || page1 == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw prctl routing mmap errno=%d", errno);
+        if (page0 != MAP_FAILED)
+            munmap(page0, page_size);
+        if (page1 != MAP_FAILED)
+            munmap(page1, page_size);
+        return -1;
+    }
+
+    code0 = page0;
+    code1 = page1;
+    code0[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code0[1] = R0LAB_M3_CODE_RET;
+    code1[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code1[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page0, (char *)page0 + page_size);
+    __builtin___clear_cache((char *)page1, (char *)page1 + page_size);
+    if (mprotect(page0, page_size, PROT_READ | PROT_EXEC) ||
+        mprotect(page1, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw prctl routing mprotect errno=%d", errno);
+        munmap(page1, page_size);
+        munmap(page0, page_size);
+        return -1;
+    }
+
+    readable0 = (volatile uint32_t *)page0;
+    readable1 = (volatile uint32_t *)page1;
+    word0_before = readable0[0];
+    word1_before = readable1[0];
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0);
+    arm0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm0_rc < 0)
+        goto finish;
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page1);
+    arm1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm1_rc < 0)
+        goto clear_all;
+
+    ready0_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 0,
+                                        ready0, sizeof(ready0));
+    ready1_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 1,
+                                        ready1, sizeof(ready1));
+    if (ready0_rc < 0 || ready1_rc < 0 ||
+        r0lab_raw_parse_slot_generation(ready0, "raw_slot_ready", 0,
+                                        &generation0) ||
+        r0lab_raw_parse_slot_generation(ready1, "raw_slot_ready", 1,
+                                        &generation1))
+        goto clear_all;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page_size = page_size;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear_all;
+    handler_installed = 1;
+
+    g_r0lab_raw_signal_page = page0;
+    shadow0 = ((int (*)(void))page0)();
+    word0_shadow = readable0[0];
+    g_r0lab_raw_signal_page = page1;
+    shadow1 = ((int (*)(void))page1)();
+    word1_shadow = readable1[0];
+
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 0",
+             (unsigned long long)token);
+    observed0_rc = r0lab_control_raw(command, observed0, sizeof(observed0));
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 1",
+             (unsigned long long)token);
+    observed1_rc = r0lab_control_raw(command, observed1, sizeof(observed1));
+    if (observed0_rc < 0 || observed1_rc < 0 ||
+        r0lab_raw_parse_slot_observed(observed0, 0, &slot0_activations,
+                                      &slot0_state) ||
+        r0lab_raw_parse_slot_observed(observed1, 1, &slot1_activations,
+                                      &slot1_state))
+        ++failures;
+
+    snprintf(command, sizeof(command),
+             "raw slot prctl hook arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)generation0);
+    hook0_arm_rc = r0lab_control_raw(command, hook0_reply,
+                                     sizeof(hook0_reply));
+    snprintf(command, sizeof(command),
+             "raw slot prctl hook arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)generation1);
+    hook1_arm_rc = r0lab_control_raw(command, hook1_reply,
+                                     sizeof(hook1_reply));
+
+    snprintf(command, sizeof(command),
+             "raw slot prctl hook select 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(generation0 + 1ULL));
+    stale_select_rc = r0lab_control_raw_errno_value(
+        command, stale_select_reply, sizeof(stale_select_reply));
+
+    snprintf(command, sizeof(command),
+             "raw slot prctl hook select 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)generation0);
+    select0_rc = r0lab_control_raw(command, select0_reply,
+                                   sizeof(select0_reply));
+    if (select0_rc >= 0) {
+        trigger0_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                              (unsigned long)token,
+                              R0LAB_PRCTL_OP_READ_CYCLE, 0, 0);
+        original0_read_word = readable0[0];
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook status 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_read_rc =
+            r0lab_control_raw(command, status0_after_read,
+                              sizeof(status0_after_read));
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook status 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_slot0_rc =
+            r0lab_control_raw(command, status1_after_slot0,
+                              sizeof(status1_after_slot0));
+        g_r0lab_raw_signal_page = page0;
+        resume0 = ((int (*)(void))page0)();
+        word0_after_resume = readable0[0];
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook status 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_exec_rc =
+            r0lab_control_raw(command, status0_after_exec,
+                              sizeof(status0_after_exec));
+    }
+
+    snprintf(command, sizeof(command),
+             "raw slot prctl hook select 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)generation1);
+    select1_rc = r0lab_control_raw(command, select1_reply,
+                                   sizeof(select1_reply));
+    if (select1_rc >= 0) {
+        trigger1_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                              (unsigned long)token,
+                              R0LAB_PRCTL_OP_READ_CYCLE, 0, 0);
+        original1_read_word = readable1[0];
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook status 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_read_rc =
+            r0lab_control_raw(command, status1_after_read,
+                              sizeof(status1_after_read));
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook status 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_slot1_rc =
+            r0lab_control_raw(command, status0_after_slot1,
+                              sizeof(status0_after_slot1));
+        g_r0lab_raw_signal_page = page1;
+        resume1 = ((int (*)(void))page1)();
+        word1_after_resume = readable1[0];
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook status 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_exec_rc =
+            r0lab_control_raw(command, status1_after_exec,
+                              sizeof(status1_after_exec));
+    }
+
+    patch0_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                        (unsigned long)token, R0LAB_PRCTL_OP_PATCH_WORD,
+                        (unsigned long)(uintptr_t)page0,
+                        R0LAB_CODE_MOV_W0_77);
+    word0_after_patch0 = readable0[0];
+    word1_after_patch0 = readable1[0];
+    patch0_slot0 = ((int (*)(void))page0)();
+    patch0_slot1 = ((int (*)(void))page1)();
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 0",
+             (unsigned long long)token);
+    status0_after_patch0_rc =
+        r0lab_control_raw(command, status0_after_patch0,
+                          sizeof(status0_after_patch0));
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 1",
+             (unsigned long long)token);
+    status1_after_patch0_rc =
+        r0lab_control_raw(command, status1_after_patch0,
+                          sizeof(status1_after_patch0));
+
+    patch1_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                        (unsigned long)token, R0LAB_PRCTL_OP_PATCH_WORD,
+                        (unsigned long)(uintptr_t)page1,
+                        R0LAB_CODE_MOV_W0_88);
+    word0_after_patch1 = readable0[0];
+    word1_after_patch1 = readable1[0];
+    patch1_slot0 = ((int (*)(void))page0)();
+    patch1_slot1 = ((int (*)(void))page1)();
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 0",
+             (unsigned long long)token);
+    status0_after_patch1_rc =
+        r0lab_control_raw(command, status0_after_patch1,
+                          sizeof(status0_after_patch1));
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 1",
+             (unsigned long long)token);
+    status1_after_patch1_rc =
+        r0lab_control_raw(command, status1_after_patch1,
+                          sizeof(status1_after_patch1));
+
+    release0_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                          (unsigned long)token,
+                          R0LAB_PRCTL_OP_RELEASE_PATCH,
+                          (unsigned long)(uintptr_t)page0, 0);
+    release0_slot0 = ((int (*)(void))page0)();
+    release0_slot1 = ((int (*)(void))page1)();
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 0",
+             (unsigned long long)token);
+    status0_after_release0_rc =
+        r0lab_control_raw(command, status0_after_release0,
+                          sizeof(status0_after_release0));
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 1",
+             (unsigned long long)token);
+    status1_after_release0_rc =
+        r0lab_control_raw(command, status1_after_release0,
+                          sizeof(status1_after_release0));
+
+    release1_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                          (unsigned long)token,
+                          R0LAB_PRCTL_OP_RELEASE_PATCH,
+                          (unsigned long)(uintptr_t)page1, 0);
+    release1_slot0 = ((int (*)(void))page0)();
+    release1_slot1 = ((int (*)(void))page1)();
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 0",
+             (unsigned long long)token);
+    status0_after_release1_rc =
+        r0lab_control_raw(command, status0_after_release1,
+                          sizeof(status0_after_release1));
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 1",
+             (unsigned long long)token);
+    status1_after_release1_rc =
+        r0lab_control_raw(command, status1_after_release1,
+                          sizeof(status1_after_release1));
+
+    memset(&request, 0, sizeof(request));
+    request.address = (uint64_t)(uintptr_t)((uint8_t *)page0 + 80);
+    request.length = sizeof(uint32_t);
+    memcpy(request.data, &cleanup_word, sizeof(cleanup_word));
+    cleanup_patch_rc = syscall(
+        __NR_prctl, R0LAB_PRCTL_MAGIC, (unsigned long)token,
+        R0LAB_PRCTL_OP_PATCH_RANGE, (unsigned long)(uintptr_t)&request,
+        sizeof(request.address) + sizeof(request.length) +
+            sizeof(request.flags) + request.length);
+
+    for (capacity_index = 0;
+         capacity_index < R0LAB_PATCH_RECORD_CAPACITY - 1U;
+         ++capacity_index) {
+        memset(&request, 0, sizeof(request));
+        request.address =
+            (uint64_t)(uintptr_t)((uint8_t *)page0 + 1024U + capacity_index);
+        request.length = 1;
+        request.data[0] = (uint8_t)(0x80U | (capacity_index & 0x7fU));
+        if (syscall(__NR_prctl, R0LAB_PRCTL_MAGIC, (unsigned long)token,
+                    R0LAB_PRCTL_OP_PATCH_RANGE,
+                    (unsigned long)(uintptr_t)&request,
+                    sizeof(request.address) + sizeof(request.length) +
+                        sizeof(request.flags) + request.length)) {
+            ++capacity_fill_failures;
+            break;
+        }
+        ++capacity_fill_records;
+    }
+    memset(&request, 0, sizeof(request));
+    request.address =
+        (uint64_t)(uintptr_t)((uint8_t *)page0 + 1024U + capacity_fill_records);
+    request.length = 1;
+    request.data[0] = 0x7fU;
+    errno = 0;
+    capacity_overflow_rc = syscall(
+        __NR_prctl, R0LAB_PRCTL_MAGIC, (unsigned long)token,
+        R0LAB_PRCTL_OP_PATCH_RANGE, (unsigned long)(uintptr_t)&request,
+        sizeof(request.address) + sizeof(request.length) +
+            sizeof(request.flags) + request.length);
+    capacity_overflow_errno = errno;
+
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 0",
+             (unsigned long long)token);
+    status0_capacity_rc =
+        r0lab_control_raw(command, status0_capacity, sizeof(status0_capacity));
+    snprintf(command, sizeof(command), "raw slot prctl hook status 0x%llx 1",
+             (unsigned long long)token);
+    status1_capacity_rc =
+        r0lab_control_raw(command, status1_capacity, sizeof(status1_capacity));
+
+clear_all:
+    if (hook0_arm_rc >= 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook clear 0x%llx 0 0x%llx",
+                 (unsigned long long)token,
+                 (unsigned long long)generation0);
+        hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                           sizeof(hook0_clear_reply));
+    }
+    if (hook1_arm_rc >= 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot prctl hook clear 0x%llx 1 0x%llx",
+                 (unsigned long long)token,
+                 (unsigned long long)generation1);
+        hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                           sizeof(hook1_clear_reply));
+    }
+    if (arm0_rc >= 0)
+        r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+    if (arm1_rc >= 0)
+        r0lab_raw_slot_clear(token, 1, &clear1_rc, &cleared1_rc);
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    if (cleared0_rc >= 0 && cleared1_rc >= 0) {
+        word0_after_clear = readable0[0];
+        word1_after_clear = readable1[0];
+        final0 = ((int (*)(void))page0)();
+        final1 = ((int (*)(void))page1)();
+    }
+
+finish:
+    read_route_ok =
+        hook0_arm_rc >= 0 && hook1_arm_rc >= 0 &&
+        select0_rc >= 0 && select1_rc >= 0 &&
+        stale_select_rc == -EAGAIN &&
+        trigger0_rc == 0 && trigger1_rc == 0 &&
+        status0_after_read_rc >= 0 && status0_after_exec_rc >= 0 &&
+        status0_after_slot1_rc >= 0 && status1_after_slot0_rc >= 0 &&
+        status1_after_read_rc >= 0 && status1_after_exec_rc >= 0 &&
+        strstr(hook0_reply, "raw_slot_prctl_hook_ready slot=0") &&
+        strstr(hook1_reply, "raw_slot_prctl_hook_ready slot=1") &&
+        strstr(hook0_reply, "page_record_routed=1") &&
+        strstr(hook1_reply, "page_record_routed=1") &&
+        strstr(select0_reply, "raw_slot_prctl_hook_selected slot=0") &&
+        strstr(select1_reply, "raw_slot_prctl_hook_selected slot=1") &&
+        strstr(select0_reply, "page_record_routed=1") &&
+        strstr(select1_reply, "page_record_routed=1") &&
+        strstr(status0_after_read, "slot=0") &&
+        strstr(status0_after_read, "hit_events=1") &&
+        strstr(status0_after_read, "read_cycle_events=1") &&
+        strstr(status0_after_read, "exec_resume=pending") &&
+        strstr(status1_after_slot0, "slot=1") &&
+        strstr(status1_after_slot0, "hit_events=0") &&
+        strstr(status1_after_slot0, "read_cycle_events=0") &&
+        strstr(status0_after_exec, "slot=0") &&
+        strstr(status0_after_exec, "exec_resume=proven") &&
+        strstr(status1_after_read, "slot=1") &&
+        strstr(status1_after_read, "hit_events=1") &&
+        strstr(status1_after_read, "read_cycle_events=1") &&
+        strstr(status1_after_read, "exec_resume=pending") &&
+        strstr(status0_after_slot1, "slot=0") &&
+        strstr(status0_after_slot1, "hit_events=1") &&
+        strstr(status0_after_slot1, "read_cycle_events=1") &&
+        strstr(status1_after_exec, "slot=1") &&
+        strstr(status1_after_exec, "exec_resume=proven");
+    patch_isolation_ok =
+        patch0_rc == 0 && patch1_rc == 0 &&
+        patch0_slot0 == 77 && patch0_slot1 == 99 &&
+        patch1_slot0 == 77 && patch1_slot1 == 88 &&
+        word0_after_patch0 == R0LAB_CODE_MOV_W0_77 &&
+        word1_after_patch0 == R0LAB_M4_CODE_MOV_W0_99 &&
+        word0_after_patch1 == R0LAB_CODE_MOV_W0_77 &&
+        word1_after_patch1 == R0LAB_CODE_MOV_W0_88 &&
+        status0_after_patch0_rc >= 0 && status1_after_patch0_rc >= 0 &&
+        status0_after_patch1_rc >= 0 && status1_after_patch1_rc >= 0 &&
+        strstr(status0_after_patch0, "patch_events=1") &&
+        strstr(status1_after_patch0, "patch_events=0") &&
+        strstr(status0_after_patch1, "patch_events=1") &&
+        strstr(status1_after_patch1, "patch_events=1") &&
+        strstr(status0_after_patch1, "patch_active_count=1") &&
+        strstr(status1_after_patch1, "patch_active_count=1");
+    release_isolation_ok =
+        release0_rc == 0 && release1_rc == 0 &&
+        release0_slot0 == 99 && release0_slot1 == 88 &&
+        release1_slot0 == 99 && release1_slot1 == 99 &&
+        status0_after_release0_rc >= 0 &&
+        status1_after_release0_rc >= 0 &&
+        status0_after_release1_rc >= 0 &&
+        status1_after_release1_rc >= 0 &&
+        strstr(status0_after_release0, "release_events=1") &&
+        strstr(status1_after_release0, "release_events=0") &&
+        strstr(status0_after_release1, "patch_active_count=0") &&
+        strstr(status1_after_release1, "release_events=1") &&
+        strstr(status1_after_release1, "patch_active_count=0");
+    capacity_ok =
+        cleanup_patch_rc == 0 &&
+        capacity_fill_records == R0LAB_PATCH_RECORD_CAPACITY - 1U &&
+        !capacity_fill_failures &&
+        capacity_overflow_rc == -1 &&
+        capacity_overflow_errno == ENOSPC &&
+        status0_capacity_rc >= 0 && status1_capacity_rc >= 0 &&
+        strstr(status0_capacity, "patch_record_slots=1024") &&
+        strstr(status0_capacity, "patch_active_count=1024") &&
+        strstr(status0_capacity, "patch_capacity=1024") &&
+        strstr(status1_capacity, "patch_active_count=0") &&
+        strstr(status1_capacity, "patch_dirty_bytes=0");
+    route_ok = read_route_ok && patch_isolation_ok &&
+               release_isolation_ok && capacity_ok;
+
+    if (normal0 != 42 || normal1 != 42 || shadow0 != 99 || shadow1 != 99 ||
+        resume0 != 99 || resume1 != 99 ||
+        final0 != 42 || final1 != 42 ||
+        word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word0_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        word1_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        original0_read_word != R0LAB_M3_CODE_MOV_W0_42 ||
+        original1_read_word != R0LAB_M3_CODE_MOV_W0_42 ||
+        word0_after_resume != R0LAB_M4_CODE_MOV_W0_99 ||
+        word1_after_resume != R0LAB_M4_CODE_MOV_W0_99 ||
+        word0_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+        arm0_rc < 0 || arm1_rc < 0 || ready0_rc < 0 || ready1_rc < 0 ||
+        observed0_rc < 0 || observed1_rc < 0 ||
+        hook0_clear_rc < 0 || hook1_clear_rc < 0 ||
+        clear0_rc < 0 || clear1_rc < 0 ||
+        cleared0_rc < 0 || cleared1_rc < 0 ||
+        slot0_activations != 1 || slot1_activations != 1 ||
+        slot0_state != 3 || slot1_state != 3 ||
+        g_r0lab_raw_handler_faults || !route_ok)
+        ++failures;
+
+    snprintf(output, output_size,
+             "raw mode=prctl-routing failures=%d trigger=prctl_magic route=selected_slot,address page_record_routed=%d target_mm_scoped=1 stale_generation_rc=%ld read_cycle=uxn_original_exec_resume normal=%d/%d shadow=%d/%d original_read_word=%08x/%08x resume=%d/%d shadow_after_resume=%08x/%08x patch_values=%d/%d after_patch0=%d/%d after_release=%d/%d final=%d/%d words=%08x/%08x/%08x/%08x/%08x/%08x route_slot0_events=%u route_slot1_events=%u read_status=%d/%d patch_isolation=%d release_isolation=%d patch_events=%u/%u release_events=%u/%u capacity_fill_records=%u capacity_fill_failures=%ld capacity_overflow_rc=%ld capacity_overflow_errno=%d capacity_boundary=%s slot0_capacity_active=%u slot1_capacity_active=%u activations=%u/%u states=%lu/%lu hook_ready=%u/%u selected=%u/%u hook_clear_rc=%ld/%ld clear_rc=%ld/%ld cleared_rc=%ld/%ld handler_faults=%d rc_arm=%ld/%ld rc_ready=%ld/%ld rc_observed=%ld/%ld rc_hook_arm=%ld/%ld rc_select=%ld/%ld rc_trigger=%ld/%ld rc_patch=%ld/%ld rc_release=%ld/%ld rc_status_read=%ld/%ld/%ld/%ld/%ld/%ld rc_status_patch=%ld/%ld/%ld/%ld rc_status_release=%ld/%ld/%ld/%ld rc_status_capacity=%ld/%ld",
+             failures, route_ok ? 1 : 0, stale_select_rc,
+             normal0, normal1, shadow0, shadow1,
+             original0_read_word, original1_read_word,
+             resume0, resume1, word0_after_resume, word1_after_resume,
+             patch1_slot0, patch1_slot1, patch0_slot0, patch0_slot1,
+             release1_slot0, release1_slot1, final0, final1,
+             word0_before, word1_before, word0_shadow, word1_shadow,
+             word0_after_clear, word1_after_clear,
+             read_route_ok ? 1U : 0U, read_route_ok ? 1U : 0U,
+             read_route_ok, read_route_ok, patch_isolation_ok,
+             release_isolation_ok, patch_isolation_ok ? 1U : 0U,
+             patch_isolation_ok ? 1U : 0U,
+             release_isolation_ok ? 1U : 0U,
+             release_isolation_ok ? 1U : 0U, capacity_fill_records,
+             capacity_fill_failures, capacity_overflow_rc,
+             capacity_overflow_errno, capacity_ok ? "pass" : "fail",
+             capacity_ok ? R0LAB_PATCH_RECORD_CAPACITY : 0U,
+             capacity_ok ? 0U : 1U, slot0_activations, slot1_activations,
+             slot0_state, slot1_state,
+             strstr(hook0_reply, "page_record_routed=1") ? 1U : 0U,
+             strstr(hook1_reply, "page_record_routed=1") ? 1U : 0U,
+             strstr(select0_reply, "page_record_routed=1") ? 1U : 0U,
+             strstr(select1_reply, "page_record_routed=1") ? 1U : 0U,
+             hook0_clear_rc, hook1_clear_rc, clear0_rc, clear1_rc,
+             cleared0_rc, cleared1_rc, (int)g_r0lab_raw_handler_faults,
+             arm0_rc, arm1_rc, ready0_rc, ready1_rc, observed0_rc,
+             observed1_rc, hook0_arm_rc, hook1_arm_rc, select0_rc,
+             select1_rc, trigger0_rc, trigger1_rc, patch0_rc, patch1_rc,
+             release0_rc, release1_rc, status0_after_read_rc,
+             status1_after_slot0_rc, status0_after_exec_rc,
+             status1_after_read_rc, status0_after_slot1_rc,
+             status1_after_exec_rc, status0_after_patch0_rc,
+             status1_after_patch0_rc, status0_after_patch1_rc,
+             status1_after_patch1_rc, status0_after_release0_rc,
+             status1_after_release0_rc, status0_after_release1_rc,
+             status1_after_release1_rc, status0_capacity_rc,
+             status1_capacity_rc);
+    munmap(page1, page_size);
+    munmap(page0, page_size);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_raw_exit_hook_hold(const char *token_text, char *output,
                                     size_t output_size)
 {
@@ -9257,6 +9885,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw prctl patch records run ", 28)) {
         r0lab_raw_prctl_patch_records_run(args + 28, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw prctl hook routing run ", 27)) {
+        r0lab_raw_prctl_hook_routing_run(args + 27, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
