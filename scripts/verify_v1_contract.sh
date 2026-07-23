@@ -60,6 +60,7 @@ require_text "$RAW_COMPAT" 'lab_two_pfn_pass'
 require_text "$RAW_COMPAT" 'kpm_locked_target_mm_writer=proven'
 require_text "$VERIFICATION" 'scripts/test_v1_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_device.sh'
+require_text "$VERIFICATION" 'scripts/test_raw_exit_hook_device.sh'
 require_text "$VERIFICATION" 'scripts/probe_s4_abi_device.sh'
 require_text "$VERIFICATION" 'M0_LOOPS=100'
 require_text "$VERIFICATION" 'm4_ready'
@@ -102,6 +103,7 @@ scripts/test_raw_gup_hook_device.sh
 scripts/test_raw_fork_hook_device.sh
 scripts/test_raw_fault_hook_device.sh
 scripts/test_raw_fault_data_probe_device.sh
+scripts/test_raw_exit_hook_device.sh
 scripts/test_v1_device.sh
 '
 
@@ -255,6 +257,11 @@ require_text scripts/test_raw_fault_data_probe_device.sh 'target_mm_scoped=1'
 require_text scripts/test_raw_fault_data_probe_device.sh 'remote_only=1'
 require_text scripts/test_raw_fault_data_probe_device.sh 'fault_probe_read_events=1'
 require_text scripts/test_raw_fault_data_probe_device.sh 'op=33 result=0'
+require_text scripts/test_raw_exit_hook_device.sh 'raw mode=exit-hook-hold failures=0'
+require_text scripts/test_raw_exit_hook_device.sh 'symbol=exit_mmap'
+require_text scripts/test_raw_exit_hook_device.sh 'exit_hook_installed=1'
+require_text scripts/test_raw_exit_hook_device.sh 'op=34 result=0'
+require_text scripts/test_raw_exit_hook_device.sh 'op=22 result=0'
 require_text scripts/test_v1_device.sh 'run_phase s4_step scripts/test_s4_step_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase s4_raw_step scripts/test_s4_raw_step_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_gup_hide scripts/test_raw_gup_hide_device.sh'
@@ -271,9 +278,14 @@ require_text scripts/test_m4_device.sh 'record_backend=visible_clone record_stat
 require_text scripts/test_m4_device.sh 'source_perms=r-xp/r-xp/r-xp clone_perms=r-xp/r-xp/r-xp'
 require_text lab-app/src/main/cpp/labprobe.c 'm5 mode=s4-hold failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'm5 mode=s4-raw-step-hold failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=exit-hook-hold failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw exit hook hold ", 19)'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "m5 s4-raw-step-hold ", 20)'
 require_text kpm/r0lab.c 'r0lab_s4_monitor_worker'
 require_text kpm/r0lab.c 'r0lab_session_has_slots_locked'
 require_text kpm/r0lab.c 'r0lab_session_monitor_loop'
+require_text kpm/r0lab.c 'r0lab_raw_exit_mmap_before'
+require_text kpm/r0lab.c 'g_raw_page.clearing && !g_raw_page.target_exiting'
+require_text kpm/r0lab.c 'exit_hook=exit_mmap_observe'
 
-printf '%s\n' 'v1_contract=pass scripts=25 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step raw_gup_hide=primitive raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup result=pass'
+printf '%s\n' 'v1_contract=pass scripts=26 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step raw_gup_hide=primitive raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_exit_hook=exit_mmap_observe result=pass'

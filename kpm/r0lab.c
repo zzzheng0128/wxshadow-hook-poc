@@ -532,6 +532,7 @@ static bool r0lab_target_task_live(pid_t owner_tgid);
 static uint64_t r0lab_record_values(enum r0lab_event_op op, int result,
                                     uint64_t pc, uint64_t x0, uint64_t x30);
 static int r0lab_raw_wait_for_callbacks(void);
+static void r0lab_raw_unhook_except_exit(void);
 static void r0lab_raw_unhook(void);
 static void r0lab_raw_reset(struct mm_struct *mm);
 static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation);
@@ -3770,6 +3771,41 @@ static void r0lab_raw_syscall_before(hook_fargs1_t *args, void *udata)
     r0lab_unlock(flags);
 }
 
+static void r0lab_raw_exit_mmap_before(hook_fargs1_t *args, void *udata)
+{
+    void *mm = (void *)(unsigned long)args->arg0;
+    unsigned long flags;
+    unsigned long address = 0;
+    unsigned long state = 0;
+    uint32_t events = 0;
+    bool hit = false;
+
+    (void)udata;
+    flags = r0lab_lock();
+    if (!g_raw_page.exit_hook_installed) {
+        r0lab_unlock(flags);
+        return;
+    }
+    ++g_raw_inflight;
+    if (mm && g_raw_page.raw.mm == mm && g_raw_page.raw.address &&
+        g_raw_page.generation) {
+        ++g_raw_page.exit_hook_events;
+        events = g_raw_page.exit_hook_events;
+        address = g_raw_page.raw.address;
+        state = g_raw_page.raw.state;
+        hit = true;
+    }
+    r0lab_unlock(flags);
+
+    if (hit)
+        r0lab_record_values(R0LAB_EVENT_RAW_EXIT_MMAP_HIT, 0, address,
+                            state, events);
+
+    flags = r0lab_lock();
+    --g_raw_inflight;
+    r0lab_unlock(flags);
+}
+
 static void r0lab_raw_fork_before(hook_fargs2_t *args, void *udata)
 {
     void *oldmm = (void *)(unsigned long)args->arg1;
@@ -3918,6 +3954,22 @@ static void r0lab_raw_syscall_unhook(void)
         (void)r0lab_raw_wait_for_callbacks();
 }
 
+static void r0lab_raw_exit_unhook(void)
+{
+    bool installed;
+    unsigned long flags = r0lab_lock();
+
+    installed = g_raw_page.exit_hook_installed;
+    g_raw_page.exit_hook_installed = false;
+    r0lab_unlock(flags);
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+    if (installed)
+        hook_unwrap(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+}
+
 static void r0lab_raw_gup_unhook(void)
 {
     bool installed;
@@ -3942,6 +3994,12 @@ static void r0lab_raw_gup_unhook(void)
 }
 
 static void r0lab_raw_unhook(void)
+{
+    r0lab_raw_unhook_except_exit();
+    r0lab_raw_exit_unhook();
+}
+
+static void r0lab_raw_unhook_except_exit(void)
 {
     bool installed;
     unsigned long flags;
@@ -3988,15 +4046,40 @@ static void r0lab_raw_reset(struct mm_struct *mm)
 static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
 {
     void *shadow_kaddr = NULL;
+    bool exit_hook_installed = false;
     unsigned long flags = r0lab_lock();
 
     if (!mm)
         return;
     if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
-        shadow_kaddr = g_raw_page.raw.shadow_kaddr;
-        memset(&g_raw_page, 0, sizeof(g_raw_page));
+        exit_hook_installed = g_raw_page.exit_hook_installed;
+        if (!exit_hook_installed) {
+            shadow_kaddr = g_raw_page.raw.shadow_kaddr;
+            memset(&g_raw_page, 0, sizeof(g_raw_page));
+        }
     }
     r0lab_unlock(flags);
+
+    if (exit_hook_installed) {
+        g_mmput(mm);
+        flags = r0lab_lock();
+        if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
+            shadow_kaddr = g_raw_page.raw.shadow_kaddr;
+            g_raw_page.exit_hook_installed = false;
+        }
+        r0lab_unlock(flags);
+        (void)r0lab_raw_wait_for_callbacks();
+        hook_unwrap(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+        (void)r0lab_raw_wait_for_callbacks();
+        flags = r0lab_lock();
+        if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation)
+            memset(&g_raw_page, 0, sizeof(g_raw_page));
+        r0lab_unlock(flags);
+        if (shadow_kaddr && g_vfree)
+            g_vfree(shadow_kaddr);
+        return;
+    }
+
     if (shadow_kaddr && g_vfree)
         g_vfree(shadow_kaddr);
     g_mmput(mm);
@@ -4074,7 +4157,7 @@ static int r0lab_raw_monitor_worker(void *opaque)
 
     r0lab_record(R0LAB_EVENT_TARGET_EXIT, 0);
     result = r0lab_raw_restore_original(&g_raw_page.raw);
-    r0lab_raw_unhook();
+    r0lab_raw_unhook_except_exit();
     if (!result)
         result = r0lab_raw_wait_for_callbacks();
     r0lab_raw_reset_final(mm, generation);
@@ -4251,7 +4334,7 @@ target_exit:
         page->record.state = R0LAB_PAGE_RECORD_RESTORING;
     r0lab_unlock(flags);
     result = r0lab_raw_restore_original(&page->raw);
-    r0lab_raw_unhook();
+    r0lab_raw_unhook_except_exit();
     if (!result)
         result = r0lab_raw_wait_for_callbacks();
     r0lab_raw_reset_final(mm, generation);
@@ -4307,7 +4390,7 @@ static int r0lab_raw_worker_loop(void *opaque)
 
         arm_pending = g_raw_page.reserving;
         clear_pending = !arm_pending && g_raw_page.armed &&
-                        g_raw_page.clearing;
+                        g_raw_page.clearing && !g_raw_page.target_exiting;
         r0lab_unlock(flags);
         if (arm_pending) {
             r0lab_raw_arm_worker(&g_raw_page);
@@ -4492,6 +4575,9 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     uint32_t fault_hook_write_events;
     uint32_t fault_hook_exec_events;
     uint32_t fault_hook_failures;
+    bool exit_hook_installed;
+    uint32_t exit_hook_events;
+    uint32_t exit_hook_failures;
     bool fault_probe_armed;
     unsigned long fault_probe_address;
     pid_t fault_probe_reader_tgid;
@@ -4539,6 +4625,9 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     fault_hook_write_events = g_raw_page.fault_hook_write_events;
     fault_hook_exec_events = g_raw_page.fault_hook_exec_events;
     fault_hook_failures = g_raw_page.fault_hook_failures;
+    exit_hook_installed = g_raw_page.exit_hook_installed;
+    exit_hook_events = g_raw_page.exit_hook_events;
+    exit_hook_failures = g_raw_page.exit_hook_failures;
     fault_probe_armed = g_raw_page.fault_probe_armed;
     fault_probe_address = g_raw_page.fault_probe_address;
     fault_probe_reader_tgid = g_raw_page.fault_probe_reader_tgid;
@@ -4561,7 +4650,7 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
         active_kind = "original_step";
 
     snprintf(reply, sizeof(reply),
-             "raw_inspect page=%llx state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx gup_hide_active=%lu gup_begin_events=%lu gup_finish_events=%lu gup_hook_installed=%u gup_hook_begin_events=%u gup_hook_finish_events=%u gup_hook_failures=%u fork_hide_active=%lu fork_begin_events=%lu fork_finish_events=%lu fork_hook_installed=%u fork_hook_begin_events=%u fork_hook_finish_events=%u fork_hook_failures=%u fault_hook_installed=%u fault_hook_read_events=%u fault_hook_write_events=%u fault_hook_exec_events=%u fault_hook_failures=%u fault_probe_armed=%u fault_probe_page=%llx fault_probe_reader_tgid=%d fault_probe_read_events=%u fault_probe_write_events=%u fault_probe_exec_events=%u fault_probe_failures=%u record_backend=%s record_state=%s read_cycle=absent fault_hook=observe_only fault_probe=normal_anon_remote_gup original_view_after_shadow=%s gup_hide_primitive=%s fork_hide_primitive=%s\n",
+             "raw_inspect page=%llx state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx gup_hide_active=%lu gup_begin_events=%lu gup_finish_events=%lu gup_hook_installed=%u gup_hook_begin_events=%u gup_hook_finish_events=%u gup_hook_failures=%u fork_hide_active=%lu fork_begin_events=%lu fork_finish_events=%lu fork_hook_installed=%u fork_hook_begin_events=%u fork_hook_finish_events=%u fork_hook_failures=%u fault_hook_installed=%u fault_hook_read_events=%u fault_hook_write_events=%u fault_hook_exec_events=%u fault_hook_failures=%u exit_hook_installed=%u exit_hook_events=%u exit_hook_failures=%u fault_probe_armed=%u fault_probe_page=%llx fault_probe_reader_tgid=%d fault_probe_read_events=%u fault_probe_write_events=%u fault_probe_exec_events=%u fault_probe_failures=%u record_backend=%s record_state=%s read_cycle=absent fault_hook=observe_only exit_hook=exit_mmap_observe fault_probe=normal_anon_remote_gup original_view_after_shadow=%s gup_hide_primitive=%s fork_hide_primitive=%s\n",
              (uint64_t)address, state, activation_events, active_kind,
              source_pfn & 0xffffUL, shadow_pfn & 0xffffUL, gup_hide_active,
              gup_begin_events, gup_finish_events, gup_hook_installed ? 1 : 0,
@@ -4572,6 +4661,8 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
              fault_hook_installed ? 1 : 0, fault_hook_read_events,
              fault_hook_write_events, fault_hook_exec_events,
              fault_hook_failures,
+             exit_hook_installed ? 1 : 0, exit_hook_events,
+             exit_hook_failures,
              fault_probe_armed ? 1 : 0, (uint64_t)fault_probe_address,
              fault_probe_reader_tgid,
              fault_probe_read_events, fault_probe_write_events,
@@ -5131,6 +5222,112 @@ static long r0lab_raw_syscall_hook_clear(uint64_t token, char __user *out_msg,
     snprintf(reply, sizeof(reply),
              "raw_syscall_hook_cleared symbol=%s installed=0 hit_events=%u failures=%u\n",
              g_sys_getpid ? "getpid" : "absent", hit_events, failures);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_exit_hook_arm(uint64_t token, char __user *out_msg,
+                                    int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    unsigned long flags;
+    bool installed;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (!g_exit_mmap) {
+        result = R0LAB_ENOSYS;
+        goto record;
+    }
+
+    flags = r0lab_lock();
+    if (!g_raw_page.armed || g_raw_page.clearing ||
+        g_raw_page.transitioning ||
+        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+        g_session.owner_tgid != r0lab_current_tgid()) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    installed = g_raw_page.exit_hook_installed;
+    if (!installed) {
+        g_raw_page.exit_hook_events = 0;
+        g_raw_page.exit_hook_failures = 0;
+    }
+    r0lab_unlock(flags);
+
+    if (!installed) {
+        result = hook_wrap1(g_exit_mmap, r0lab_raw_exit_mmap_before,
+                            NULL, NULL);
+        if (result)
+            goto record;
+        flags = r0lab_lock();
+        if (g_raw_page.armed && !g_raw_page.clearing &&
+            g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
+            g_raw_page.exit_hook_installed = true;
+        } else {
+            result = R0LAB_EAGAIN;
+        }
+        r0lab_unlock(flags);
+        if (result) {
+            hook_unwrap(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+            goto record;
+        }
+    }
+
+    snprintf(reply, sizeof(reply),
+             "raw_exit_hook_ready symbol=exit_mmap installed=1 target_mm_scoped=1 observe_only=1 pte_switch=0 cleanup=monitor\n");
+    return r0lab_copy_reply(out_msg, outlen, reply);
+
+record:
+    r0lab_record(R0LAB_EVENT_REJECT, result);
+    return result;
+}
+
+static long r0lab_raw_exit_hook_status(uint64_t token, char __user *out_msg,
+                                       int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    unsigned long flags;
+    bool installed;
+    uint32_t hit_events;
+    uint32_t failures;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    flags = r0lab_lock();
+    installed = g_raw_page.exit_hook_installed;
+    hit_events = g_raw_page.exit_hook_events;
+    failures = g_raw_page.exit_hook_failures;
+    r0lab_unlock(flags);
+
+    snprintf(reply, sizeof(reply),
+             "raw_exit_hook_status symbol=%s installed=%u hit_events=%u failures=%u target_mm_scoped=1 observe_only=1 pte_switch=0 cleanup=monitor\n",
+             g_exit_mmap ? "exit_mmap" : "absent", installed ? 1 : 0,
+             hit_events, failures);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_exit_hook_clear(uint64_t token, char __user *out_msg,
+                                      int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    unsigned long flags;
+    uint32_t hit_events;
+    uint32_t failures;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    r0lab_raw_exit_unhook();
+    flags = r0lab_lock();
+    hit_events = g_raw_page.exit_hook_events;
+    failures = g_raw_page.exit_hook_failures;
+    r0lab_unlock(flags);
+    snprintf(reply, sizeof(reply),
+             "raw_exit_hook_cleared symbol=%s installed=0 hit_events=%u failures=%u\n",
+             g_exit_mmap ? "exit_mmap" : "absent", hit_events, failures);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -5930,6 +6127,27 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_syscall_hook_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw exit hook arm ", 18)) {
+        value = args + 18;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_exit_hook_arm(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw exit hook status ", 21)) {
+        value = args + 21;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_exit_hook_status(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw exit hook clear ", 20)) {
+        value = args + 20;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_exit_hook_clear(token, out_msg, outlen);
     }
     if (!strncmp(args, "raw gup hook arm ", 17)) {
         value = args + 17;
