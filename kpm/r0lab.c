@@ -54,6 +54,8 @@
 #define R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION 2U
 #define R0LAB_PRCTL_MAGIC 0x52304c42U
 #define R0LAB_PRCTL_OP_READ_CYCLE 1U
+#define R0LAB_PRCTL_OP_PATCH_WORD 2U
+#define R0LAB_PRCTL_OP_RELEASE_PATCH 3U
 
 #define R0LAB_EINVAL (-22)
 #define R0LAB_EPERM (-1)
@@ -107,6 +109,8 @@ enum r0lab_event_op {
     R0LAB_EVENT_RAW_ABORT_WRITE_RELEASE = 40,
     R0LAB_EVENT_S4_REG_WRITE = 41,
     R0LAB_EVENT_RAW_PRCTL_TRIGGER = 42,
+    R0LAB_EVENT_RAW_PRCTL_PATCH = 43,
+    R0LAB_EVENT_RAW_PRCTL_RELEASE = 44,
 };
 
 struct r0lab_event {
@@ -326,8 +330,14 @@ struct r0lab_raw_shadow_page {
     uint32_t syscall_hook_failures;
     uint32_t prctl_hook_events;
     uint32_t prctl_hook_read_cycle_events;
+    uint32_t prctl_hook_patch_events;
+    uint32_t prctl_hook_release_events;
     uint32_t prctl_hook_reject_events;
     uint32_t prctl_hook_failures;
+    bool prctl_patch_active;
+    unsigned long prctl_patch_address;
+    uint32_t prctl_patch_original_word;
+    uint32_t prctl_patch_word;
     uint32_t fault_probe_read_events;
     uint32_t fault_probe_write_events;
     uint32_t fault_probe_exec_events;
@@ -408,12 +418,14 @@ typedef void (*r0lab_up_read_fn_t)(void *sem);
 typedef void (*r0lab_raw_spin_fn_t)(void *lock);
 typedef void *(*r0lab_find_vma_fn_t)(void *mm, unsigned long addr);
 typedef void (*r0lab_sync_icache_dcache_fn_t)(unsigned long pte);
+typedef void (*r0lab_sync_icache_aliases_fn_t)(unsigned long start,
+                                               unsigned long end);
 typedef void (*r0lab_mte_sync_tags_fn_t)(unsigned long old_pte,
                                          unsigned long new_pte);
 typedef void (*r0lab_user_step_fn_t)(struct task_struct *task);
 
 KPM_NAME("r0lab-m1");
-KPM_VERSION("0.8.0");
+KPM_VERSION("0.9.0");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("r0hook research");
 KPM_DESCRIPTION("Controlled M0-M5 session, HWBP, UXN, clone, and lifecycle lab");
@@ -455,6 +467,7 @@ static r0lab_raw_spin_fn_t g_raw_spin_lock;
 static r0lab_raw_spin_fn_t g_raw_spin_unlock;
 static r0lab_find_vma_fn_t g_raw_find_vma;
 static r0lab_sync_icache_dcache_fn_t g_sync_icache_dcache;
+static r0lab_sync_icache_aliases_fn_t g_sync_icache_aliases;
 static r0lab_mte_sync_tags_fn_t g_mte_sync_tags;
 static void *g_do_mem_abort;
 static void *g_handle_mm_fault;
@@ -3711,6 +3724,12 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         g_raw_page.abort_write_release_last_far = far;
         g_raw_page.abort_write_release_last_result = write_release_result;
         g_raw_page.record.state = R0LAB_PAGE_RECORD_RESTORING;
+        if (!write_release_result) {
+            g_raw_page.prctl_patch_active = false;
+            g_raw_page.prctl_patch_address = 0;
+            g_raw_page.prctl_patch_original_word = 0;
+            g_raw_page.prctl_patch_word = 0;
+        }
         write_release_events = g_raw_page.abort_write_release_events;
         write_release_failures = g_raw_page.abort_write_release_failures;
         write_release_hit = true;
@@ -3998,22 +4017,42 @@ static void r0lab_raw_syscall_before(hook_fargs1_t *args, void *udata)
     r0lab_unlock(flags);
 }
 
+static int r0lab_raw_write_shadow_word(void *target, uint32_t value)
+{
+    if (!target || !g_sync_icache_aliases)
+        return R0LAB_ENOSYS;
+
+    memcpy(target, &value, sizeof(value));
+    g_sync_icache_aliases((unsigned long)target,
+                          (unsigned long)target + sizeof(value));
+    return 0;
+}
+
 static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
 {
     struct pt_regs *syscall_regs;
     struct mm_struct *current_mm = NULL;
+    void *patch_kaddr = NULL;
     unsigned long flags;
     unsigned long address = 0;
+    unsigned long page_address = 0;
     unsigned long state = 0;
     uint64_t token;
     uint64_t operation;
     uint64_t generation = 0;
     uint32_t events = 0;
     uint32_t read_cycle_events = 0;
+    uint32_t patch_events = 0;
+    uint32_t release_events = 0;
     uint32_t reject_events = 0;
+    uint32_t patch_before = 0;
+    uint32_t patch_after = 0;
+    uint32_t patch_original = 0;
     bool admitted = false;
     bool installed;
     bool should_begin_read_cycle = false;
+    bool should_patch = false;
+    bool should_release = false;
     int result = R0LAB_EPERM;
 
     (void)udata;
@@ -4036,16 +4075,14 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
         r0lab_unlock(flags);
         goto out;
     }
-    address = g_raw_page.raw.address;
+    page_address = g_raw_page.raw.address;
+    address = page_address;
     state = g_raw_page.raw.state;
     if (current_uid() != g_session.lab_uid || !g_session.active ||
         token != g_session.token ||
         g_session.owner_tgid != r0lab_current_tgid() ||
         !current_mm || current_mm != g_raw_page.raw.mm) {
         result = R0LAB_EPERM;
-    } else if (operation != R0LAB_PRCTL_OP_READ_CYCLE ||
-               syscall_regs->regs[3] || syscall_regs->regs[4]) {
-        result = R0LAB_EINVAL;
     } else if (!g_raw_page.armed || g_raw_page.clearing ||
                g_raw_page.transitioning ||
                g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
@@ -4053,30 +4090,113 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
                g_raw_page.raw.fork_hide_active ||
                g_raw_page.raw.read_cycle_active) {
         result = R0LAB_EAGAIN;
-    } else {
+    } else if (operation == R0LAB_PRCTL_OP_READ_CYCLE) {
+        if (syscall_regs->regs[3] || syscall_regs->regs[4]) {
+            result = R0LAB_EINVAL;
+            goto unlock_dispatch;
+        }
         g_raw_page.transitioning = true;
         generation = g_raw_page.generation;
         admitted = true;
         should_begin_read_cycle = true;
+    } else if (operation == R0LAB_PRCTL_OP_PATCH_WORD) {
+        address = syscall_regs->regs[3];
+        if (!g_sync_icache_aliases || !g_raw_page.raw.shadow_kaddr) {
+            result = R0LAB_ENOSYS;
+        } else if (syscall_regs->regs[4] >> 32 ||
+                   (address & (sizeof(uint32_t) - 1UL)) ||
+                   address < page_address ||
+                   address > page_address + R0LAB_RAW_PAGE_SIZE -
+                             sizeof(uint32_t)) {
+            result = R0LAB_EINVAL;
+        } else if (g_raw_page.prctl_patch_active &&
+                   g_raw_page.prctl_patch_address != address) {
+            result = R0LAB_EBUSY;
+        } else {
+            patch_kaddr = (char *)g_raw_page.raw.shadow_kaddr +
+                          (address - page_address);
+            memcpy(&patch_before, patch_kaddr, sizeof(patch_before));
+            patch_after = (uint32_t)syscall_regs->regs[4];
+            patch_original = g_raw_page.prctl_patch_active ?
+                             g_raw_page.prctl_patch_original_word :
+                             patch_before;
+            g_raw_page.transitioning = true;
+            generation = g_raw_page.generation;
+            admitted = true;
+            should_patch = true;
+        }
+    } else if (operation == R0LAB_PRCTL_OP_RELEASE_PATCH) {
+        address = syscall_regs->regs[3];
+        if (syscall_regs->regs[4] ||
+            (address & (sizeof(uint32_t) - 1UL)) ||
+            address < page_address ||
+            address > page_address + R0LAB_RAW_PAGE_SIZE -
+                      sizeof(uint32_t)) {
+            result = R0LAB_EINVAL;
+        } else if (!g_raw_page.prctl_patch_active ||
+                   g_raw_page.prctl_patch_address != address) {
+            result = R0LAB_ENOENT;
+        } else if (!g_sync_icache_aliases ||
+                   !g_raw_page.raw.shadow_kaddr) {
+            result = R0LAB_ENOSYS;
+        } else {
+            patch_kaddr = (char *)g_raw_page.raw.shadow_kaddr +
+                          (address - page_address);
+            memcpy(&patch_before, patch_kaddr, sizeof(patch_before));
+            patch_after = g_raw_page.prctl_patch_original_word;
+            patch_original = g_raw_page.prctl_patch_original_word;
+            g_raw_page.transitioning = true;
+            generation = g_raw_page.generation;
+            admitted = true;
+            should_release = true;
+        }
+    } else {
+        result = R0LAB_EINVAL;
     }
+
+unlock_dispatch:
     r0lab_unlock(flags);
 
     if (should_begin_read_cycle)
         result = r0lab_raw_begin_read_cycle(&g_raw_page.raw);
+    else if (should_patch || should_release)
+        result = r0lab_raw_write_shadow_word(patch_kaddr, patch_after);
 
     flags = r0lab_lock();
     if (admitted && g_raw_page.generation == generation) {
         g_raw_page.transitioning = false;
-        if (!result &&
+        if (!result && should_begin_read_cycle &&
             g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_READ) {
-            g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
             ++g_raw_page.prctl_hook_events;
             ++g_raw_page.prctl_hook_read_cycle_events;
+            g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+        } else if (!result && should_patch &&
+                   g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
+            ++g_raw_page.prctl_hook_events;
+            ++g_raw_page.prctl_hook_patch_events;
+            g_raw_page.prctl_patch_active = true;
+            g_raw_page.prctl_patch_address = address;
+            g_raw_page.prctl_patch_original_word = patch_original;
+            g_raw_page.prctl_patch_word = patch_after;
+        } else if (!result && should_release &&
+                   g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
+            ++g_raw_page.prctl_hook_events;
+            ++g_raw_page.prctl_hook_release_events;
+            g_raw_page.prctl_patch_active = false;
+            g_raw_page.prctl_patch_address = 0;
+            g_raw_page.prctl_patch_original_word = 0;
+            g_raw_page.prctl_patch_word = 0;
+        } else {
+            if (!result)
+                result = R0LAB_EAGAIN;
+            ++g_raw_page.prctl_hook_failures;
+        }
+        if (!result) {
             events = g_raw_page.prctl_hook_events;
             read_cycle_events = g_raw_page.prctl_hook_read_cycle_events;
+            patch_events = g_raw_page.prctl_hook_patch_events;
+            release_events = g_raw_page.prctl_hook_release_events;
             state = g_raw_page.raw.state;
-        } else {
-            ++g_raw_page.prctl_hook_failures;
         }
     } else if (admitted) {
         result = R0LAB_EAGAIN;
@@ -4094,6 +4214,14 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
     if (should_begin_read_cycle)
         r0lab_record_values(R0LAB_EVENT_RAW_SYSCALL_READ_CYCLE_BEGIN,
                             result, address, state, read_cycle_events);
+    else if (should_patch)
+        r0lab_record_values(R0LAB_EVENT_RAW_PRCTL_PATCH, result, address,
+                            patch_before,
+                            patch_after | ((uint64_t)patch_events << 32));
+    else if (should_release)
+        r0lab_record_values(R0LAB_EVENT_RAW_PRCTL_RELEASE, result, address,
+                            patch_before,
+                            patch_after | ((uint64_t)release_events << 32));
 
 out:
     if (current_mm)
@@ -6066,9 +6194,8 @@ static long r0lab_raw_syscall_hook_clear(uint64_t token, char __user *out_msg,
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_prctl_read_cycle_hook_arm(uint64_t token,
-                                                char __user *out_msg,
-                                                int outlen)
+static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
+                                     int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
     unsigned long flags;
@@ -6077,7 +6204,7 @@ static long r0lab_raw_prctl_read_cycle_hook_arm(uint64_t token,
 
     if (result)
         goto record;
-    if (!g_sys_prctl) {
+    if (!g_sys_prctl || !g_sync_icache_aliases) {
         result = R0LAB_ENOSYS;
         goto record;
     }
@@ -6100,6 +6227,8 @@ static long r0lab_raw_prctl_read_cycle_hook_arm(uint64_t token,
     if (!installed) {
         g_raw_page.prctl_hook_events = 0;
         g_raw_page.prctl_hook_read_cycle_events = 0;
+        g_raw_page.prctl_hook_patch_events = 0;
+        g_raw_page.prctl_hook_release_events = 0;
         g_raw_page.prctl_hook_reject_events = 0;
         g_raw_page.prctl_hook_failures = 0;
     }
@@ -6125,8 +6254,11 @@ static long r0lab_raw_prctl_read_cycle_hook_arm(uint64_t token,
     }
 
     snprintf(reply, sizeof(reply),
-             "raw_prctl_read_cycle_hook_ready symbol=prctl installed=1 abi=prctl_magic option=0x%x operation=%u token_arg=2 operation_arg=3 reserved_args=4,5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending passthrough=nonmagic\n",
-             R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE);
+             "raw_prctl_hook_ready symbol=prctl installed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u read_cycle_op=%u patch_word_op=%u release_patch_op=%u token_arg=2 operation_arg=3 address_arg=4 value_arg=5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_aligned_word cache_sync=sync_icache_aliases read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending passthrough=nonmagic\n",
+             R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+             R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
+             R0LAB_PRCTL_OP_READ_CYCLE, R0LAB_PRCTL_OP_PATCH_WORD,
+             R0LAB_PRCTL_OP_RELEASE_PATCH);
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -6134,17 +6266,21 @@ record:
     return result;
 }
 
-static long r0lab_raw_prctl_read_cycle_hook_status(uint64_t token,
-                                                   char __user *out_msg,
-                                                   int outlen)
+static long r0lab_raw_prctl_hook_status(uint64_t token, char __user *out_msg,
+                                        int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
     unsigned long flags;
     bool installed;
     uint32_t hit_events;
     uint32_t read_cycle_events;
+    uint32_t patch_events;
+    uint32_t release_events;
     uint32_t reject_events;
     uint32_t failures;
+    bool patch_active;
+    unsigned long patch_address;
+    uint32_t patch_word;
     unsigned long read_cycle_finish_events;
     int result = r0lab_validate_owner(token);
 
@@ -6154,31 +6290,41 @@ static long r0lab_raw_prctl_read_cycle_hook_status(uint64_t token,
     installed = g_raw_page.prctl_hook_installed;
     hit_events = g_raw_page.prctl_hook_events;
     read_cycle_events = g_raw_page.prctl_hook_read_cycle_events;
+    patch_events = g_raw_page.prctl_hook_patch_events;
+    release_events = g_raw_page.prctl_hook_release_events;
     reject_events = g_raw_page.prctl_hook_reject_events;
     failures = g_raw_page.prctl_hook_failures;
+    patch_active = g_raw_page.prctl_patch_active;
+    patch_address = g_raw_page.prctl_patch_address;
+    patch_word = g_raw_page.prctl_patch_word;
     read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
     r0lab_unlock(flags);
 
     snprintf(reply, sizeof(reply),
-             "raw_prctl_read_cycle_hook_status symbol=%s installed=%u abi=prctl_magic option=0x%x operation=%u hit_events=%u read_cycle_events=%u reject_events=%u failures=%u lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s passthrough=nonmagic\n",
+             "raw_prctl_hook_status symbol=%s installed=%u abi=prctl_magic option=0x%x operations=%u,%u,%u hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_address=%lx patch_word=%08x lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_aligned_word cache_sync=sync_icache_aliases read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s passthrough=nonmagic\n",
              g_sys_prctl ? "prctl" : "absent", installed ? 1 : 0,
-             R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE, hit_events,
-             read_cycle_events, reject_events, failures,
+             R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+             R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
+             hit_events, read_cycle_events, patch_events, release_events,
+             reject_events, failures, patch_active ? 1 : 0, patch_address,
+             patch_word,
              read_cycle_finish_events ? "proven" :
              (read_cycle_events ? "pending" : "absent"));
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_prctl_read_cycle_hook_clear(uint64_t token,
-                                                  char __user *out_msg,
-                                                  int outlen)
+static long r0lab_raw_prctl_hook_clear(uint64_t token, char __user *out_msg,
+                                       int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
     unsigned long flags;
     uint32_t hit_events;
     uint32_t read_cycle_events;
+    uint32_t patch_events;
+    uint32_t release_events;
     uint32_t reject_events;
     uint32_t failures;
+    bool patch_active;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -6187,13 +6333,17 @@ static long r0lab_raw_prctl_read_cycle_hook_clear(uint64_t token,
     flags = r0lab_lock();
     hit_events = g_raw_page.prctl_hook_events;
     read_cycle_events = g_raw_page.prctl_hook_read_cycle_events;
+    patch_events = g_raw_page.prctl_hook_patch_events;
+    release_events = g_raw_page.prctl_hook_release_events;
     reject_events = g_raw_page.prctl_hook_reject_events;
     failures = g_raw_page.prctl_hook_failures;
+    patch_active = g_raw_page.prctl_patch_active;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_prctl_read_cycle_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u reject_events=%u failures=%u\n",
+             "raw_prctl_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u\n",
              g_sys_prctl ? "prctl" : "absent", hit_events,
-             read_cycle_events, reject_events, failures);
+             read_cycle_events, patch_events, release_events, reject_events,
+             failures, patch_active ? 1 : 0);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -6772,6 +6922,9 @@ static int r0lab_init_raw_bridge(void)
         r0lab_lookup_first("find_vma.cfi_jt", "find_vma");
     g_sync_icache_dcache = (r0lab_sync_icache_dcache_fn_t)
         r0lab_lookup_first("__sync_icache_dcache", "__sync_icache_dcache.cfi_jt");
+    g_sync_icache_aliases = (r0lab_sync_icache_aliases_fn_t)
+        r0lab_lookup_first("sync_icache_aliases.cfi_jt",
+                           "sync_icache_aliases");
     g_mte_sync_tags = (r0lab_mte_sync_tags_fn_t)
         r0lab_lookup_first("mte_sync_tags", "mte_sync_tags.cfi_jt");
 
@@ -7209,28 +7362,26 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             return R0LAB_EINVAL;
         return r0lab_raw_syscall_hook_clear(token, out_msg, outlen);
     }
-    if (!strncmp(args, "raw prctl read cycle hook arm ", 30)) {
-        value = args + 30;
+    if (!strncmp(args, "raw prctl hook arm ", 19)) {
+        value = args + 19;
         if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
-        return r0lab_raw_prctl_read_cycle_hook_arm(token, out_msg, outlen);
+        return r0lab_raw_prctl_hook_arm(token, out_msg, outlen);
     }
-    if (!strncmp(args, "raw prctl read cycle hook status ", 33)) {
-        value = args + 33;
+    if (!strncmp(args, "raw prctl hook status ", 22)) {
+        value = args + 22;
         if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
-        return r0lab_raw_prctl_read_cycle_hook_status(token, out_msg,
-                                                      outlen);
+        return r0lab_raw_prctl_hook_status(token, out_msg, outlen);
     }
-    if (!strncmp(args, "raw prctl read cycle hook clear ", 32)) {
-        value = args + 32;
+    if (!strncmp(args, "raw prctl hook clear ", 21)) {
+        value = args + 21;
         if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
-        return r0lab_raw_prctl_read_cycle_hook_clear(token, out_msg,
-                                                     outlen);
+        return r0lab_raw_prctl_hook_clear(token, out_msg, outlen);
     }
     if (!strncmp(args, "raw exit hook arm ", 18)) {
         value = args + 18;

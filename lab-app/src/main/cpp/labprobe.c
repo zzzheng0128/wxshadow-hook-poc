@@ -24,12 +24,15 @@
 #define R0LAB_M3_PAGE_SIZE 4096U
 #define R0LAB_M3_CODE_MOV_W0_42 0x52800540U
 #define R0LAB_M4_CODE_MOV_W0_99 0x52800c60U
+#define R0LAB_CODE_MOV_W0_77 0x528009a0U
 #define R0LAB_M3_CODE_RET 0xd65f03c0U
 #define R0LAB_S4_CODE_BRK_7 0xd42000e0U
 #define R0LAB_S4_RAW_REG_VALUE 73
 #define R0LAB_FAULT_PROBE_WORD 0x13579bdfU
 #define R0LAB_PRCTL_MAGIC 0x52304c42U
 #define R0LAB_PRCTL_OP_READ_CYCLE 1U
+#define R0LAB_PRCTL_OP_PATCH_WORD 2U
+#define R0LAB_PRCTL_OP_RELEASE_PATCH 3U
 #define R0LAB_PRCTL_GET_DUMPABLE 3U
 
 static pthread_mutex_t g_r0lab_control_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -3185,9 +3188,9 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     size_t page_size;
     char command[128];
     char reply[256] = {0};
-    char hook_reply[768] = {0};
-    char hook_status_before[768] = {0};
-    char hook_status_after[768] = {0};
+    char hook_reply[1024] = {0};
+    char hook_status_before[1024] = {0};
+    char hook_status_after[1024] = {0};
     char hook_clear_reply[512] = {0};
     char inspect_reply[2048] = {0};
     unsigned int activations = 0;
@@ -3195,6 +3198,8 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     uint32_t word_before = 0;
     uint32_t word_shadow = 0;
     uint32_t shadow_after_reject = 0;
+    uint32_t word_after_patch = 0;
+    uint32_t word_after_release = 0;
     uint32_t original_read_word = 0;
     uint32_t word_after_resume = 0;
     uint32_t word_after_clear = 0;
@@ -3204,6 +3209,8 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     long hook_arm_rc = -1;
     long passthrough_before = -1;
     long reject_rc = -1;
+    long patch_rc = -1;
+    long release_rc = -1;
     long trigger_rc = -1;
     long passthrough_after = -1;
     long hook_status_before_rc = -1;
@@ -3214,6 +3221,8 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     long cleared_rc = -1;
     int normal_value = -1;
     int shadow_value = -1;
+    int patch_value = -1;
+    int release_value = -1;
     int resume_value = -1;
     int restored_value = -1;
     int reject_errno = 0;
@@ -3289,7 +3298,7 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
         ++failures;
 
     snprintf(command, sizeof(command),
-             "raw prctl read cycle hook arm 0x%llx",
+             "raw prctl hook arm 0x%llx",
              (unsigned long long)token);
     hook_arm_rc = r0lab_control_raw(command, hook_reply, sizeof(hook_reply));
     if (hook_arm_rc >= 0) {
@@ -3298,9 +3307,24 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
         errno = 0;
         reject_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
                             (unsigned long)(token ^ 1ULL),
-                            R0LAB_PRCTL_OP_READ_CYCLE, 0, 0);
+                            R0LAB_PRCTL_OP_PATCH_WORD,
+                            (unsigned long)(uintptr_t)page,
+                            R0LAB_CODE_MOV_W0_77);
         reject_errno = errno;
         shadow_after_reject = readable_code[0];
+        patch_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                           (unsigned long)token,
+                           R0LAB_PRCTL_OP_PATCH_WORD,
+                           (unsigned long)(uintptr_t)page,
+                           R0LAB_CODE_MOV_W0_77);
+        word_after_patch = readable_code[0];
+        patch_value = ((int (*)(void))page)();
+        release_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                             (unsigned long)token,
+                             R0LAB_PRCTL_OP_RELEASE_PATCH,
+                             (unsigned long)(uintptr_t)page, 0);
+        word_after_release = readable_code[0];
+        release_value = ((int (*)(void))page)();
         trigger_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
                              (unsigned long)token,
                              R0LAB_PRCTL_OP_READ_CYCLE, 0, 0);
@@ -3310,7 +3334,7 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     }
 
     snprintf(command, sizeof(command),
-             "raw prctl read cycle hook status 0x%llx",
+             "raw prctl hook status 0x%llx",
              (unsigned long long)token);
     hook_status_before_rc = r0lab_control_raw(command, hook_status_before,
                                               sizeof(hook_status_before));
@@ -3321,7 +3345,7 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     }
 
     snprintf(command, sizeof(command),
-             "raw prctl read cycle hook status 0x%llx",
+             "raw prctl hook status 0x%llx",
              (unsigned long long)token);
     hook_status_after_rc = r0lab_control_raw(command, hook_status_after,
                                              sizeof(hook_status_after));
@@ -3333,32 +3357,49 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     if (hook_arm_rc < 0 || passthrough_before < 0 ||
         reject_rc != -1 || reject_errno != EPERM ||
         shadow_after_reject != R0LAB_M4_CODE_MOV_W0_99 ||
+        patch_rc != 0 || patch_value != 77 ||
+        word_after_patch != R0LAB_CODE_MOV_W0_77 ||
+        release_rc != 0 || release_value != 99 ||
+        word_after_release != R0LAB_M4_CODE_MOV_W0_99 ||
         passthrough_after != passthrough_before || trigger_rc != 0 ||
         hook_status_before_rc < 0 || hook_status_after_rc < 0 ||
         inspect_rc < 0 ||
-        !strstr(hook_reply, "raw_prctl_read_cycle_hook_ready") ||
+        !strstr(hook_reply, "raw_prctl_hook_ready") ||
         !strstr(hook_reply, "symbol=prctl") ||
         !strstr(hook_reply, "abi=prctl_magic") ||
         !strstr(hook_reply, "option=0x52304c42") ||
-        !strstr(hook_reply, "operation=1") ||
+        !strstr(hook_reply, "operations=1,2,3") ||
+        !strstr(hook_reply, "read_cycle_op=1") ||
+        !strstr(hook_reply, "patch_word_op=2") ||
+        !strstr(hook_reply, "release_patch_op=3") ||
         !strstr(hook_reply, "lab_uid_scoped=1") ||
         !strstr(hook_reply, "target_mm_scoped=1") ||
         !strstr(hook_reply, "token_scoped=1") ||
+        !strstr(hook_reply, "patch_scope=single_aligned_word") ||
+        !strstr(hook_reply, "cache_sync=sync_icache_aliases") ||
         !strstr(hook_reply, "read_cycle=uxn_original_exec_resume") ||
         !strstr(hook_reply, "observe_only=0") ||
         !strstr(hook_reply, "pte_switch=1") ||
         !strstr(hook_reply, "data_fault=absent") ||
         !strstr(hook_reply, "passthrough=nonmagic") ||
         !strstr(hook_status_before, "installed=1") ||
-        !strstr(hook_status_before, "hit_events=1") ||
+        !strstr(hook_status_before, "operations=1,2,3") ||
+        !strstr(hook_status_before, "hit_events=3") ||
         !strstr(hook_status_before, "read_cycle_events=1") ||
+        !strstr(hook_status_before, "patch_events=1") ||
+        !strstr(hook_status_before, "release_events=1") ||
         !strstr(hook_status_before, "reject_events=1") ||
+        !strstr(hook_status_before, "patch_active=0") ||
         !strstr(hook_status_before, "exec_resume=pending") ||
         !strstr(hook_status_before, "failures=0") ||
         !strstr(hook_status_after, "installed=1") ||
-        !strstr(hook_status_after, "hit_events=1") ||
+        !strstr(hook_status_after, "operations=1,2,3") ||
+        !strstr(hook_status_after, "hit_events=3") ||
         !strstr(hook_status_after, "read_cycle_events=1") ||
+        !strstr(hook_status_after, "patch_events=1") ||
+        !strstr(hook_status_after, "release_events=1") ||
         !strstr(hook_status_after, "reject_events=1") ||
+        !strstr(hook_status_after, "patch_active=0") ||
         !strstr(hook_status_after, "exec_resume=proven") ||
         !strstr(hook_status_after, "failures=0") ||
         !strstr(inspect_reply, "active_kind=shadow_rx") ||
@@ -3388,7 +3429,7 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
     }
 
     snprintf(command, sizeof(command),
-             "raw prctl read cycle hook clear 0x%llx",
+             "raw prctl hook clear 0x%llx",
              (unsigned long long)token);
     hook_clear_rc = r0lab_control_raw(command, hook_clear_reply,
                                       sizeof(hook_clear_reply));
@@ -3411,16 +3452,20 @@ clear:
 
 finish:
     if (normal_value != 42 || shadow_value != 99 ||
+        patch_value != 77 || release_value != 99 ||
         resume_value != 99 || restored_value != 42 ||
         word_before != R0LAB_M3_CODE_MOV_W0_42 ||
         word_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
         shadow_after_reject != R0LAB_M4_CODE_MOV_W0_99 ||
+        word_after_patch != R0LAB_CODE_MOV_W0_77 ||
+        word_after_release != R0LAB_M4_CODE_MOV_W0_99 ||
         original_read_word != R0LAB_M3_CODE_MOV_W0_42 ||
         word_after_resume != R0LAB_M4_CODE_MOV_W0_99 ||
         word_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
         arm_rc < 0 || ready_rc < 0 || observed_rc < 0 ||
         hook_arm_rc < 0 || passthrough_before < 0 ||
         reject_rc != -1 || reject_errno != EPERM ||
+        patch_rc != 0 || release_rc != 0 ||
         passthrough_after != passthrough_before || trigger_rc != 0 ||
         hook_status_before_rc < 0 || hook_status_after_rc < 0 ||
         hook_clear_rc < 0 || inspect_rc < 0 || clear_rc < 0 ||
@@ -3434,14 +3479,17 @@ finish:
         g_r0lab_raw_handler_faults)
         ++failures;
     snprintf(output, output_size,
-             "raw mode=prctl-read-cycle failures=%d trigger=prctl_magic option=%08x operation=%u read_cycle=uxn_original_exec_resume data_fault=absent pte_switch=1 exec_resume=1 normal_value=%d shadow_value=%d reject_rc=%ld reject_errno=%d shadow_after_reject=%08x original_read_word=%08x resume_value=%d shadow_after_resume=%08x restored_value=%d words=%08x/%08x/%08x/%08x/%08x activations=%u state=%lu passthrough_before=%ld trigger_rc=%ld passthrough_after=%ld passthrough_stress_iterations=%lu passthrough_stress_failures=%lu passthrough_thread_rc=%d passthrough_join_rc=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_before_rc=%ld hook_status_after_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status_before=\"%s\" status_after=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
+             "raw mode=prctl-dispatch failures=%d trigger=prctl_magic option=%08x operations=%u,%u,%u dispatch=patch_word,release_patch,read_cycle read_cycle=uxn_original_exec_resume patch_scope=single_aligned_word cache_sync=sync_icache_aliases data_fault=absent pte_switch=1 exec_resume=1 normal_value=%d shadow_value=%d reject_rc=%ld reject_errno=%d shadow_after_reject=%08x patch_rc=%ld patch_value=%d patch_word=%08x release_rc=%ld release_value=%d released_word=%08x trigger_rc=%ld original_read_word=%08x resume_value=%d shadow_after_resume=%08x restored_value=%d words=%08x/%08x/%08x/%08x/%08x/%08x/%08x activations=%u state=%lu passthrough_before=%ld passthrough_after=%ld passthrough_stress_iterations=%lu passthrough_stress_failures=%lu passthrough_thread_rc=%d passthrough_join_rc=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_before_rc=%ld hook_status_after_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status_before=\"%s\" status_after=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
              failures, R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
+             R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
              normal_value, shadow_value, reject_rc, reject_errno,
-             shadow_after_reject, original_read_word, resume_value,
-             word_after_resume, restored_value, word_before, word_shadow,
-             original_read_word, word_after_resume, word_after_clear,
-             activations, state, passthrough_before, trigger_rc,
-             passthrough_after,
+             shadow_after_reject, patch_rc, patch_value, word_after_patch,
+             release_rc, release_value, word_after_release, trigger_rc,
+             original_read_word, resume_value, word_after_resume,
+             restored_value, word_before, word_shadow,
+             shadow_after_reject, word_after_patch, word_after_release,
+             original_read_word, word_after_clear, activations, state,
+             passthrough_before, passthrough_after,
              atomic_load_explicit(&passthrough_stress.iterations,
                                   memory_order_relaxed),
              atomic_load_explicit(&passthrough_stress.failures,
