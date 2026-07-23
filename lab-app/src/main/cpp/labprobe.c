@@ -33,6 +33,9 @@
 #define R0LAB_PRCTL_OP_READ_CYCLE 1U
 #define R0LAB_PRCTL_OP_PATCH_WORD 2U
 #define R0LAB_PRCTL_OP_RELEASE_PATCH 3U
+#define R0LAB_PRCTL_OP_PATCH_RANGE 4U
+#define R0LAB_PRCTL_OP_RELEASE_RANGE 5U
+#define R0LAB_PATCH_RECORD_CAPACITY 1024U
 #define R0LAB_PRCTL_GET_DUMPABLE 3U
 
 static pthread_mutex_t g_r0lab_control_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -80,6 +83,13 @@ struct r0lab_prctl_passthrough_stress {
     atomic_ulong iterations;
     atomic_ulong failures;
     long expected;
+};
+
+struct r0lab_prctl_patch_request {
+    uint64_t address;
+    uint32_t length;
+    uint32_t flags;
+    uint8_t data[16];
 };
 
 extern char **environ;
@@ -3368,14 +3378,22 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
         !strstr(hook_reply, "symbol=prctl") ||
         !strstr(hook_reply, "abi=prctl_magic") ||
         !strstr(hook_reply, "option=0x52304c42") ||
-        !strstr(hook_reply, "operations=1,2,3") ||
+        !strstr(hook_reply, "operations=1,2,3,4,5") ||
         !strstr(hook_reply, "read_cycle_op=1") ||
         !strstr(hook_reply, "patch_word_op=2") ||
         !strstr(hook_reply, "release_patch_op=3") ||
+        !strstr(hook_reply, "patch_range_op=4") ||
+        !strstr(hook_reply, "release_range_op=5") ||
         !strstr(hook_reply, "lab_uid_scoped=1") ||
         !strstr(hook_reply, "target_mm_scoped=1") ||
         !strstr(hook_reply, "token_scoped=1") ||
-        !strstr(hook_reply, "patch_scope=single_aligned_word") ||
+        !strstr(hook_reply, "patch_scope=single_page_ranges") ||
+        !strstr(hook_reply, "patch_capacity=1024") ||
+        !strstr(hook_reply, "overlap=version_last_write_wins") ||
+        !strstr(hook_reply, "rebuild=original_seed_active_records") ||
+        !strstr(hook_reply, "release=exact_start") ||
+        !strstr(hook_reply, "dirty_tracking=byte_bitmap") ||
+        !strstr(hook_reply, "user_copy=copy_from_user_nofault") ||
         !strstr(hook_reply, "cache_sync=sync_icache_aliases") ||
         !strstr(hook_reply, "read_cycle=uxn_original_exec_resume") ||
         !strstr(hook_reply, "observe_only=0") ||
@@ -3383,23 +3401,29 @@ static int r0lab_raw_prctl_read_cycle_run(const char *token_text,
         !strstr(hook_reply, "data_fault=absent") ||
         !strstr(hook_reply, "passthrough=nonmagic") ||
         !strstr(hook_status_before, "installed=1") ||
-        !strstr(hook_status_before, "operations=1,2,3") ||
+        !strstr(hook_status_before, "operations=1,2,3,4,5") ||
         !strstr(hook_status_before, "hit_events=3") ||
         !strstr(hook_status_before, "read_cycle_events=1") ||
         !strstr(hook_status_before, "patch_events=1") ||
         !strstr(hook_status_before, "release_events=1") ||
         !strstr(hook_status_before, "reject_events=1") ||
         !strstr(hook_status_before, "patch_active=0") ||
+        !strstr(hook_status_before, "patch_record_slots=1") ||
+        !strstr(hook_status_before, "patch_active_count=0") ||
+        !strstr(hook_status_before, "patch_dirty_bytes=0") ||
         !strstr(hook_status_before, "exec_resume=pending") ||
         !strstr(hook_status_before, "failures=0") ||
         !strstr(hook_status_after, "installed=1") ||
-        !strstr(hook_status_after, "operations=1,2,3") ||
+        !strstr(hook_status_after, "operations=1,2,3,4,5") ||
         !strstr(hook_status_after, "hit_events=3") ||
         !strstr(hook_status_after, "read_cycle_events=1") ||
         !strstr(hook_status_after, "patch_events=1") ||
         !strstr(hook_status_after, "release_events=1") ||
         !strstr(hook_status_after, "reject_events=1") ||
         !strstr(hook_status_after, "patch_active=0") ||
+        !strstr(hook_status_after, "patch_record_slots=1") ||
+        !strstr(hook_status_after, "patch_active_count=0") ||
+        !strstr(hook_status_after, "patch_dirty_bytes=0") ||
         !strstr(hook_status_after, "exec_resume=proven") ||
         !strstr(hook_status_after, "failures=0") ||
         !strstr(inspect_reply, "active_kind=shadow_rx") ||
@@ -3479,9 +3503,10 @@ finish:
         g_r0lab_raw_handler_faults)
         ++failures;
     snprintf(output, output_size,
-             "raw mode=prctl-dispatch failures=%d trigger=prctl_magic option=%08x operations=%u,%u,%u dispatch=patch_word,release_patch,read_cycle read_cycle=uxn_original_exec_resume patch_scope=single_aligned_word cache_sync=sync_icache_aliases data_fault=absent pte_switch=1 exec_resume=1 normal_value=%d shadow_value=%d reject_rc=%ld reject_errno=%d shadow_after_reject=%08x patch_rc=%ld patch_value=%d patch_word=%08x release_rc=%ld release_value=%d released_word=%08x trigger_rc=%ld original_read_word=%08x resume_value=%d shadow_after_resume=%08x restored_value=%d words=%08x/%08x/%08x/%08x/%08x/%08x/%08x activations=%u state=%lu passthrough_before=%ld passthrough_after=%ld passthrough_stress_iterations=%lu passthrough_stress_failures=%lu passthrough_thread_rc=%d passthrough_join_rc=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_before_rc=%ld hook_status_after_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status_before=\"%s\" status_after=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
+             "raw mode=prctl-dispatch failures=%d trigger=prctl_magic option=%08x operations=%u,%u,%u,%u,%u dispatch=patch_word,release_patch,patch_range,release_range,read_cycle read_cycle=uxn_original_exec_resume patch_scope=single_page_ranges patch_capacity=1024 overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap user_copy=copy_from_user_nofault cache_sync=sync_icache_aliases data_fault=absent pte_switch=1 exec_resume=1 normal_value=%d shadow_value=%d reject_rc=%ld reject_errno=%d shadow_after_reject=%08x patch_rc=%ld patch_value=%d patch_word=%08x release_rc=%ld release_value=%d released_word=%08x trigger_rc=%ld original_read_word=%08x resume_value=%d shadow_after_resume=%08x restored_value=%d words=%08x/%08x/%08x/%08x/%08x/%08x/%08x activations=%u state=%lu passthrough_before=%ld passthrough_after=%ld passthrough_stress_iterations=%lu passthrough_stress_failures=%lu passthrough_thread_rc=%d passthrough_join_rc=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_before_rc=%ld hook_status_after_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status_before=\"%s\" status_after=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
              failures, R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
              R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
+             R0LAB_PRCTL_OP_PATCH_RANGE, R0LAB_PRCTL_OP_RELEASE_RANGE,
              normal_value, shadow_value, reject_rc, reject_errno,
              shadow_after_reject, patch_rc, patch_value, word_after_patch,
              release_rc, release_value, word_after_release, trigger_rc,
@@ -3501,6 +3526,381 @@ finish:
              (int)g_r0lab_raw_handler_faults, hook_reply,
              hook_status_before, hook_status_after, hook_clear_reply,
              inspect_reply);
+    munmap(page, page_size);
+    return failures ? -1 : 0;
+}
+
+static int r0lab_raw_prctl_patch_records_run(const char *token_text,
+                                             char *output,
+                                             size_t output_size)
+{
+    static const uint8_t patch_a[8] =
+        {0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18};
+    static const uint8_t patch_b[8] =
+        {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28};
+    static const uint8_t patch_c[4] = {0x31, 0x32, 0x33, 0x34};
+    static const uint8_t expected_after_b[12] =
+        {0x11, 0x12, 0x13, 0x14, 0x21, 0x22, 0x23, 0x24,
+         0x25, 0x26, 0x27, 0x28};
+    static const uint8_t expected_after_release_b[12] =
+        {0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+         0x00, 0x00, 0x00, 0x00};
+    static const uint8_t expected_after_update_a[12] =
+        {0x31, 0x32, 0x33, 0x34, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00};
+    static const uint8_t expected_original[12] = {0};
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    struct r0lab_prctl_patch_request request = {0};
+    uint8_t snapshot_after_a[12] = {0};
+    uint8_t snapshot_after_b[12] = {0};
+    uint8_t snapshot_after_release_b[12] = {0};
+    uint8_t snapshot_after_update_a[12] = {0};
+    uint8_t snapshot_after_invalid[12] = {0};
+    uint8_t snapshot_after_release_a[12] = {0};
+    uint32_t *code;
+    uint64_t token;
+    void *page = MAP_FAILED;
+    size_t page_size;
+    char command[128];
+    char reply[256] = {0};
+    char hook_reply[1024] = {0};
+    char status_a[1024] = {0};
+    char status_b[1024] = {0};
+    char status_release_b[1024] = {0};
+    char status_update_a[1024] = {0};
+    char status_final[1024] = {0};
+    char status_cleanup[1024] = {0};
+    char status_capacity[1024] = {0};
+    long arm_rc = -1;
+    long ready_rc = -1;
+    long observed_rc = -1;
+    long hook_arm_rc = -1;
+    long apply_a_rc = -1;
+    long apply_b_rc = -1;
+    long release_b_rc = -1;
+    long update_a_rc = -1;
+    long invalid_rc = -1;
+    long release_a_rc = -1;
+    long cleanup_patch_rc = -1;
+    long status_a_rc = -1;
+    long status_b_rc = -1;
+    long status_release_b_rc = -1;
+    long status_update_a_rc = -1;
+    long status_final_rc = -1;
+    long status_cleanup_rc = -1;
+    long status_capacity_rc = -1;
+    long hook_clear_rc = -1;
+    long clear_rc = -1;
+    long cleared_rc = -1;
+    long capacity_fill_failures = 0;
+    long capacity_overflow_rc = -2;
+    unsigned int capacity_fill_records = 0;
+    unsigned int capacity_index;
+    int invalid_errno = 0;
+    int capacity_overflow_errno = 0;
+    int normal_value = -1;
+    int shadow_value = -1;
+    int restored_value = -1;
+    int handler_installed = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw prctl patch records token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    page = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw prctl patch records mmap errno=%d", errno);
+        return -1;
+    }
+    code = page;
+    code[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page, (char *)page + page_size);
+    if (mprotect(page, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw prctl patch records mprotect errno=%d",
+                 errno);
+        munmap(page, page_size);
+        return -1;
+    }
+    normal_value = ((int (*)(void))page)();
+
+    snprintf(command, sizeof(command), "raw arm 0x%llx 0x%llx",
+             (unsigned long long)token, (unsigned long long)(uintptr_t)page);
+    arm_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm_rc < 0)
+        goto finish;
+    ready_rc = r0lab_m3_wait_for("raw ready", token);
+    if (ready_rc < 0)
+        goto clear;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page = page;
+    g_r0lab_raw_signal_page_size = page_size;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear;
+    handler_installed = 1;
+    shadow_value = ((int (*)(void))page)();
+
+    snprintf(command, sizeof(command), "raw observed 0x%llx",
+             (unsigned long long)token);
+    observed_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    snprintf(command, sizeof(command), "raw prctl hook arm 0x%llx",
+             (unsigned long long)token);
+    hook_arm_rc = r0lab_control_raw(command, hook_reply, sizeof(hook_reply));
+    if (hook_arm_rc < 0)
+        goto clear;
+
+    request.address = (uint64_t)(uintptr_t)((uint8_t *)page + 64);
+    request.length = sizeof(patch_a);
+    memcpy(request.data, patch_a, sizeof(patch_a));
+    apply_a_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                         (unsigned long)token, R0LAB_PRCTL_OP_PATCH_RANGE,
+                         (unsigned long)(uintptr_t)&request,
+                         sizeof(request.address) + sizeof(request.length) +
+                             sizeof(request.flags) + request.length);
+    memcpy(snapshot_after_a, (uint8_t *)page + 64, sizeof(snapshot_after_a));
+    snprintf(command, sizeof(command), "raw prctl hook status 0x%llx",
+             (unsigned long long)token);
+    status_a_rc = r0lab_control_raw(command, status_a, sizeof(status_a));
+
+    memset(&request, 0, sizeof(request));
+    request.address = (uint64_t)(uintptr_t)((uint8_t *)page + 68);
+    request.length = sizeof(patch_b);
+    memcpy(request.data, patch_b, sizeof(patch_b));
+    apply_b_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                         (unsigned long)token, R0LAB_PRCTL_OP_PATCH_RANGE,
+                         (unsigned long)(uintptr_t)&request,
+                         sizeof(request.address) + sizeof(request.length) +
+                             sizeof(request.flags) + request.length);
+    memcpy(snapshot_after_b, (uint8_t *)page + 64, sizeof(snapshot_after_b));
+    status_b_rc = r0lab_control_raw(command, status_b, sizeof(status_b));
+
+    release_b_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                           (unsigned long)token,
+                           R0LAB_PRCTL_OP_RELEASE_RANGE,
+                           (unsigned long)(uintptr_t)((uint8_t *)page + 68), 0);
+    memcpy(snapshot_after_release_b, (uint8_t *)page + 64,
+           sizeof(snapshot_after_release_b));
+    status_release_b_rc =
+        r0lab_control_raw(command, status_release_b, sizeof(status_release_b));
+
+    memset(&request, 0, sizeof(request));
+    request.address = (uint64_t)(uintptr_t)((uint8_t *)page + 64);
+    request.length = sizeof(patch_c);
+    memcpy(request.data, patch_c, sizeof(patch_c));
+    update_a_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                          (unsigned long)token, R0LAB_PRCTL_OP_PATCH_RANGE,
+                          (unsigned long)(uintptr_t)&request,
+                          sizeof(request.address) + sizeof(request.length) +
+                              sizeof(request.flags) + request.length);
+    memcpy(snapshot_after_update_a, (uint8_t *)page + 64,
+           sizeof(snapshot_after_update_a));
+    status_update_a_rc =
+        r0lab_control_raw(command, status_update_a, sizeof(status_update_a));
+
+    memset(&request, 0, sizeof(request));
+    request.address = (uint64_t)(uintptr_t)((uint8_t *)page + page_size - 2);
+    request.length = sizeof(patch_c);
+    memcpy(request.data, patch_c, sizeof(patch_c));
+    errno = 0;
+    invalid_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                         (unsigned long)token, R0LAB_PRCTL_OP_PATCH_RANGE,
+                         (unsigned long)(uintptr_t)&request,
+                         sizeof(request.address) + sizeof(request.length) +
+                             sizeof(request.flags) + request.length);
+    invalid_errno = errno;
+    memcpy(snapshot_after_invalid, (uint8_t *)page + 64,
+           sizeof(snapshot_after_invalid));
+
+    release_a_rc = syscall(__NR_prctl, R0LAB_PRCTL_MAGIC,
+                           (unsigned long)token,
+                           R0LAB_PRCTL_OP_RELEASE_RANGE,
+                           (unsigned long)(uintptr_t)((uint8_t *)page + 64), 0);
+    memcpy(snapshot_after_release_a, (uint8_t *)page + 64,
+           sizeof(snapshot_after_release_a));
+    status_final_rc =
+        r0lab_control_raw(command, status_final, sizeof(status_final));
+
+    if (apply_a_rc || memcmp(snapshot_after_a, patch_a, sizeof(patch_a)) ||
+        memcmp(snapshot_after_a + sizeof(patch_a), expected_original, 4) ||
+        status_a_rc < 0 || !strstr(status_a, "patch_record_slots=1") ||
+        !strstr(status_a, "patch_active_count=1") ||
+        !strstr(status_a, "patch_dirty_bytes=8") ||
+        apply_b_rc ||
+        memcmp(snapshot_after_b, expected_after_b, sizeof(expected_after_b)) ||
+        status_b_rc < 0 || !strstr(status_b, "patch_record_slots=2") ||
+        !strstr(status_b, "patch_active_count=2") ||
+        !strstr(status_b, "patch_dirty_bytes=12") ||
+        release_b_rc ||
+        memcmp(snapshot_after_release_b, expected_after_release_b,
+               sizeof(expected_after_release_b)) ||
+        status_release_b_rc < 0 ||
+        !strstr(status_release_b, "patch_record_slots=2") ||
+        !strstr(status_release_b, "patch_active_count=1") ||
+        !strstr(status_release_b, "patch_dirty_bytes=8") ||
+        update_a_rc ||
+        memcmp(snapshot_after_update_a, expected_after_update_a,
+               sizeof(expected_after_update_a)) ||
+        status_update_a_rc < 0 ||
+        !strstr(status_update_a, "patch_record_slots=2") ||
+        !strstr(status_update_a, "patch_active_count=1") ||
+        !strstr(status_update_a, "patch_dirty_bytes=4") ||
+        invalid_rc != -1 || invalid_errno != EINVAL ||
+        memcmp(snapshot_after_invalid, expected_after_update_a,
+               sizeof(expected_after_update_a)) ||
+        release_a_rc ||
+        memcmp(snapshot_after_release_a, expected_original,
+               sizeof(snapshot_after_release_a)) ||
+        status_final_rc < 0 ||
+        !strstr(status_final, "hit_events=5") ||
+        !strstr(status_final, "patch_events=3") ||
+        !strstr(status_final, "release_events=2") ||
+        !strstr(status_final, "failures=1") ||
+        !strstr(status_final, "patch_record_slots=2") ||
+        !strstr(status_final, "patch_active_count=0") ||
+        !strstr(status_final, "patch_dirty_bytes=0") ||
+        !strstr(status_final, "patch_capacity=1024") ||
+        !strstr(status_final, "overlap=version_last_write_wins") ||
+        !strstr(status_final, "rebuild=original_seed_active_records") ||
+        !strstr(status_final, "release=exact_start") ||
+        !strstr(status_final, "dirty_tracking=byte_bitmap") ||
+        !strstr(status_final, "user_copy=copy_from_user_nofault"))
+        ++failures;
+
+    memset(&request, 0, sizeof(request));
+    request.address = (uint64_t)(uintptr_t)((uint8_t *)page + 80);
+    request.length = sizeof(patch_c);
+    memcpy(request.data, patch_c, sizeof(patch_c));
+    cleanup_patch_rc = syscall(
+        __NR_prctl, R0LAB_PRCTL_MAGIC, (unsigned long)token,
+        R0LAB_PRCTL_OP_PATCH_RANGE, (unsigned long)(uintptr_t)&request,
+        sizeof(request.address) + sizeof(request.length) +
+            sizeof(request.flags) + request.length);
+    status_cleanup_rc =
+        r0lab_control_raw(command, status_cleanup, sizeof(status_cleanup));
+    if (cleanup_patch_rc || status_cleanup_rc < 0 ||
+        !strstr(status_cleanup, "patch_record_slots=2") ||
+        !strstr(status_cleanup, "patch_active_count=1") ||
+        !strstr(status_cleanup, "patch_dirty_bytes=4"))
+        ++failures;
+
+    for (capacity_index = 0;
+         capacity_index < R0LAB_PATCH_RECORD_CAPACITY - 1U;
+         ++capacity_index) {
+        memset(&request, 0, sizeof(request));
+        request.address =
+            (uint64_t)(uintptr_t)((uint8_t *)page + 1024U + capacity_index);
+        request.length = 1;
+        request.data[0] = (uint8_t)(0x80U | (capacity_index & 0x7fU));
+        if (syscall(__NR_prctl, R0LAB_PRCTL_MAGIC, (unsigned long)token,
+                    R0LAB_PRCTL_OP_PATCH_RANGE,
+                    (unsigned long)(uintptr_t)&request,
+                    sizeof(request.address) + sizeof(request.length) +
+                        sizeof(request.flags) + request.length)) {
+            ++capacity_fill_failures;
+            break;
+        }
+        ++capacity_fill_records;
+    }
+    memset(&request, 0, sizeof(request));
+    request.address =
+        (uint64_t)(uintptr_t)((uint8_t *)page + 1024U + capacity_fill_records);
+    request.length = 1;
+    request.data[0] = 0x7fU;
+    errno = 0;
+    capacity_overflow_rc = syscall(
+        __NR_prctl, R0LAB_PRCTL_MAGIC, (unsigned long)token,
+        R0LAB_PRCTL_OP_PATCH_RANGE, (unsigned long)(uintptr_t)&request,
+        sizeof(request.address) + sizeof(request.length) +
+            sizeof(request.flags) + request.length);
+    capacity_overflow_errno = errno;
+    status_capacity_rc =
+        r0lab_control_raw(command, status_capacity, sizeof(status_capacity));
+    if (capacity_fill_records != R0LAB_PATCH_RECORD_CAPACITY - 1U ||
+        capacity_fill_failures || capacity_overflow_rc != -1 ||
+        capacity_overflow_errno != ENOSPC || status_capacity_rc < 0 ||
+        !strstr(status_capacity, "patch_record_slots=1024") ||
+        !strstr(status_capacity, "patch_active_count=1024") ||
+        !strstr(status_capacity, "patch_dirty_bytes=1027") ||
+        !strstr(status_capacity, "patch_capacity=1024"))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw prctl hook clear 0x%llx",
+             (unsigned long long)token);
+    hook_clear_rc = r0lab_control_raw(command, reply, sizeof(reply));
+
+clear:
+    r0lab_raw_clear(token, &clear_rc, &cleared_rc);
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    if (cleared_rc >= 0)
+        restored_value = ((int (*)(void))page)();
+
+finish:
+    if (normal_value != 42 || shadow_value != 99 || restored_value != 42 ||
+        arm_rc < 0 || ready_rc < 0 || observed_rc < 0 || hook_arm_rc < 0 ||
+        apply_a_rc || apply_b_rc || release_b_rc || update_a_rc ||
+        invalid_rc != -1 || invalid_errno != EINVAL || release_a_rc ||
+        cleanup_patch_rc ||
+        status_a_rc < 0 || status_b_rc < 0 || status_release_b_rc < 0 ||
+        status_update_a_rc < 0 || status_final_rc < 0 ||
+        status_cleanup_rc < 0 || status_capacity_rc < 0 ||
+        capacity_fill_records != R0LAB_PATCH_RECORD_CAPACITY - 1U ||
+        capacity_fill_failures || capacity_overflow_rc != -1 ||
+        capacity_overflow_errno != ENOSPC ||
+        hook_clear_rc < 0 || clear_rc < 0 || cleared_rc < 0 ||
+        g_r0lab_raw_handler_faults)
+        ++failures;
+    snprintf(output, output_size,
+             "raw mode=prctl-patch-records failures=%d operations=4,5 patch_scope=single_page_ranges patch_capacity=1024 overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap user_copy=copy_from_user_nofault cache_sync=sync_icache_aliases apply_a_rc=%ld apply_b_rc=%ld release_b_rc=%ld update_a_rc=%ld invalid_rc=%ld invalid_errno=%d release_a_rc=%ld cleanup_patch_rc=%ld capacity_fill_records=%u capacity_fill_failures=%ld capacity_overflow_rc=%ld capacity_overflow_errno=%d capacity_boundary=%s overlap_after_b=%s release_b_rebuild=%s shrink_rebuild=%s invalid_preserved=%s final_original=%s cleanup_active_before_clear=%s active_progress=1,2,1,1,0,1,1024 dirty_progress=8,12,8,4,0,4,1027 slots_progress=1,2,2,2,2,2,1024 normal_value=%d shadow_value=%d restored_value=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld status_a_rc=%ld status_b_rc=%ld status_release_b_rc=%ld status_update_a_rc=%ld status_final_rc=%ld status_cleanup_rc=%ld status_capacity_rc=%ld hook_clear_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d final_status=\"%s\" cleanup_status=\"%s\"",
+             failures, apply_a_rc, apply_b_rc, release_b_rc, update_a_rc,
+             invalid_rc, invalid_errno, release_a_rc, cleanup_patch_rc,
+             capacity_fill_records, capacity_fill_failures,
+             capacity_overflow_rc, capacity_overflow_errno,
+             capacity_fill_records == R0LAB_PATCH_RECORD_CAPACITY - 1U &&
+                     !capacity_fill_failures && capacity_overflow_rc == -1 &&
+                     capacity_overflow_errno == ENOSPC &&
+                     status_capacity_rc >= 0 &&
+                     strstr(status_capacity, "patch_record_slots=1024") &&
+                     strstr(status_capacity, "patch_active_count=1024") &&
+                     strstr(status_capacity, "patch_dirty_bytes=1027") ?
+                 "pass" : "fail",
+             memcmp(snapshot_after_b, expected_after_b,
+                    sizeof(expected_after_b)) ? "fail" : "pass",
+             memcmp(snapshot_after_release_b, expected_after_release_b,
+                    sizeof(expected_after_release_b)) ? "fail" : "pass",
+             memcmp(snapshot_after_update_a, expected_after_update_a,
+                    sizeof(expected_after_update_a)) ? "fail" : "pass",
+             memcmp(snapshot_after_invalid, expected_after_update_a,
+                    sizeof(expected_after_update_a)) ? "fail" : "pass",
+             memcmp(snapshot_after_release_a, expected_original,
+                    sizeof(snapshot_after_release_a)) ? "fail" : "pass",
+             status_cleanup_rc < 0 ||
+                     !strstr(status_cleanup, "patch_active_count=1") ||
+                     !strstr(status_cleanup, "patch_dirty_bytes=4") ?
+                 "fail" : "pass",
+             normal_value, shadow_value, restored_value, arm_rc, ready_rc,
+             observed_rc, hook_arm_rc, status_a_rc, status_b_rc,
+             status_release_b_rc, status_update_a_rc, status_final_rc,
+             status_cleanup_rc, status_capacity_rc, hook_clear_rc, clear_rc, cleared_rc,
+             (int)g_r0lab_raw_handler_faults, status_final, status_cleanup);
     munmap(page, page_size);
     return failures ? -1 : 0;
 }
@@ -5464,6 +5864,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw prctl read cycle run ", 25)) {
         r0lab_raw_prctl_read_cycle_run(args + 25, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw prctl patch records run ", 28)) {
+        r0lab_raw_prctl_patch_records_run(args + 28, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

@@ -56,6 +56,10 @@
 #define R0LAB_PRCTL_OP_READ_CYCLE 1U
 #define R0LAB_PRCTL_OP_PATCH_WORD 2U
 #define R0LAB_PRCTL_OP_RELEASE_PATCH 3U
+#define R0LAB_PRCTL_OP_PATCH_RANGE 4U
+#define R0LAB_PRCTL_OP_RELEASE_RANGE 5U
+#define R0LAB_PATCH_RECORD_CAPACITY 1024U
+#define R0LAB_PATCH_DIRTY_BITMAP_SIZE (R0LAB_RAW_PAGE_SIZE / 8U)
 
 #define R0LAB_EINVAL (-22)
 #define R0LAB_EPERM (-1)
@@ -65,6 +69,8 @@
 #define R0LAB_EAGAIN (-11)
 #define R0LAB_ESRCH (-3)
 #define R0LAB_ENOMEM (-12)
+#define R0LAB_ENOSPC (-28)
+#define R0LAB_EFAULT (-14)
 
 enum r0lab_event_op {
     R0LAB_EVENT_LOAD = 1,
@@ -111,6 +117,8 @@ enum r0lab_event_op {
     R0LAB_EVENT_RAW_PRCTL_TRIGGER = 42,
     R0LAB_EVENT_RAW_PRCTL_PATCH = 43,
     R0LAB_EVENT_RAW_PRCTL_RELEASE = 44,
+    R0LAB_EVENT_RAW_PRCTL_PATCH_RANGE = 45,
+    R0LAB_EVENT_RAW_PRCTL_RELEASE_RANGE = 46,
 };
 
 struct r0lab_event {
@@ -269,6 +277,21 @@ struct r0lab_page_record {
     uint8_t state;
 };
 
+struct r0lab_patch_record {
+    uint16_t offset;
+    uint16_t length;
+    uint8_t active;
+    uint8_t reserved[3];
+    uint64_t version;
+    void *data;
+};
+
+struct r0lab_prctl_patch_request {
+    uint64_t address;
+    uint32_t length;
+    uint32_t flags;
+};
+
 /* M4 permits only offset zero of the fixed two-instruction Lab App sequence. */
 struct r0lab_m4_page {
     struct r0lab_page_record record;
@@ -334,10 +357,12 @@ struct r0lab_raw_shadow_page {
     uint32_t prctl_hook_release_events;
     uint32_t prctl_hook_reject_events;
     uint32_t prctl_hook_failures;
-    bool prctl_patch_active;
-    unsigned long prctl_patch_address;
-    uint32_t prctl_patch_original_word;
-    uint32_t prctl_patch_word;
+    struct r0lab_patch_record patch_records[R0LAB_PATCH_RECORD_CAPACITY];
+    uint8_t patch_dirty[R0LAB_PATCH_DIRTY_BITMAP_SIZE];
+    uint64_t patch_version;
+    uint16_t patch_record_slots;
+    uint16_t patch_active_count;
+    uint16_t patch_dirty_bytes;
     uint32_t fault_probe_read_events;
     uint32_t fault_probe_write_events;
     uint32_t fault_probe_exec_events;
@@ -420,6 +445,9 @@ typedef void *(*r0lab_find_vma_fn_t)(void *mm, unsigned long addr);
 typedef void (*r0lab_sync_icache_dcache_fn_t)(unsigned long pte);
 typedef void (*r0lab_sync_icache_aliases_fn_t)(unsigned long start,
                                                unsigned long end);
+typedef long (*r0lab_copy_from_user_nofault_fn_t)(void *dst,
+                                                  const void __user *src,
+                                                  size_t size);
 typedef void (*r0lab_mte_sync_tags_fn_t)(unsigned long old_pte,
                                          unsigned long new_pte);
 typedef void (*r0lab_user_step_fn_t)(struct task_struct *task);
@@ -438,6 +466,7 @@ static struct r0lab_hwbp_slot g_hwbp_slots[R0LAB_HWBP_SLOT_CAPACITY];
 static struct r0lab_m3_page g_m3_page;
 static struct r0lab_m4_page g_m4_page;
 static struct r0lab_raw_shadow_page g_raw_page;
+static uint16_t g_raw_patch_rebuild_order[R0LAB_PATCH_RECORD_CAPACITY];
 static struct r0lab_s4_breakpoint g_s4_brk;
 static r0lab_clock_fn_t g_clock;
 static r0lab_current_cpu_fn_t g_current_cpu;
@@ -468,6 +497,7 @@ static r0lab_raw_spin_fn_t g_raw_spin_unlock;
 static r0lab_find_vma_fn_t g_raw_find_vma;
 static r0lab_sync_icache_dcache_fn_t g_sync_icache_dcache;
 static r0lab_sync_icache_aliases_fn_t g_sync_icache_aliases;
+static r0lab_copy_from_user_nofault_fn_t g_copy_from_user_nofault;
 static r0lab_mte_sync_tags_fn_t g_mte_sync_tags;
 static void *g_do_mem_abort;
 static void *g_handle_mm_fault;
@@ -604,6 +634,8 @@ static void r0lab_raw_unhook(void);
 static void r0lab_raw_reset(struct mm_struct *mm);
 static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation);
 static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page);
+static void r0lab_raw_deactivate_patch_records_locked(
+    struct r0lab_raw_shadow_page *page);
 
 static uint64_t r0lab_now(void)
 {
@@ -3724,12 +3756,8 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         g_raw_page.abort_write_release_last_far = far;
         g_raw_page.abort_write_release_last_result = write_release_result;
         g_raw_page.record.state = R0LAB_PAGE_RECORD_RESTORING;
-        if (!write_release_result) {
-            g_raw_page.prctl_patch_active = false;
-            g_raw_page.prctl_patch_address = 0;
-            g_raw_page.prctl_patch_original_word = 0;
-            g_raw_page.prctl_patch_word = 0;
-        }
+        if (!write_release_result)
+            r0lab_raw_deactivate_patch_records_locked(&g_raw_page);
         write_release_events = g_raw_page.abort_write_release_events;
         write_release_failures = g_raw_page.abort_write_release_failures;
         write_release_hit = true;
@@ -4017,26 +4045,294 @@ static void r0lab_raw_syscall_before(hook_fargs1_t *args, void *udata)
     r0lab_unlock(flags);
 }
 
-static int r0lab_raw_write_shadow_word(void *target, uint32_t value)
+static void r0lab_raw_apply_seed_range(struct r0lab_raw_shadow_page *page,
+                                       unsigned int offset,
+                                       unsigned int length)
 {
-    if (!target || !g_sync_icache_aliases)
-        return R0LAB_ENOSYS;
+    uint32_t seed_words[3];
+    unsigned int seed_length;
+    unsigned int range_end = offset + length;
+    unsigned int copy_start;
+    unsigned int copy_end;
 
-    memcpy(target, &value, sizeof(value));
-    g_sync_icache_aliases((unsigned long)target,
-                          (unsigned long)target + sizeof(value));
+    if (page->s4_shadow_brk_layout) {
+        seed_words[0] = R0LAB_S4_BRK_COMMENT << 5 | 0xd4200000U;
+        seed_words[1] = page->s4_shadow_reg_layout ?
+                        R0LAB_RAW_CODE_MOV_X0_X1 :
+                        R0LAB_RAW_CODE_MOV_W0_99;
+        seed_words[2] = 0xd65f03c0U;
+        seed_length = sizeof(seed_words);
+    } else {
+        seed_words[0] = R0LAB_RAW_CODE_MOV_W0_99;
+        seed_length = sizeof(seed_words[0]);
+    }
+
+    copy_start = offset;
+    if (copy_start > seed_length)
+        copy_start = seed_length;
+    copy_end = range_end;
+    if (copy_end > seed_length)
+        copy_end = seed_length;
+    if (copy_end <= copy_start)
+        return;
+    memcpy((char *)page->raw.shadow_kaddr + copy_start,
+           (char *)seed_words + copy_start, copy_end - copy_start);
+}
+
+static bool r0lab_patch_overlaps(const struct r0lab_patch_record *record,
+                                 unsigned int offset, unsigned int length)
+{
+    unsigned int record_end;
+    unsigned int range_end;
+
+    if (!record->active || !record->data || !record->length)
+        return false;
+    record_end = (unsigned int)record->offset + record->length;
+    range_end = offset + length;
+    return range_end > record->offset && offset < record_end;
+}
+
+static void r0lab_raw_sync_patch_metadata_locked(
+    struct r0lab_raw_shadow_page *page)
+{
+    unsigned int active = 0;
+    unsigned int dirty = 0;
+    unsigned int index;
+
+    memset(page->patch_dirty, 0, sizeof(page->patch_dirty));
+    for (index = 0; index < page->patch_record_slots; ++index) {
+        const struct r0lab_patch_record *record = &page->patch_records[index];
+        unsigned int start_byte;
+        unsigned int end_byte;
+        unsigned int range_end;
+        unsigned int byte_index;
+
+        if (!record->active || !record->data || !record->length)
+            continue;
+        ++active;
+        range_end = (unsigned int)record->offset + record->length;
+        start_byte = record->offset >> 3;
+        end_byte = (range_end - 1U) >> 3;
+        if (start_byte == end_byte) {
+            unsigned int first_bit = record->offset & 7U;
+            unsigned int last_bit = (range_end - 1U) & 7U;
+            unsigned int mask = ((1U << (last_bit - first_bit + 1U)) - 1U)
+                                << first_bit;
+
+            page->patch_dirty[start_byte] |= (uint8_t)mask;
+            continue;
+        }
+        page->patch_dirty[start_byte] |=
+            (uint8_t)(0xffU << (record->offset & 7U));
+        for (byte_index = start_byte + 1U; byte_index < end_byte; ++byte_index)
+            page->patch_dirty[byte_index] = 0xffU;
+        page->patch_dirty[end_byte] |=
+            (uint8_t)((1U << (((range_end - 1U) & 7U) + 1U)) - 1U);
+    }
+    for (index = 0; index < sizeof(page->patch_dirty); ++index) {
+        uint8_t value = page->patch_dirty[index];
+
+        while (value) {
+            dirty += value & 1U;
+            value >>= 1;
+        }
+    }
+    page->patch_active_count = (uint16_t)active;
+    page->patch_dirty_bytes = (uint16_t)dirty;
+}
+
+static int r0lab_raw_rebuild_patch_range(struct r0lab_raw_shadow_page *page,
+                                         unsigned int offset,
+                                         unsigned int length)
+{
+    uint16_t *order = g_raw_patch_rebuild_order;
+    void *source_kaddr;
+    unsigned int order_count = 0;
+    unsigned int range_end;
+    unsigned int index;
+
+    if (!page || !length || offset >= R0LAB_RAW_PAGE_SIZE ||
+        length > R0LAB_RAW_PAGE_SIZE - offset)
+        return R0LAB_EINVAL;
+    if (!page->raw.shadow_kaddr || !g_sync_icache_aliases)
+        return R0LAB_ENOSYS;
+    source_kaddr = r0lab_raw_source_kernel_address(&page->raw);
+    if (!source_kaddr)
+        return R0LAB_EFAULT;
+
+    range_end = offset + length;
+    for (index = 0; index < page->patch_record_slots; ++index) {
+        unsigned int insert_at;
+
+        if (!r0lab_patch_overlaps(&page->patch_records[index], offset, length))
+            continue;
+        insert_at = order_count;
+        while (insert_at &&
+               page->patch_records[order[insert_at - 1U]].version >
+               page->patch_records[index].version) {
+            order[insert_at] = order[insert_at - 1U];
+            --insert_at;
+        }
+        order[insert_at] = (uint16_t)index;
+        ++order_count;
+    }
+
+    memcpy((char *)page->raw.shadow_kaddr + offset,
+           (char *)source_kaddr + offset, length);
+    r0lab_raw_apply_seed_range(page, offset, length);
+    for (index = 0; index < order_count; ++index) {
+        const struct r0lab_patch_record *record =
+            &page->patch_records[order[index]];
+        unsigned int record_end = (unsigned int)record->offset + record->length;
+        unsigned int copy_start = offset > record->offset ?
+                                  offset : record->offset;
+        unsigned int copy_end = range_end < record_end ?
+                                range_end : record_end;
+
+        if (copy_end <= copy_start)
+            continue;
+        memcpy((char *)page->raw.shadow_kaddr + copy_start,
+               (char *)record->data + copy_start - record->offset,
+               copy_end - copy_start);
+    }
+    g_sync_icache_aliases((unsigned long)page->raw.shadow_kaddr + offset,
+                          (unsigned long)page->raw.shadow_kaddr + range_end);
     return 0;
+}
+
+static int r0lab_raw_upsert_patch_locked(
+    struct r0lab_raw_shadow_page *page, unsigned int offset,
+    unsigned int length, void *data, unsigned int *record_index,
+    struct r0lab_patch_record *old_record, unsigned int *rebuild_length)
+{
+    int free_index = -1;
+    unsigned int index;
+
+    for (index = 0; index < page->patch_record_slots; ++index) {
+        struct r0lab_patch_record *record = &page->patch_records[index];
+
+        if (record->active && record->offset == offset) {
+            free_index = (int)index;
+            break;
+        }
+        if (free_index < 0 && !record->active && !record->data)
+            free_index = (int)index;
+    }
+    if (free_index < 0) {
+        if (page->patch_record_slots == R0LAB_PATCH_RECORD_CAPACITY)
+            return R0LAB_ENOSPC;
+        free_index = page->patch_record_slots++;
+    }
+
+    *record_index = (unsigned int)free_index;
+    *old_record = page->patch_records[*record_index];
+    *rebuild_length = old_record->active && old_record->length > length ?
+                      old_record->length : length;
+    ++page->patch_version;
+    if (!page->patch_version)
+        page->patch_version = 1;
+    page->patch_records[*record_index].offset = (uint16_t)offset;
+    page->patch_records[*record_index].length = (uint16_t)length;
+    page->patch_records[*record_index].active = 1;
+    page->patch_records[*record_index].version = page->patch_version;
+    page->patch_records[*record_index].data = data;
+    r0lab_raw_sync_patch_metadata_locked(page);
+    return 0;
+}
+
+static int r0lab_raw_release_patch_locked(
+    struct r0lab_raw_shadow_page *page, unsigned int offset,
+    unsigned int *record_index, struct r0lab_patch_record *old_record)
+{
+    unsigned int index;
+
+    for (index = 0; index < page->patch_record_slots; ++index) {
+        struct r0lab_patch_record *record = &page->patch_records[index];
+
+        if (!record->active || record->offset != offset)
+            continue;
+        *record_index = index;
+        *old_record = *record;
+        record->length = 0;
+        record->active = 0;
+        record->version = 0;
+        record->data = NULL;
+        r0lab_raw_sync_patch_metadata_locked(page);
+        return 0;
+    }
+    return R0LAB_ENOENT;
+}
+
+static void *r0lab_raw_detach_one_patch_buffer_locked(
+    struct r0lab_raw_shadow_page *page)
+{
+    unsigned int index;
+
+    for (index = 0; index < page->patch_record_slots; ++index) {
+        struct r0lab_patch_record *record = &page->patch_records[index];
+        void *data = record->data;
+
+        if (!data)
+            continue;
+        record->length = 0;
+        record->active = 0;
+        record->version = 0;
+        record->data = NULL;
+        r0lab_raw_sync_patch_metadata_locked(page);
+        return data;
+    }
+    return NULL;
+}
+
+static void r0lab_raw_deactivate_patch_records_locked(
+    struct r0lab_raw_shadow_page *page)
+{
+    unsigned int index;
+
+    for (index = 0; index < page->patch_record_slots; ++index)
+        page->patch_records[index].active = 0;
+    r0lab_raw_sync_patch_metadata_locked(page);
+}
+
+static void r0lab_raw_drain_patch_buffers(struct mm_struct *mm,
+                                          uint64_t generation,
+                                          bool match_generation)
+{
+    if (!g_vfree)
+        return;
+    for (;;) {
+        void *buffer;
+        unsigned long flags = r0lab_lock();
+
+        if (g_raw_page.raw.mm != mm ||
+            (match_generation && g_raw_page.generation != generation)) {
+            r0lab_unlock(flags);
+            return;
+        }
+        buffer = r0lab_raw_detach_one_patch_buffer_locked(&g_raw_page);
+        r0lab_unlock(flags);
+        if (!buffer)
+            return;
+        g_vfree(buffer);
+    }
 }
 
 static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
 {
+    struct r0lab_patch_record old_record = {0};
+    struct r0lab_prctl_patch_request request = {0};
     struct pt_regs *syscall_regs;
     struct mm_struct *current_mm = NULL;
     void *patch_kaddr = NULL;
+    void *patch_data = NULL;
+    void *new_record_data = NULL;
+    void *old_data_to_free = NULL;
     unsigned long flags;
     unsigned long address = 0;
     unsigned long page_address = 0;
     unsigned long state = 0;
+    unsigned long user_request = 0;
+    unsigned long user_request_size = 0;
     uint64_t token;
     uint64_t operation;
     uint64_t generation = 0;
@@ -4045,14 +4341,20 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
     uint32_t patch_events = 0;
     uint32_t release_events = 0;
     uint32_t reject_events = 0;
+    uint16_t active_patch_count = 0;
     uint32_t patch_before = 0;
     uint32_t patch_after = 0;
-    uint32_t patch_original = 0;
+    unsigned int range_offset = 0;
+    unsigned int range_length = 0;
+    unsigned int rebuild_length = 0;
+    unsigned int record_index = 0;
     bool admitted = false;
     bool installed;
     bool should_begin_read_cycle = false;
     bool should_patch = false;
     bool should_release = false;
+    bool range_operation = false;
+    bool record_changed = false;
     int result = R0LAB_EPERM;
 
     (void)udata;
@@ -4101,7 +4403,8 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
         should_begin_read_cycle = true;
     } else if (operation == R0LAB_PRCTL_OP_PATCH_WORD) {
         address = syscall_regs->regs[3];
-        if (!g_sync_icache_aliases || !g_raw_page.raw.shadow_kaddr) {
+        if (!g_sync_icache_aliases || !g_vmalloc || !g_vfree ||
+            !g_raw_page.raw.shadow_kaddr) {
             result = R0LAB_ENOSYS;
         } else if (syscall_regs->regs[4] >> 32 ||
                    (address & (sizeof(uint32_t) - 1UL)) ||
@@ -4109,17 +4412,10 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
                    address > page_address + R0LAB_RAW_PAGE_SIZE -
                              sizeof(uint32_t)) {
             result = R0LAB_EINVAL;
-        } else if (g_raw_page.prctl_patch_active &&
-                   g_raw_page.prctl_patch_address != address) {
-            result = R0LAB_EBUSY;
         } else {
-            patch_kaddr = (char *)g_raw_page.raw.shadow_kaddr +
-                          (address - page_address);
-            memcpy(&patch_before, patch_kaddr, sizeof(patch_before));
             patch_after = (uint32_t)syscall_regs->regs[4];
-            patch_original = g_raw_page.prctl_patch_active ?
-                             g_raw_page.prctl_patch_original_word :
-                             patch_before;
+            range_offset = (unsigned int)(address - page_address);
+            range_length = sizeof(uint32_t);
             g_raw_page.transitioning = true;
             generation = g_raw_page.generation;
             admitted = true;
@@ -4130,25 +4426,52 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
         if (syscall_regs->regs[4] ||
             (address & (sizeof(uint32_t) - 1UL)) ||
             address < page_address ||
-            address > page_address + R0LAB_RAW_PAGE_SIZE -
+                   address > page_address + R0LAB_RAW_PAGE_SIZE -
                       sizeof(uint32_t)) {
             result = R0LAB_EINVAL;
-        } else if (!g_raw_page.prctl_patch_active ||
-                   g_raw_page.prctl_patch_address != address) {
-            result = R0LAB_ENOENT;
         } else if (!g_sync_icache_aliases ||
                    !g_raw_page.raw.shadow_kaddr) {
             result = R0LAB_ENOSYS;
         } else {
-            patch_kaddr = (char *)g_raw_page.raw.shadow_kaddr +
-                          (address - page_address);
-            memcpy(&patch_before, patch_kaddr, sizeof(patch_before));
-            patch_after = g_raw_page.prctl_patch_original_word;
-            patch_original = g_raw_page.prctl_patch_original_word;
+            range_offset = (unsigned int)(address - page_address);
             g_raw_page.transitioning = true;
             generation = g_raw_page.generation;
             admitted = true;
             should_release = true;
+        }
+    } else if (operation == R0LAB_PRCTL_OP_PATCH_RANGE) {
+        user_request = syscall_regs->regs[3];
+        user_request_size = syscall_regs->regs[4];
+        if (!g_copy_from_user_nofault || !g_sync_icache_aliases ||
+            !g_vmalloc || !g_vfree || !g_raw_page.raw.shadow_kaddr) {
+            result = R0LAB_ENOSYS;
+        } else if (!user_request ||
+                   user_request_size <= sizeof(request) ||
+                   user_request_size >
+                       sizeof(request) + R0LAB_RAW_PAGE_SIZE) {
+            result = R0LAB_EINVAL;
+        } else {
+            g_raw_page.transitioning = true;
+            generation = g_raw_page.generation;
+            admitted = true;
+            should_patch = true;
+            range_operation = true;
+        }
+    } else if (operation == R0LAB_PRCTL_OP_RELEASE_RANGE) {
+        address = syscall_regs->regs[3];
+        if (syscall_regs->regs[4] || address < page_address ||
+            address >= page_address + R0LAB_RAW_PAGE_SIZE) {
+            result = R0LAB_EINVAL;
+        } else if (!g_sync_icache_aliases ||
+                   !g_raw_page.raw.shadow_kaddr) {
+            result = R0LAB_ENOSYS;
+        } else {
+            range_offset = (unsigned int)(address - page_address);
+            g_raw_page.transitioning = true;
+            generation = g_raw_page.generation;
+            admitted = true;
+            should_release = true;
+            range_operation = true;
         }
     } else {
         result = R0LAB_EINVAL;
@@ -4157,10 +4480,102 @@ static void r0lab_raw_prctl_before(hook_fargs1_t *args, void *udata)
 unlock_dispatch:
     r0lab_unlock(flags);
 
-    if (should_begin_read_cycle)
+    if (admitted)
+        result = 0;
+    if (should_patch && !range_operation) {
+        patch_data = g_vmalloc(range_length);
+        if (!patch_data)
+            result = R0LAB_ENOMEM;
+        else
+            memcpy(patch_data, &patch_after, sizeof(patch_after));
+    } else if (should_patch && range_operation) {
+        if (g_copy_from_user_nofault(
+                &request, (const void __user *)user_request,
+                sizeof(request))) {
+            result = R0LAB_EFAULT;
+        } else if (!request.length ||
+                   request.length > R0LAB_RAW_PAGE_SIZE ||
+                   request.flags ||
+                   user_request_size != sizeof(request) + request.length ||
+                   request.address < page_address ||
+                   request.address - page_address >
+                       R0LAB_RAW_PAGE_SIZE - request.length) {
+            result = R0LAB_EINVAL;
+        } else {
+            address = (unsigned long)request.address;
+            range_offset = (unsigned int)(address - page_address);
+            range_length = request.length;
+            patch_data = g_vmalloc(range_length);
+            if (!patch_data) {
+                result = R0LAB_ENOMEM;
+            } else if (g_copy_from_user_nofault(
+                           patch_data,
+                           (const char __user *)user_request +
+                               sizeof(request),
+                           range_length)) {
+                result = R0LAB_EFAULT;
+            } else if (range_length >= sizeof(patch_after)) {
+                memcpy(&patch_after, patch_data, sizeof(patch_after));
+            }
+        }
+    }
+
+    if (should_begin_read_cycle && !result)
         result = r0lab_raw_begin_read_cycle(&g_raw_page.raw);
-    else if (should_patch || should_release)
-        result = r0lab_raw_write_shadow_word(patch_kaddr, patch_after);
+    else if ((should_patch || should_release) && !result) {
+        flags = r0lab_lock();
+        if (g_raw_page.generation != generation ||
+            !g_raw_page.transitioning || !g_raw_page.raw.shadow_kaddr ||
+            g_raw_page.raw.address != page_address ||
+            g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX) {
+            result = R0LAB_EAGAIN;
+        } else {
+            patch_kaddr = (char *)g_raw_page.raw.shadow_kaddr + range_offset;
+            if (R0LAB_RAW_PAGE_SIZE - range_offset >= sizeof(patch_before))
+                memcpy(&patch_before, patch_kaddr, sizeof(patch_before));
+            if (should_patch) {
+                result = r0lab_raw_upsert_patch_locked(
+                    &g_raw_page, range_offset, range_length, patch_data,
+                    &record_index, &old_record, &rebuild_length);
+                if (!result) {
+                    new_record_data = patch_data;
+                    patch_data = NULL;
+                    record_changed = true;
+                }
+            } else {
+                result = r0lab_raw_release_patch_locked(
+                    &g_raw_page, range_offset, &record_index, &old_record);
+                if (!result) {
+                    range_length = old_record.length;
+                    rebuild_length = old_record.length;
+                    record_changed = true;
+                }
+            }
+        }
+        r0lab_unlock(flags);
+
+        if (record_changed)
+            result = r0lab_raw_rebuild_patch_range(
+                &g_raw_page, range_offset, rebuild_length);
+        if (record_changed && result) {
+            flags = r0lab_lock();
+            if (g_raw_page.generation == generation) {
+                g_raw_page.patch_records[record_index] = old_record;
+                r0lab_raw_sync_patch_metadata_locked(&g_raw_page);
+            }
+            r0lab_unlock(flags);
+            if (should_patch) {
+                patch_data = new_record_data;
+                new_record_data = NULL;
+            }
+        } else if (record_changed) {
+            old_data_to_free = old_record.data;
+            if (R0LAB_RAW_PAGE_SIZE - range_offset >= sizeof(patch_after))
+                memcpy(&patch_after,
+                       (char *)g_raw_page.raw.shadow_kaddr + range_offset,
+                       sizeof(patch_after));
+        }
+    }
 
     flags = r0lab_lock();
     if (admitted && g_raw_page.generation == generation) {
@@ -4174,18 +4589,10 @@ unlock_dispatch:
                    g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
             ++g_raw_page.prctl_hook_events;
             ++g_raw_page.prctl_hook_patch_events;
-            g_raw_page.prctl_patch_active = true;
-            g_raw_page.prctl_patch_address = address;
-            g_raw_page.prctl_patch_original_word = patch_original;
-            g_raw_page.prctl_patch_word = patch_after;
         } else if (!result && should_release &&
                    g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
             ++g_raw_page.prctl_hook_events;
             ++g_raw_page.prctl_hook_release_events;
-            g_raw_page.prctl_patch_active = false;
-            g_raw_page.prctl_patch_address = 0;
-            g_raw_page.prctl_patch_original_word = 0;
-            g_raw_page.prctl_patch_word = 0;
         } else {
             if (!result)
                 result = R0LAB_EAGAIN;
@@ -4205,6 +4612,7 @@ unlock_dispatch:
         ++g_raw_page.prctl_hook_reject_events;
     }
     reject_events = g_raw_page.prctl_hook_reject_events;
+    active_patch_count = g_raw_page.patch_active_count;
     r0lab_unlock(flags);
 
     args->skip_origin = 1;
@@ -4214,16 +4622,30 @@ unlock_dispatch:
     if (should_begin_read_cycle)
         r0lab_record_values(R0LAB_EVENT_RAW_SYSCALL_READ_CYCLE_BEGIN,
                             result, address, state, read_cycle_events);
+    else if (should_patch && range_operation)
+        r0lab_record_values(R0LAB_EVENT_RAW_PRCTL_PATCH_RANGE, result,
+                            address, range_length,
+                            active_patch_count |
+                                ((uint64_t)patch_events << 32));
     else if (should_patch)
         r0lab_record_values(R0LAB_EVENT_RAW_PRCTL_PATCH, result, address,
                             patch_before,
                             patch_after | ((uint64_t)patch_events << 32));
+    else if (should_release && range_operation)
+        r0lab_record_values(R0LAB_EVENT_RAW_PRCTL_RELEASE_RANGE, result,
+                            address, range_length,
+                            active_patch_count |
+                                ((uint64_t)release_events << 32));
     else if (should_release)
         r0lab_record_values(R0LAB_EVENT_RAW_PRCTL_RELEASE, result, address,
                             patch_before,
                             patch_after | ((uint64_t)release_events << 32));
 
 out:
+    if (old_data_to_free && g_vfree)
+        g_vfree(old_data_to_free);
+    if (patch_data && g_vfree)
+        g_vfree(patch_data);
     if (current_mm)
         g_mmput(current_mm);
     flags = r0lab_lock();
@@ -4502,10 +4924,23 @@ static void r0lab_raw_unhook_except_exit(void)
 static void r0lab_raw_reset(struct mm_struct *mm)
 {
     void *shadow_kaddr = NULL;
-    unsigned long flags = r0lab_lock();
+    bool should_reset = false;
+    unsigned long flags;
 
     if (!mm)
         return;
+    flags = r0lab_lock();
+    if (g_raw_page.raw.mm == mm) {
+        g_raw_page.clearing = true;
+        g_raw_page.armed = false;
+        should_reset = true;
+    }
+    r0lab_unlock(flags);
+
+    if (should_reset)
+        r0lab_raw_drain_patch_buffers(mm, 0, false);
+
+    flags = r0lab_lock();
     if (g_raw_page.raw.mm == mm) {
         bool monitor_running = g_raw_page.monitor_running;
         uint64_t generation = g_raw_page.generation;
@@ -4525,41 +4960,63 @@ static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
 {
     void *shadow_kaddr = NULL;
     bool exit_hook_installed = false;
-    unsigned long flags = r0lab_lock();
+    bool should_reset = false;
+    unsigned long flags;
 
     if (!mm)
         return;
+    flags = r0lab_lock();
     if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
         exit_hook_installed = g_raw_page.exit_hook_installed;
         if (!exit_hook_installed) {
-            shadow_kaddr = g_raw_page.raw.shadow_kaddr;
-            memset(&g_raw_page, 0, sizeof(g_raw_page));
+            g_raw_page.clearing = true;
+            g_raw_page.armed = false;
+            should_reset = true;
         }
     }
     r0lab_unlock(flags);
 
-    if (exit_hook_installed) {
-        g_mmput(mm);
+    if (should_reset) {
+        r0lab_raw_drain_patch_buffers(mm, generation, true);
         flags = r0lab_lock();
         if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
             shadow_kaddr = g_raw_page.raw.shadow_kaddr;
-            g_raw_page.exit_hook_installed = false;
+            memset(&g_raw_page, 0, sizeof(g_raw_page));
         }
+        r0lab_unlock(flags);
+        if (shadow_kaddr && g_vfree)
+            g_vfree(shadow_kaddr);
+        g_mmput(mm);
+        return;
+    }
+
+    if (exit_hook_installed) {
+        g_mmput(mm);
+        flags = r0lab_lock();
+        if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation)
+            g_raw_page.exit_hook_installed = false;
         r0lab_unlock(flags);
         (void)r0lab_raw_wait_for_callbacks();
         r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
         (void)r0lab_raw_wait_for_callbacks();
         flags = r0lab_lock();
-        if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation)
+        if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
+            g_raw_page.clearing = true;
+            g_raw_page.armed = false;
+        }
+        r0lab_unlock(flags);
+        r0lab_raw_drain_patch_buffers(mm, generation, true);
+        flags = r0lab_lock();
+        if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
+            shadow_kaddr = g_raw_page.raw.shadow_kaddr;
             memset(&g_raw_page, 0, sizeof(g_raw_page));
+        }
         r0lab_unlock(flags);
         if (shadow_kaddr && g_vfree)
             g_vfree(shadow_kaddr);
         return;
     }
 
-    if (shadow_kaddr && g_vfree)
-        g_vfree(shadow_kaddr);
     g_mmput(mm);
 }
 
@@ -4665,7 +5122,6 @@ static int r0lab_raw_start_monitor(void)
 
 static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page)
 {
-    uint32_t *shadow_words;
     void *source_kaddr;
     unsigned long flags;
     int result;
@@ -4680,16 +5136,7 @@ static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page)
     if (!page->raw.shadow_kaddr)
         return R0LAB_ENOMEM;
     memcpy(page->raw.shadow_kaddr, source_kaddr, R0LAB_RAW_PAGE_SIZE);
-    shadow_words = (uint32_t *)page->raw.shadow_kaddr;
-    if (page->s4_shadow_brk_layout) {
-        shadow_words[0] = R0LAB_S4_BRK_COMMENT << 5 | 0xd4200000U;
-        shadow_words[1] = page->s4_shadow_reg_layout ?
-                          R0LAB_RAW_CODE_MOV_X0_X1 :
-                          R0LAB_RAW_CODE_MOV_W0_99;
-        shadow_words[2] = 0xd65f03c0U;
-    } else {
-        shadow_words[0] = R0LAB_RAW_CODE_MOV_W0_99;
-    }
+    r0lab_raw_apply_seed_range(page, 0, R0LAB_RAW_PAGE_SIZE);
     result = r0lab_raw_shadow_pfn_from_kaddr(&page->raw);
     if (result) {
         g_vfree(page->raw.shadow_kaddr);
@@ -6254,11 +6701,14 @@ static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
     }
 
     snprintf(reply, sizeof(reply),
-             "raw_prctl_hook_ready symbol=prctl installed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u read_cycle_op=%u patch_word_op=%u release_patch_op=%u token_arg=2 operation_arg=3 address_arg=4 value_arg=5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_aligned_word cache_sync=sync_icache_aliases read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending passthrough=nonmagic\n",
+             "raw_prctl_hook_ready symbol=prctl installed=1 abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u read_cycle_op=%u patch_word_op=%u release_patch_op=%u patch_range_op=%u release_range_op=%u token_arg=2 operation_arg=3 request_arg=4 request_size_arg=5 lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending passthrough=nonmagic\n",
              R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
              R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
+             R0LAB_PRCTL_OP_PATCH_RANGE, R0LAB_PRCTL_OP_RELEASE_RANGE,
              R0LAB_PRCTL_OP_READ_CYCLE, R0LAB_PRCTL_OP_PATCH_WORD,
-             R0LAB_PRCTL_OP_RELEASE_PATCH);
+             R0LAB_PRCTL_OP_RELEASE_PATCH, R0LAB_PRCTL_OP_PATCH_RANGE,
+             R0LAB_PRCTL_OP_RELEASE_RANGE, R0LAB_PATCH_RECORD_CAPACITY,
+             g_copy_from_user_nofault ? "copy_from_user_nofault" : "absent");
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -6281,7 +6731,12 @@ static long r0lab_raw_prctl_hook_status(uint64_t token, char __user *out_msg,
     bool patch_active;
     unsigned long patch_address;
     uint32_t patch_word;
+    uint16_t patch_record_slots;
+    uint16_t patch_active_count;
+    uint16_t patch_dirty_bytes;
+    uint64_t patch_version;
     unsigned long read_cycle_finish_events;
+    unsigned int index;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -6294,20 +6749,38 @@ static long r0lab_raw_prctl_hook_status(uint64_t token, char __user *out_msg,
     release_events = g_raw_page.prctl_hook_release_events;
     reject_events = g_raw_page.prctl_hook_reject_events;
     failures = g_raw_page.prctl_hook_failures;
-    patch_active = g_raw_page.prctl_patch_active;
-    patch_address = g_raw_page.prctl_patch_address;
-    patch_word = g_raw_page.prctl_patch_word;
+    patch_record_slots = g_raw_page.patch_record_slots;
+    patch_active_count = g_raw_page.patch_active_count;
+    patch_dirty_bytes = g_raw_page.patch_dirty_bytes;
+    patch_version = g_raw_page.patch_version;
+    patch_active = patch_active_count != 0;
+    patch_address = 0;
+    patch_word = 0;
+    for (index = 0; index < patch_record_slots; ++index) {
+        const struct r0lab_patch_record *record =
+            &g_raw_page.patch_records[index];
+
+        if (!record->active)
+            continue;
+        patch_address = g_raw_page.raw.address + record->offset;
+        if (record->data && record->length >= sizeof(patch_word))
+            memcpy(&patch_word, record->data, sizeof(patch_word));
+        break;
+    }
     read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
     r0lab_unlock(flags);
 
     snprintf(reply, sizeof(reply),
-             "raw_prctl_hook_status symbol=%s installed=%u abi=prctl_magic option=0x%x operations=%u,%u,%u hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_address=%lx patch_word=%08x lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_aligned_word cache_sync=sync_icache_aliases read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s passthrough=nonmagic\n",
+             "raw_prctl_hook_status symbol=%s installed=%u abi=prctl_magic option=0x%x operations=%u,%u,%u,%u,%u hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_address=%lx patch_word=%08x patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u overlap=version_last_write_wins rebuild=original_seed_active_records release=exact_start dirty_tracking=byte_bitmap lab_uid_scoped=1 target_mm_scoped=1 token_scoped=1 patch_scope=single_page_ranges cache_sync=sync_icache_aliases user_copy=%s read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s passthrough=nonmagic\n",
              g_sys_prctl ? "prctl" : "absent", installed ? 1 : 0,
              R0LAB_PRCTL_MAGIC, R0LAB_PRCTL_OP_READ_CYCLE,
              R0LAB_PRCTL_OP_PATCH_WORD, R0LAB_PRCTL_OP_RELEASE_PATCH,
+             R0LAB_PRCTL_OP_PATCH_RANGE, R0LAB_PRCTL_OP_RELEASE_RANGE,
              hit_events, read_cycle_events, patch_events, release_events,
              reject_events, failures, patch_active ? 1 : 0, patch_address,
-             patch_word,
+             patch_word, patch_record_slots, patch_active_count,
+             patch_dirty_bytes, patch_version, R0LAB_PATCH_RECORD_CAPACITY,
+             g_copy_from_user_nofault ? "copy_from_user_nofault" : "absent",
              read_cycle_finish_events ? "proven" :
              (read_cycle_events ? "pending" : "absent"));
     return r0lab_copy_reply(out_msg, outlen, reply);
@@ -6325,6 +6798,9 @@ static long r0lab_raw_prctl_hook_clear(uint64_t token, char __user *out_msg,
     uint32_t reject_events;
     uint32_t failures;
     bool patch_active;
+    uint16_t patch_record_slots;
+    uint16_t patch_active_count;
+    uint16_t patch_dirty_bytes;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -6337,13 +6813,17 @@ static long r0lab_raw_prctl_hook_clear(uint64_t token, char __user *out_msg,
     release_events = g_raw_page.prctl_hook_release_events;
     reject_events = g_raw_page.prctl_hook_reject_events;
     failures = g_raw_page.prctl_hook_failures;
-    patch_active = g_raw_page.prctl_patch_active;
+    patch_record_slots = g_raw_page.patch_record_slots;
+    patch_active_count = g_raw_page.patch_active_count;
+    patch_dirty_bytes = g_raw_page.patch_dirty_bytes;
+    patch_active = patch_active_count != 0;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_prctl_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u\n",
+             "raw_prctl_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u patch_events=%u release_events=%u reject_events=%u failures=%u patch_active=%u patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u\n",
              g_sys_prctl ? "prctl" : "absent", hit_events,
              read_cycle_events, patch_events, release_events, reject_events,
-             failures, patch_active ? 1 : 0);
+             failures, patch_active ? 1 : 0, patch_record_slots,
+             patch_active_count, patch_dirty_bytes);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -7549,6 +8029,9 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
                                       "__arm64_sys_getpid");
     g_sys_prctl = r0lab_lookup_first("__arm64_sys_prctl.cfi_jt",
                                      "__arm64_sys_prctl");
+    g_copy_from_user_nofault = (r0lab_copy_from_user_nofault_fn_t)
+        r0lab_lookup_first("copy_from_user_nofault.cfi_jt",
+                           "copy_from_user_nofault");
     g_follow_page_pte = r0lab_lookup_first("follow_page_pte.cfi_jt",
                                            "follow_page_pte");
     g_follow_page_mask = r0lab_lookup_first("follow_page_mask.cfi_jt",

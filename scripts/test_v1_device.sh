@@ -138,6 +138,7 @@ run_phase raw_two_pfn scripts/test_raw_device.sh
 run_phase raw_read_cycle scripts/test_raw_read_cycle_device.sh
 run_phase raw_syscall_read_cycle scripts/test_raw_syscall_read_cycle_device.sh
 run_phase raw_prctl_read_cycle scripts/test_raw_prctl_read_cycle_device.sh
+run_phase raw_prctl_patch_records scripts/test_raw_prctl_patch_records_device.sh
 run_phase raw_gup_hide scripts/test_raw_gup_hide_device.sh
 run_phase raw_gup_hook scripts/test_raw_gup_hook_device.sh
 run_phase raw_fork_hook scripts/test_raw_fork_hook_device.sh
