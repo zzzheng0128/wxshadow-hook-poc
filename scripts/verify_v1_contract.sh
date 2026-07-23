@@ -55,6 +55,7 @@ F46_D4_R3B_PLAN=docs/wxshadow-f4.6-d4-r3b-raw-hold-split-plan.md
 F46_D4_R3C_PLAN=docs/wxshadow-f4.6-d4-r3c-status-reader-split-plan.md
 F46_D4_R3D_PLAN=docs/wxshadow-f4.6-d4-r3d-status-transport-split-plan.md
 F46_D4_R3E_PLAN=docs/wxshadow-f4.6-d4-r3e-raw-hold-lifetime-plan.md
+F46_D4_R3E_L2_PLAN=docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -80,6 +81,7 @@ require_file "$F46_D4_R3B_PLAN"
 require_file "$F46_D4_R3C_PLAN"
 require_file "$F46_D4_R3D_PLAN"
 require_file "$F46_D4_R3E_PLAN"
+require_file "$F46_D4_R3E_L2_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file scripts/test_raw_exit_hook_routing_device.sh
 require_file scripts/test_raw_exit_hook_routing_diagnostics_device.sh
@@ -536,11 +538,12 @@ require_text "$F46_PANIC_DIAGNOSIS" 'LC_ALL=C grep'
 require_text "$F46_PANIC_DIAGNOSIS" 'R1 stop rule'
 require_text "$F46_PANIC_DIAGNOSIS" 'F4.6-R0'
 require_text "$F46_PANIC_DIAGNOSIS" 'F4.6-R1'
-require_text "$F46_PANIC_DIAGNOSIS" 'Do not patch D4 before D4-R3e-L2 converts'
+require_text "$F46_PANIC_DIAGNOSIS" 'Do not patch D4 before D4-R3e-L2 live-PTE planning converts'
 require_text "$F46_PANIC_DIAGNOSIS" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$F46_PANIC_DIAGNOSIS" 'docs/wxshadow-f4.6-d4-r3d-status-transport-split-plan.md'
 require_text "$F46_PANIC_DIAGNOSIS" 'D4-R3d-raw-hold-self-unstable'
 require_text "$F46_PANIC_DIAGNOSIS" 'docs/wxshadow-f4.6-d4-r3e-raw-hold-lifetime-plan.md'
+require_text "$F46_PANIC_DIAGNOSIS" 'docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md'
 require_text "$F46_PANIC_DIAGNOSIS" 'D4-R3e-L1-single-source-uxn-unstable'
 require_text "$F46_PANIC_DIAGNOSIS" 'raw-hold-lifetime-matrix-20260724-071931.log'
 require_text "$DEVELOPMENT_SEQUENCE" 'Active Slice Board'
@@ -683,9 +686,21 @@ require_text "$F46_D4_R3E_PLAN" 'D4-R3e-L1-single-source-uxn-unstable'
 require_text "$F46_D4_R3E_PLAN" 'single retained `SOURCE_UXN` raw PTE'
 require_text "$F46_D4_R3E_PLAN" 'D4-R3e-L2 Planning Gate'
 require_text "$F46_D4_R3E_PLAN" 'D4-R3e-L2-P'
+require_text "$F46_D4_R3E_PLAN" 'docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md'
+require_text "$F46_D4_R3E_PLAN" 'live-PTE snapshot after `source_uxn` arm'
 require_text "$F46_D4_R3E_PLAN" 'D4-R3e-A | Read-only source audit'
 require_text "$F46_D4_R3E_PLAN" 'D4-R3e-L1 | Lab App lifetime matrix only'
 require_text "$F46_D4_R3E_PLAN" 'Do not continue D4-R3d-L2 status transport or L3 maps reader work'
+require_text "$F46_D4_R3E_L2_PLAN" 'wxshadow F4.6 D4-R3e-L2 Live PTE Snapshot Plan'
+require_text "$F46_D4_R3E_L2_PLAN" 'Status: planning gate only.'
+require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L1-single-source-uxn-unstable'
+require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-divergence'
+require_text "$F46_D4_R3E_L2_PLAN" 'no PTE replacement ordering changes'
+require_text "$F46_D4_R3E_L2_PLAN" 'no `SHADOW_RX` activation'
+require_text "$F46_D4_R3E_L2_PLAN" 'raw mode=raw-hold-live-pte'
+require_text "$F46_D4_R3E_L2_PLAN" 'live_pte=<hex> expected_pte=<hex>'
+require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-match-then-unstable'
+require_text "$F46_D4_R3E_L2_PLAN" 'scripts/test_raw_live_pte_snapshot_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-raw-hold-self-unstable'
@@ -697,11 +712,13 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e raw-hold lifetime plan | Faile
 require_text "$DEVELOPMENT_SEQUENCE" 'raw raw-hold lifetime source|shadow single|double <token>'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L2-P'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L1-single-source-uxn-unstable'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md'
 require_text "$FINAL_ROADMAP" 'F4.6-D4-R3e-L1 raw-hold lifetime matrix'
 require_text "$FINAL_ROADMAP" 'source is unlocked by D4-R3e-L1'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_hold_lifetime_matrix_device.sh'
 require_text "$FINAL_ROADMAP" 'D4-R3e-L2 planning'
 require_text "$FINAL_ROADMAP" 'raw-hold-lifetime-matrix-20260724-071931.log'
+require_text "$FINAL_ROADMAP" 'D4-R3e-L2 live-PTE planning'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw-hold idle stability'
 require_text "$DEVELOPMENT_SEQUENCE" 'Activity/Logcat status transport'
 require_text "$DEVELOPMENT_SEQUENCE" 'KPM status supercall'
