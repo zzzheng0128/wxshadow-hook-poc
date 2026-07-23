@@ -127,6 +127,7 @@ run_phase m4_clone scripts/test_m4_device.sh
 run_phase s4_brk scripts/test_s4_brk_device.sh
 run_phase s4_step scripts/test_s4_step_device.sh
 run_phase s4_raw_step scripts/test_s4_raw_step_device.sh
+run_phase s4_raw_reg scripts/test_s4_raw_reg_device.sh
 run_phase m5_exit_probe scripts/test_m5_exit_probe_device.sh
 run_phase m5_lifecycle scripts/test_m5_lifecycle_device.sh
 run_phase m5_faults scripts/test_m5_faults_device.sh

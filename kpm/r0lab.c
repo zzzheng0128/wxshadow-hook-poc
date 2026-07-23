@@ -35,6 +35,9 @@
 #define R0LAB_M5_TEST_ARM_DELAY_MS 200U
 #define R0LAB_M4_SEQUENCE_BYTES 8UL
 #define R0LAB_RAW_CODE_MOV_W0_99 0x52800c60U
+#define R0LAB_RAW_CODE_MOV_X0_X1 0xaa0103e0U
+#define R0LAB_S4_RAW_REG_INDEX 1U
+#define R0LAB_S4_RAW_REG_VALUE 73ULL
 #define R0LAB_RAW_HWCAP_WORDS 2U
 #define R0LAB_RAW_STATIC_KEY_SIZE 16U
 #define R0LAB_RAW_ARM64_NCAPS 76U
@@ -100,6 +103,7 @@ enum r0lab_event_op {
     R0LAB_EVENT_RAW_SYSCALL_READ_CYCLE_BEGIN = 38,
     R0LAB_EVENT_RAW_ABORT_PROBE_HIT = 39,
     R0LAB_EVENT_RAW_ABORT_WRITE_RELEASE = 40,
+    R0LAB_EVENT_S4_REG_WRITE = 41,
 };
 
 struct r0lab_event {
@@ -288,6 +292,7 @@ struct r0lab_raw_shadow_page {
     bool monitor_running;
     bool transitioning;
     bool s4_shadow_brk_layout;
+    bool s4_shadow_reg_layout;
     bool gup_hook_installed;
     bool gup_hook_uses_pte;
     bool fork_hook_installed;
@@ -343,6 +348,8 @@ struct r0lab_s4_breakpoint {
     uint32_t step_disable_events;
     uint32_t pte_begin_events;
     uint32_t pte_finish_events;
+    uint32_t reg_write_events;
+    uint64_t reg_value;
     pid_t step_tid;
     uint8_t state;
     bool reserving;
@@ -352,6 +359,7 @@ struct r0lab_s4_breakpoint {
     bool step_hook_installed;
     bool step_mode;
     bool raw_step_mode;
+    bool raw_reg_mode;
     bool target_exiting;
     bool monitor_running;
 };
@@ -550,6 +558,16 @@ static pid_t r0lab_current_tgid(void)
 static pid_t r0lab_current_tid(void)
 {
     return g_task_pid(current, PIDTYPE_PID, NULL);
+}
+
+/*
+ * KernelPatch marks chain uninstall/free as unsafe. Detach only this KPM's
+ * callback and retain the KernelPatch-owned transit so concurrent callers
+ * cannot execute freed hook memory.
+ */
+static void r0lab_hook_detach(void *func, void *before, void *after)
+{
+    hook_unwrap_remove(func, before, after, 0);
 }
 
 static void r0lab_close_exited_session(pid_t owner_tgid);
@@ -975,7 +993,9 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
     bool enable_step = false;
     bool step_ready = false;
     bool raw_begin = false;
+    bool reg_write = false;
     uint64_t raw_generation = 0;
+    uint64_t reg_value = 0;
     int raw_result = 0;
 
     (void)udata;
@@ -1040,6 +1060,12 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
                 ++g_s4_brk.step_enable_events;
                 ++g_s4_brk.pte_begin_events;
                 g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_STEP;
+                if (g_s4_brk.raw_reg_mode) {
+                    reg_value = g_s4_brk.reg_value;
+                    regs->regs[R0LAB_S4_RAW_REG_INDEX] = reg_value;
+                    ++g_s4_brk.reg_write_events;
+                    reg_write = true;
+                }
                 args->skip_origin = 1;
                 args->ret = 0;
                 enable_step = true;
@@ -1056,6 +1082,9 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
     if (matched)
         r0lab_record_values(R0LAB_EVENT_S4_BRK_OBSERVED, 0, event_pc,
                             event_x0, event_x30);
+    if (reg_write)
+        r0lab_record_values(R0LAB_EVENT_S4_REG_WRITE, 0, event_pc,
+                            R0LAB_S4_RAW_REG_INDEX, reg_value);
 
     flags = r0lab_lock();
     if (g_s4_inflight)
@@ -1177,9 +1206,10 @@ static void r0lab_s4_unhook(void)
     if (brk_installed || step_installed)
         (void)r0lab_s4_wait_for_callbacks();
     if (step_installed)
-        hook_unwrap(g_s4_single_step_handler, r0lab_s4_step_before, NULL);
+        r0lab_hook_detach(g_s4_single_step_handler, r0lab_s4_step_before,
+                          NULL);
     if (brk_installed)
-        hook_unwrap(g_s4_brk_handler, r0lab_s4_brk_before, NULL);
+        r0lab_hook_detach(g_s4_brk_handler, r0lab_s4_brk_before, NULL);
     if (brk_installed || step_installed)
         (void)r0lab_s4_wait_for_callbacks();
 }
@@ -1343,6 +1373,7 @@ static int r0lab_s4_monitor_loop(void *opaque)
 
 static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
                              bool step_mode, bool raw_step_mode,
+                             bool raw_reg_mode,
                              char __user *out_msg, int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
@@ -1360,6 +1391,10 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
                        !g_s4_user_enable_single_step ||
                        !g_s4_user_disable_single_step))) {
         result = R0LAB_ENOSYS;
+        goto record;
+    }
+    if (raw_reg_mode && !raw_step_mode) {
+        result = R0LAB_EINVAL;
         goto record;
     }
     if (!target_address || (target_address & 3ULL) ||
@@ -1404,6 +1439,7 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
         g_raw_page.record.backend = R0LAB_PAGE_RECORD_RAW_TWO_PFN;
         g_raw_page.record.state = R0LAB_PAGE_RECORD_PREPARING;
         g_raw_page.s4_shadow_brk_layout = true;
+        g_raw_page.s4_shadow_reg_layout = raw_reg_mode;
         g_raw_page.reserving = true;
     }
     g_s4_brk.mm = mm;
@@ -1412,6 +1448,8 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
     g_s4_brk.state = R0LAB_S4_PREPARING;
     g_s4_brk.step_mode = step_mode;
     g_s4_brk.raw_step_mode = raw_step_mode;
+    g_s4_brk.raw_reg_mode = raw_reg_mode;
+    g_s4_brk.reg_value = raw_reg_mode ? R0LAB_S4_RAW_REG_VALUE : 0;
     g_s4_brk.reserving = true;
     r0lab_unlock(flags);
 
@@ -1433,7 +1471,7 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
                                       r0lab_s4_step_before, NULL, NULL);
         result = (int)step_hook_result;
         if (result)
-            hook_unwrap(g_s4_brk_handler, r0lab_s4_brk_before, NULL);
+            r0lab_hook_detach(g_s4_brk_handler, r0lab_s4_brk_before, NULL);
     }
 
     flags = r0lab_lock();
@@ -1490,7 +1528,12 @@ fail_reserved:
         goto record;
     }
     r0lab_record(R0LAB_EVENT_S4_ARM, 0);
-    if (raw_step_mode)
+    if (raw_reg_mode)
+        snprintf(reply, sizeof(reply),
+                 "s4_raw_reg_ready target=%llx state=%s mode=raw_reg brk_skip_origin=1 step_skip_origin=1 single_step=1 pte_switch=1 register_edit=1 register_index=%u register_value=%llu register_apply=brk_before_single_step raw_state=shadow_active\n",
+                 target_address, r0lab_s4_state_name(R0LAB_S4_HOOKED),
+                 R0LAB_S4_RAW_REG_INDEX, R0LAB_S4_RAW_REG_VALUE);
+    else if (raw_step_mode)
         snprintf(reply, sizeof(reply),
                  "s4_raw_step_ready target=%llx state=%s mode=raw_step brk_skip_origin=1 step_skip_origin=1 single_step=1 pte_switch=1 raw_state=shadow_active\n",
                  target_address, r0lab_s4_state_name(R0LAB_S4_HOOKED));
@@ -1549,8 +1592,11 @@ static long r0lab_s4_step_observed(uint64_t token, char __user *out_msg,
     uint32_t disable_events;
     uint32_t pte_begin_events;
     uint32_t pte_finish_events;
+    uint32_t reg_write_events;
+    uint64_t reg_value;
     uint8_t state;
     bool raw_step_mode;
+    bool raw_reg_mode;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -1567,11 +1613,22 @@ static long r0lab_s4_step_observed(uint64_t token, char __user *out_msg,
     disable_events = g_s4_brk.step_disable_events;
     pte_begin_events = g_s4_brk.pte_begin_events;
     pte_finish_events = g_s4_brk.pte_finish_events;
+    reg_write_events = g_s4_brk.reg_write_events;
+    reg_value = g_s4_brk.reg_value;
     state = g_s4_brk.state;
     raw_step_mode = g_s4_brk.raw_step_mode;
+    raw_reg_mode = g_s4_brk.raw_reg_mode;
     r0lab_unlock(flags);
 
-    if (raw_step_mode)
+    if (raw_reg_mode)
+        snprintf(reply, sizeof(reply),
+                 "s4_step_observed target=%llx brk_events=%u step_events=%u enable_events=%u disable_events=%u pte_begin_events=%u pte_finish_events=%u reg_write_events=%u state=%s mode=raw_reg brk_skip_origin=1 step_skip_origin=1 single_step=1 pte_switch=1 register_edit=1 register_index=%u register_value=%llu register_apply=brk_before_single_step raw_state=shadow_active\n",
+                 (uint64_t)target_address, brk_events, step_events,
+                 enable_events, disable_events, pte_begin_events,
+                 pte_finish_events, reg_write_events,
+                 r0lab_s4_state_name(state), R0LAB_S4_RAW_REG_INDEX,
+                 (unsigned long long)reg_value);
+    else if (raw_step_mode)
         snprintf(reply, sizeof(reply),
                  "s4_step_observed target=%llx brk_events=%u step_events=%u enable_events=%u disable_events=%u pte_begin_events=%u pte_finish_events=%u state=%s mode=raw_step brk_skip_origin=1 step_skip_origin=1 single_step=1 pte_switch=1 raw_state=shadow_active\n",
                  (uint64_t)target_address, brk_events, step_events,
@@ -2471,7 +2528,7 @@ static void r0lab_m3_unhook(void)
     if (installed)
         (void)r0lab_m3_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_do_mem_abort, r0lab_m3_before_abort, NULL);
+        r0lab_hook_detach(g_do_mem_abort, r0lab_m3_before_abort, NULL);
     if (installed)
         (void)r0lab_m3_wait_for_callbacks();
 }
@@ -3048,7 +3105,7 @@ static void r0lab_m4_unhook(void)
     if (installed)
         (void)r0lab_m4_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_do_mem_abort, r0lab_m4_before_abort, NULL);
+        r0lab_hook_detach(g_do_mem_abort, r0lab_m4_before_abort, NULL);
     if (installed)
         (void)r0lab_m4_wait_for_callbacks();
 }
@@ -4073,8 +4130,8 @@ static void r0lab_raw_fork_unhook(void)
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_dup_mmap, r0lab_raw_fork_before,
-                    r0lab_raw_fork_after);
+        r0lab_hook_detach(g_dup_mmap, r0lab_raw_fork_before,
+                          r0lab_raw_fork_after);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
@@ -4093,7 +4150,7 @@ static void r0lab_raw_fault_unhook(void)
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_handle_mm_fault, r0lab_raw_fault_before, NULL);
+        r0lab_hook_detach(g_handle_mm_fault, r0lab_raw_fault_before, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
@@ -4110,7 +4167,7 @@ static void r0lab_raw_syscall_unhook(void)
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_sys_getpid, r0lab_raw_syscall_before, NULL);
+        r0lab_hook_detach(g_sys_getpid, r0lab_raw_syscall_before, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
@@ -4126,7 +4183,7 @@ static void r0lab_raw_exit_unhook(void)
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
@@ -4145,11 +4202,11 @@ static void r0lab_raw_gup_unhook(void)
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (installed && uses_pte)
-        hook_unwrap(g_follow_page_pte, r0lab_raw_gup_pte_before,
-                    r0lab_raw_gup_pte_after);
+        r0lab_hook_detach(g_follow_page_pte, r0lab_raw_gup_pte_before,
+                          r0lab_raw_gup_pte_after);
     else if (installed)
-        hook_unwrap(g_follow_page_mask, r0lab_raw_gup_mask_before,
-                    r0lab_raw_gup_mask_after);
+        r0lab_hook_detach(g_follow_page_mask, r0lab_raw_gup_mask_before,
+                          r0lab_raw_gup_mask_after);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
@@ -4177,7 +4234,7 @@ static void r0lab_raw_unhook_except_exit(void)
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (installed)
-        hook_unwrap(g_do_mem_abort, r0lab_raw_before_abort, NULL);
+        r0lab_hook_detach(g_do_mem_abort, r0lab_raw_before_abort, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
@@ -4230,7 +4287,7 @@ static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
         }
         r0lab_unlock(flags);
         (void)r0lab_raw_wait_for_callbacks();
-        hook_unwrap(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
         (void)r0lab_raw_wait_for_callbacks();
         flags = r0lab_lock();
         if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation)
@@ -4366,7 +4423,9 @@ static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page)
     shadow_words = (uint32_t *)page->raw.shadow_kaddr;
     if (page->s4_shadow_brk_layout) {
         shadow_words[0] = R0LAB_S4_BRK_COMMENT << 5 | 0xd4200000U;
-        shadow_words[1] = R0LAB_RAW_CODE_MOV_W0_99;
+        shadow_words[1] = page->s4_shadow_reg_layout ?
+                          R0LAB_RAW_CODE_MOV_X0_X1 :
+                          R0LAB_RAW_CODE_MOV_W0_99;
         shadow_words[2] = 0xd65f03c0U;
     } else {
         shadow_words[0] = R0LAB_RAW_CODE_MOV_W0_99;
@@ -5123,11 +5182,11 @@ static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
         r0lab_unlock(flags);
         if (result) {
             if (uses_pte)
-                hook_unwrap(hook_target, r0lab_raw_gup_pte_before,
-                            r0lab_raw_gup_pte_after);
+                r0lab_hook_detach(hook_target, r0lab_raw_gup_pte_before,
+                                  r0lab_raw_gup_pte_after);
             else
-                hook_unwrap(hook_target, r0lab_raw_gup_mask_before,
-                            r0lab_raw_gup_mask_after);
+                r0lab_hook_detach(hook_target, r0lab_raw_gup_mask_before,
+                                  r0lab_raw_gup_mask_after);
             goto record;
         }
     }
@@ -5190,7 +5249,8 @@ static long r0lab_raw_fault_hook_arm(uint64_t token, char __user *out_msg,
         }
         r0lab_unlock(flags);
         if (result) {
-            hook_unwrap(g_handle_mm_fault, r0lab_raw_fault_before, NULL);
+            r0lab_hook_detach(g_handle_mm_fault, r0lab_raw_fault_before,
+                              NULL);
             goto record;
         }
     }
@@ -5774,7 +5834,7 @@ static long r0lab_raw_syscall_hook_arm_common(uint64_t token,
         }
         r0lab_unlock(flags);
         if (result) {
-            hook_unwrap(g_sys_getpid, r0lab_raw_syscall_before, NULL);
+            r0lab_hook_detach(g_sys_getpid, r0lab_raw_syscall_before, NULL);
             goto record;
         }
     }
@@ -5914,7 +5974,7 @@ static long r0lab_raw_exit_hook_arm(uint64_t token, char __user *out_msg,
         }
         r0lab_unlock(flags);
         if (result) {
-            hook_unwrap(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+            r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
             goto record;
         }
     }
@@ -6085,8 +6145,8 @@ static long r0lab_raw_fork_hook_arm(uint64_t token, char __user *out_msg,
         }
         r0lab_unlock(flags);
         if (result) {
-            hook_unwrap(g_dup_mmap, r0lab_raw_fork_before,
-                        r0lab_raw_fork_after);
+            r0lab_hook_detach(g_dup_mmap, r0lab_raw_fork_before,
+                              r0lab_raw_fork_after);
             goto record;
         }
     }
@@ -6501,19 +6561,29 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
         value = args + 11;
         if (r0lab_parse_u64_pair(value, &token, &page_address))
             return R0LAB_EINVAL;
-        return r0lab_s4_brk_arm(token, page_address, false, false, out_msg, outlen);
+        return r0lab_s4_brk_arm(token, page_address, false, false, false,
+                                out_msg, outlen);
     }
     if (!strncmp(args, "s4 step arm ", 12)) {
         value = args + 12;
         if (r0lab_parse_u64_pair(value, &token, &page_address))
             return R0LAB_EINVAL;
-        return r0lab_s4_brk_arm(token, page_address, true, false, out_msg, outlen);
+        return r0lab_s4_brk_arm(token, page_address, true, false, false,
+                                out_msg, outlen);
     }
     if (!strncmp(args, "s4 raw-step arm ", 16)) {
         value = args + 16;
         if (r0lab_parse_u64_pair(value, &token, &page_address))
             return R0LAB_EINVAL;
-        return r0lab_s4_brk_arm(token, page_address, true, true, out_msg, outlen);
+        return r0lab_s4_brk_arm(token, page_address, true, true, false,
+                                out_msg, outlen);
+    }
+    if (!strncmp(args, "s4 raw-reg arm ", 15)) {
+        value = args + 15;
+        if (r0lab_parse_u64_pair(value, &token, &page_address))
+            return R0LAB_EINVAL;
+        return r0lab_s4_brk_arm(token, page_address, true, true, true,
+                                out_msg, outlen);
     }
     if (!strncmp(args, "s4 brk observed ", 16)) {
         value = args + 16;

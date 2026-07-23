@@ -25,6 +25,7 @@
 #define R0LAB_M4_CODE_MOV_W0_99 0x52800c60U
 #define R0LAB_M3_CODE_RET 0xd65f03c0U
 #define R0LAB_S4_CODE_BRK_7 0xd42000e0U
+#define R0LAB_S4_RAW_REG_VALUE 73
 #define R0LAB_FAULT_PROBE_WORD 0x13579bdfU
 
 static pthread_mutex_t g_r0lab_control_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -4237,6 +4238,130 @@ done:
     return failures ? -1 : 0;
 }
 
+static int r0lab_s4_raw_reg_run(const char *token_text, char *output,
+                                size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint64_t token;
+    void *page = MAP_FAILED;
+    char command[128];
+    char arm_reply[384] = {0};
+    char observed_reply[512] = {0};
+    long arm_rc = -1;
+    long observed_rc = -1;
+    long clear_rc = -1;
+    long cleared_rc = -1;
+    int handler_installed = 0;
+    int normal_value = -1;
+    int hook_value = -1;
+    int restored_value = -1;
+    int failures = 0;
+    size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
+
+    if (r0lab_parse_token(token_text, &token) ||
+        page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid S4 raw-reg request");
+        return -1;
+    }
+    if (r0lab_s4_map_raw_step_page(&page)) {
+        snprintf(output, output_size,
+                 "rc=-12 error=s4 raw-reg page allocation errno=%d", errno);
+        return -1;
+    }
+    normal_value = ((int (*)(void))page)();
+
+    g_r0lab_s4_brk_page = page;
+    g_r0lab_s4_brk_traps = 0;
+    g_r0lab_s4_step_traps = 0;
+    g_r0lab_s4_brk_unexpected = 0;
+    g_r0lab_s4_last_signal = 0;
+    g_r0lab_s4_last_si_code = 0;
+    g_r0lab_s4_last_pc = 0;
+    action.sa_sigaction = r0lab_s4_brk_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (!sigaction(SIGTRAP, &action, &previous_action))
+        handler_installed = 1;
+    if (!handler_installed) {
+        failures = 1;
+        goto done;
+    }
+
+    snprintf(command, sizeof(command), "s4 raw-reg arm 0x%llx 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page);
+    arm_rc = r0lab_control_raw(command, arm_reply, sizeof(arm_reply));
+    if (arm_rc < 0) {
+        failures = 1;
+        goto done;
+    }
+
+    g_r0lab_s4_stage = 1;
+    if (!sigsetjmp(g_r0lab_s4_jump, 1))
+        hook_value = ((int (*)(void))page)();
+    else
+        failures = 1;
+    g_r0lab_s4_stage = 0;
+
+    snprintf(command, sizeof(command), "s4 step observed 0x%llx",
+             (unsigned long long)token);
+    observed_rc = r0lab_control_raw(command, observed_reply,
+                                    sizeof(observed_reply));
+    r0lab_s4_clear(token, &clear_rc, &cleared_rc);
+    if (cleared_rc >= 0)
+        restored_value = ((int (*)(void))page)();
+
+    if (normal_value != 42 || hook_value != R0LAB_S4_RAW_REG_VALUE ||
+        restored_value != 42 || g_r0lab_s4_brk_traps != 0 ||
+        g_r0lab_s4_step_traps != 0 ||
+        g_r0lab_s4_brk_unexpected != 0 || observed_rc < 0 ||
+        !strstr(arm_reply, "s4_raw_reg_ready") ||
+        !strstr(arm_reply, "mode=raw_reg") ||
+        !strstr(arm_reply, "register_edit=1") ||
+        !strstr(arm_reply, "register_index=1") ||
+        !strstr(arm_reply, "register_value=73") ||
+        !strstr(arm_reply, "register_apply=brk_before_single_step") ||
+        !strstr(arm_reply, "pte_switch=1") ||
+        !strstr(observed_reply, "brk_events=1") ||
+        !strstr(observed_reply, "step_events=1") ||
+        !strstr(observed_reply, "enable_events=1") ||
+        !strstr(observed_reply, "disable_events=1") ||
+        !strstr(observed_reply, "pte_begin_events=1") ||
+        !strstr(observed_reply, "pte_finish_events=1") ||
+        !strstr(observed_reply, "reg_write_events=1") ||
+        !strstr(observed_reply, "state=step_observed") ||
+        !strstr(observed_reply, "mode=raw_reg") ||
+        !strstr(observed_reply, "register_edit=1") ||
+        !strstr(observed_reply, "register_index=1") ||
+        !strstr(observed_reply, "register_value=73") ||
+        !strstr(observed_reply, "register_apply=brk_before_single_step") ||
+        !strstr(observed_reply, "pte_switch=1") ||
+        clear_rc < 0 || cleared_rc < 0)
+        failures = 1;
+
+done:
+    if (arm_rc >= 0 && clear_rc < 0)
+        r0lab_s4_clear(token, &clear_rc, &cleared_rc);
+    if (handler_installed)
+        sigaction(SIGTRAP, &previous_action, NULL);
+    g_r0lab_s4_brk_page = NULL;
+    if (page != MAP_FAILED)
+        munmap(page, page_size);
+    snprintf(output, output_size,
+             "s4 mode=raw-reg failures=%d register_edit=1 register_index=1 register_value=%d register_apply=brk_before_single_step normal_value=%d hook_value=%d restored_value=%d brk_traps=%d step_traps=%d unexpected=%d last_pc=%llx last_signal=%d last_si_code=%d arm_rc=%ld observed_rc=%ld clear_rc=%ld cleared_rc=%ld target=%llx arm=\"%s\" observed=\"%s\"",
+             failures, R0LAB_S4_RAW_REG_VALUE, normal_value, hook_value,
+             restored_value, (int)g_r0lab_s4_brk_traps,
+             (int)g_r0lab_s4_step_traps,
+             (int)g_r0lab_s4_brk_unexpected,
+             (unsigned long long)g_r0lab_s4_last_pc,
+             (int)g_r0lab_s4_last_signal, (int)g_r0lab_s4_last_si_code,
+             arm_rc, observed_rc, clear_rc, cleared_rc,
+             (unsigned long long)(uintptr_t)page, arm_reply, observed_reply);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_m5_hold_m3(const char *token_text, char *output,
                              size_t output_size)
 {
@@ -4996,6 +5121,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "s4 raw-step ", 12)) {
         r0lab_s4_raw_step_run(args + 12, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "s4 raw-reg ", 11)) {
+        r0lab_s4_raw_reg_run(args + 11, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
