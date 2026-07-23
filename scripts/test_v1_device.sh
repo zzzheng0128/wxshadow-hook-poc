@@ -4,6 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 M0_LOOPS=${M0_LOOPS:-100}
+LAB_PACKAGE=dev.r0hook.lab
 EVIDENCE_DIR="$ROOT/build/evidence"
 RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
 RUN_DIR="$EVIDENCE_DIR/v1-device-$RUN_ID"
@@ -51,6 +52,8 @@ run_phase() {
   script=$2
   phase_log="$RUN_DIR/$phase.log"
 
+  adb_device shell am force-stop "$LAB_PACKAGE" >/dev/null ||
+    fail "$phase: could not reset Lab app process"
   printf 'phase=%s script=%s status=running\n' "$phase" "$script" >> "$MANIFEST"
   if [ "$script" = 'scripts/test_m0_device.sh' ]; then
     if [ -n "$SERIAL" ]; then
@@ -132,6 +135,9 @@ run_phase m5_exit_probe scripts/test_m5_exit_probe_device.sh
 run_phase m5_lifecycle scripts/test_m5_lifecycle_device.sh
 run_phase m5_faults scripts/test_m5_faults_device.sh
 run_phase raw_two_pfn scripts/test_raw_device.sh
+run_phase raw_read_cycle scripts/test_raw_read_cycle_device.sh
+run_phase raw_syscall_read_cycle scripts/test_raw_syscall_read_cycle_device.sh
+run_phase raw_prctl_read_cycle scripts/test_raw_prctl_read_cycle_device.sh
 run_phase raw_gup_hide scripts/test_raw_gup_hide_device.sh
 run_phase raw_gup_hook scripts/test_raw_gup_hook_device.sh
 run_phase raw_fork_hook scripts/test_raw_fork_hook_device.sh

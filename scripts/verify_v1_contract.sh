@@ -20,6 +20,18 @@ require_text() {
     fail "required contract text is missing from $path: $text"
 }
 
+require_function_text() {
+  path=$1
+  function_name=$2
+  text=$3
+  awk -v function_name="$function_name" '
+    index($0, function_name "(") { in_function = 1 }
+    in_function { print }
+    in_function && /^}/ { exit }
+  ' "$ROOT/$path" | grep -F -- "$text" >/dev/null ||
+    fail "required contract text is missing from $path function $function_name: $text"
+}
+
 CONTRACT=docs/r0lab-v1-contract.md
 VERIFICATION=docs/r0lab-v1-verification.md
 SHADOW_PLAN=docs/shadow-page-transition-plan.md
@@ -107,6 +119,7 @@ scripts/test_s4_raw_reg_device.sh
 scripts/test_raw_device.sh
 scripts/test_raw_read_cycle_device.sh
 scripts/test_raw_syscall_read_cycle_device.sh
+scripts/test_raw_prctl_read_cycle_device.sh
 scripts/test_raw_gup_hide_device.sh
 scripts/test_raw_gup_hook_device.sh
 scripts/test_raw_fork_hook_device.sh
@@ -171,6 +184,8 @@ require_text kpm/r0lab_raw_compat.c 'int r0lab_raw_arm_source_uxn_only(struct r0
 require_text kpm/r0lab_raw_compat.c 'vma->vm_mm == (struct mm_struct *)page->mm'
 require_text kpm/r0lab.c 'g_m3_page.raw.mm = mm'
 require_text kpm/r0lab.c 'r0lab_raw_arm_source_uxn_only(&page->raw)'
+require_function_text kpm/r0lab.c r0lab_m3_clear_worker \
+  'result = page->raw.state == R0LAB_RAW_RESTORED ?'
 require_text kpm/r0lab.c 'r0lab_raw_restore_original(&page->raw)'
 require_text kpm/r0lab.c 'source_transition=pte_uxn pte_switch=1'
 require_text kpm/r0lab_raw.h 'int r0lab_raw_vma_matches(const struct r0lab_raw_page *page, void *vma,'
@@ -182,6 +197,7 @@ require_text kpm/r0lab.c 'raw_gup_%s result=%d state=%lu active_kind=%s gup_hide
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_READ_CYCLE_BEGIN'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_READ_CYCLE_FINISH'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_SYSCALL_READ_CYCLE_BEGIN'
+require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_PRCTL_TRIGGER'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_ABORT_PROBE_HIT'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_ABORT_WRITE_RELEASE'
 require_text kpm/r0lab.c 'R0LAB_EVENT_S4_REG_WRITE'
@@ -190,6 +206,20 @@ require_text kpm/r0lab.c 'raw_read_cycle_begin result=%d state=%lu active_kind=%
 require_text kpm/r0lab.c 'raw_read_cycle_status state=%lu active_kind=%s read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu read_cycle=uxn_original_exec_resume trigger=supercall pte_switch=%u data_fault=absent exec_resume=%s'
 require_text kpm/r0lab.c 'raw_syscall_read_cycle_hook_ready symbol=getpid installed=1 target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending'
 require_text kpm/r0lab.c 'raw_syscall_hook_status symbol=%s installed=%u hit_events=%u read_cycle_events=%u failures=%u target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s'
+require_text kpm/r0lab.c '#define R0LAB_PRCTL_MAGIC 0x52304c42U'
+require_text kpm/r0lab.c '#define R0LAB_PRCTL_OP_READ_CYCLE 1U'
+require_text kpm/r0lab.c 'g_sys_prctl = r0lab_lookup_first("__arm64_sys_prctl.cfi_jt"'
+require_text kpm/r0lab.c '(uint32_t)syscall_regs->regs[0] != R0LAB_PRCTL_MAGIC'
+require_text kpm/r0lab.c 'token != g_session.token'
+require_text kpm/r0lab.c 'operation != R0LAB_PRCTL_OP_READ_CYCLE'
+require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
+  '++g_raw_inflight;'
+require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
+  'goto out;'
+require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
+  '--g_raw_inflight;'
+require_text kpm/r0lab.c 'raw_prctl_read_cycle_hook_ready symbol=prctl installed=1 abi=prctl_magic'
+require_text kpm/r0lab.c 'passthrough=nonmagic'
 require_text kpm/r0lab.c 'raw_va_prot_none'
 require_text kpm/r0lab.c 'raw_va_rx_write'
 require_text kpm/r0lab.c 'raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
@@ -302,6 +332,33 @@ require_text scripts/test_raw_syscall_read_cycle_device.sh 'read_cycle_events=1'
 require_text scripts/test_raw_syscall_read_cycle_device.sh 'op=35 result=0'
 require_text scripts/test_raw_syscall_read_cycle_device.sh 'op=38 result=0'
 require_text scripts/test_raw_syscall_read_cycle_device.sh 'op=37 result=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'raw mode=prctl-read-cycle failures=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'trigger=prctl_magic'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'option=52304c42'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'operation=1'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'reject_rc=-1'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'reject_errno=1'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'shadow_after_reject=52800c60'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'reject_events=1'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'passthrough=nonmagic'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'passthrough_stress_failures=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'passthrough_thread_rc=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'passthrough_join_rc=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'STRESS_ITERATIONS'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'op=42 result=-1'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'op=42 result=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'op=38 result=0'
+require_text scripts/test_raw_prctl_read_cycle_device.sh 'op=37 result=0'
+require_text lab-app/src/main/cpp/labprobe.c '#include <stdatomic.h>'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_prctl_passthrough_stress_thread \
+  'atomic_load_explicit(&stress->stop, memory_order_relaxed)'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_prctl_passthrough_stress_thread \
+  'atomic_fetch_add_explicit(&stress->iterations, 1,'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_prctl_read_cycle_run \
+  'atomic_store_explicit(&passthrough_stress.stop, true,'
 require_text scripts/test_raw_gup_hook_device.sh 'raw mode=gup-hook failures=0'
 require_text scripts/test_raw_gup_hook_device.sh 'reader=external'
 require_text scripts/test_raw_gup_hook_device.sh 'gup_read_word=52800540'
@@ -375,6 +432,10 @@ require_text scripts/test_raw_exit_hook_device.sh 'op=22 result=0'
 require_text scripts/test_v1_device.sh 'run_phase s4_step scripts/test_s4_step_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase s4_raw_step scripts/test_s4_raw_step_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase s4_raw_reg scripts/test_s4_raw_reg_device.sh'
+require_text scripts/test_v1_device.sh 'run_phase raw_read_cycle scripts/test_raw_read_cycle_device.sh'
+require_text scripts/test_v1_device.sh 'run_phase raw_syscall_read_cycle scripts/test_raw_syscall_read_cycle_device.sh'
+require_text scripts/test_v1_device.sh 'run_phase raw_prctl_read_cycle scripts/test_raw_prctl_read_cycle_device.sh'
+require_text scripts/test_v1_device.sh 'adb_device shell am force-stop "$LAB_PACKAGE"'
 require_text scripts/test_v1_device.sh 'run_phase raw_gup_hide scripts/test_raw_gup_hide_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_gup_hook scripts/test_raw_gup_hook_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_fork_hook scripts/test_raw_fork_hook_device.sh'
@@ -402,4 +463,4 @@ require_text kpm/r0lab.c 'r0lab_raw_exit_mmap_before'
 require_text kpm/r0lab.c 'g_raw_page.clearing && !g_raw_page.target_exiting'
 require_text kpm/r0lab.c 'exit_hook=exit_mmap_observe'
 
-printf '%s\n' 'v1_contract=pass scripts=32 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=33 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_read_cycle=prctl_magic raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
