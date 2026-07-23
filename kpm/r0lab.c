@@ -4044,7 +4044,10 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     const unsigned long far = (unsigned long)args->arg0;
     const unsigned int esr = (unsigned int)args->arg1;
     struct pt_regs *regs = (struct pt_regs *)(unsigned long)args->arg2;
+    struct mm_struct *current_mm = NULL;
+    struct r0lab_raw_hook_page_token route_token = {0};
     struct r0lab_raw_shadow_page *fault_page = NULL;
+    struct r0lab_raw_shadow_page *abort_page = NULL;
     unsigned long page_address;
     uint64_t generation = 0;
     unsigned long flags;
@@ -4067,96 +4070,100 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     int abort_read_cycle_result = R0LAB_EINVAL;
 
     (void)udata;
+    current_mm = g_get_task_mm ? g_get_task_mm(current) : NULL;
     flags = r0lab_lock();
     ++g_raw_inflight;
-    if (regs && (esr >> R0LAB_M3_ESR_EC_SHIFT) == R0LAB_M3_ESR_EC_IABT_LOW &&
+    if (regs && current_mm &&
+        (esr >> R0LAB_M3_ESR_EC_SHIFT) == R0LAB_M3_ESR_EC_IABT_LOW &&
         (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
         g_session.active &&
         g_session.owner_tgid == r0lab_current_tgid()) {
-        unsigned int index;
+        int route_result = r0lab_raw_hook_page_token_acquire_locked(
+            R0LAB_RAW_HOOK_ABORT, current_mm, far, 0,
+            R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN |
+                R0LAB_RAW_HOOK_ROUTE_ALLOW_ORIGINAL_READ,
+            &route_token);
 
-        for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
-            struct r0lab_raw_shadow_page *page =
-                &g_raw_page_table.slots[index];
-
-            if (!page->armed || page->clearing || page->transitioning ||
-                !page->raw.mm ||
-                (page->raw.state != R0LAB_RAW_SOURCE_UXN &&
-                 (page->raw.state != R0LAB_RAW_ORIGINAL_READ ||
-                  !page->raw.read_cycle_active)))
-                continue;
-            page_address = page->raw.address;
-            if ((far & ~(R0LAB_RAW_PAGE_SIZE - 1UL)) == page_address &&
-                regs->pc >= page_address &&
-                regs->pc < page_address + R0LAB_RAW_PAGE_SIZE) {
+        if (!route_result) {
+            fault_page = route_token.page;
+            page_address = fault_page->raw.address;
+            if (regs->pc >= page_address &&
+                regs->pc < page_address + R0LAB_RAW_PAGE_SIZE &&
+                (fault_page->raw.state == R0LAB_RAW_SOURCE_UXN ||
+                 (fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ &&
+                  fault_page->raw.read_cycle_active))) {
                 read_cycle_resume =
-                    page->raw.state == R0LAB_RAW_ORIGINAL_READ;
-                page->transitioning = true;
-                generation = page->generation;
-                fault_page = page;
+                    fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ;
+                fault_page->transitioning = true;
+                generation = route_token.generation;
                 should_handle = true;
-                break;
+            } else {
+                (void)r0lab_raw_hook_page_token_release_locked(
+                    &route_token, false);
+                fault_page = NULL;
             }
         }
-    } else if (regs &&
+    } else if (regs && current_mm &&
                (esr >> R0LAB_M3_ESR_EC_SHIFT) ==
                    R0LAB_M3_ESR_EC_DABT_LOW &&
-               (esr & R0LAB_M3_ESR_FSC_TYPE) ==
-                   R0LAB_M3_ESR_FSC_TRANSLATION &&
-               !(esr & R0LAB_M3_ESR_WNR) &&
-               g_session.active && g_raw_page.armed &&
-               g_raw_page.abort_read_cycle_armed && !g_raw_page.clearing &&
-               !g_raw_page.transitioning &&
-               g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-               !g_raw_page.raw.gup_hide_active &&
-               !g_raw_page.raw.fork_hide_active &&
-               !g_raw_page.raw.read_cycle_active &&
+               g_session.active &&
                g_session.owner_tgid == r0lab_current_tgid()) {
-        page_address = g_raw_page.raw.address;
-        if ((far & ~(R0LAB_RAW_PAGE_SIZE - 1UL)) == page_address) {
-            g_raw_page.transitioning = true;
-            generation = g_raw_page.generation;
-            should_begin_abort_read_cycle = true;
-        }
-    } else if (regs &&
-               (esr >> R0LAB_M3_ESR_EC_SHIFT) ==
-                   R0LAB_M3_ESR_EC_DABT_LOW &&
-               g_session.active && g_raw_page.armed &&
-               g_raw_page.abort_probe_armed && !g_raw_page.clearing &&
-               !g_raw_page.transitioning &&
-               g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-               g_session.owner_tgid == r0lab_current_tgid()) {
-        page_address = g_raw_page.raw.address;
-        if ((far & ~(R0LAB_RAW_PAGE_SIZE - 1UL)) == page_address) {
-            abort_probe_kind = (esr & R0LAB_M3_ESR_WNR) ?
-                               R0LAB_FAULT_KIND_WRITE :
-                               R0LAB_FAULT_KIND_READ;
-            if (abort_probe_kind == R0LAB_FAULT_KIND_WRITE)
-                ++g_raw_page.abort_probe_write_events;
-            else
-                ++g_raw_page.abort_probe_read_events;
-            abort_probe_events = g_raw_page.abort_probe_read_events +
-                                 g_raw_page.abort_probe_write_events +
-                                 g_raw_page.abort_probe_exec_events;
-            g_raw_page.abort_probe_last_esr = esr;
-            g_raw_page.abort_probe_last_far = far;
-            abort_probe_hit = true;
-        }
-    } else if (regs &&
-               (esr >> R0LAB_M3_ESR_EC_SHIFT) ==
-                   R0LAB_M3_ESR_EC_DABT_LOW &&
-               (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
-               (esr & R0LAB_M3_ESR_WNR) &&
-               g_session.active && g_raw_page.armed &&
-               g_raw_page.abort_write_release_armed &&
-               !g_raw_page.clearing && !g_raw_page.transitioning &&
-               g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-               g_session.owner_tgid == r0lab_current_tgid()) {
-        page_address = g_raw_page.raw.address;
-        if ((far & ~(R0LAB_RAW_PAGE_SIZE - 1UL)) == page_address) {
-            g_raw_page.transitioning = true;
-            generation = g_raw_page.generation;
-            should_release_write = true;
+        bool translation_read =
+            (esr & R0LAB_M3_ESR_FSC_TYPE) ==
+                R0LAB_M3_ESR_FSC_TRANSLATION &&
+            !(esr & R0LAB_M3_ESR_WNR);
+        bool permission_write =
+            (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
+            (esr & R0LAB_M3_ESR_WNR);
+        int route_result = r0lab_raw_hook_page_token_acquire_locked(
+            R0LAB_RAW_HOOK_ABORT, current_mm, far, 0,
+            R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX, &route_token);
+
+        if (!route_result) {
+            abort_page = route_token.page;
+            if (translation_read && abort_page->abort_read_cycle_armed) {
+                if (!abort_page->raw.gup_hide_active &&
+                    !abort_page->raw.fork_hide_active &&
+                    !abort_page->raw.read_cycle_active) {
+                    abort_page->transitioning = true;
+                    generation = route_token.generation;
+                    should_begin_abort_read_cycle = true;
+                } else {
+                    r0lab_raw_hook_route_reject_locked(
+                        abort_page, false, false, false, true, false);
+                    abort_page = NULL;
+                }
+            } else if (permission_write &&
+                       abort_page->abort_write_release_armed) {
+                abort_page->transitioning = true;
+                generation = route_token.generation;
+                should_release_write = true;
+            } else if (abort_page->abort_probe_armed) {
+                if (permission_write || translation_read ||
+                    (esr >> R0LAB_M3_ESR_EC_SHIFT) ==
+                        R0LAB_M3_ESR_EC_DABT_LOW) {
+                    abort_probe_kind = (esr & R0LAB_M3_ESR_WNR) ?
+                                       R0LAB_FAULT_KIND_WRITE :
+                                       R0LAB_FAULT_KIND_READ;
+                    if (abort_probe_kind == R0LAB_FAULT_KIND_WRITE)
+                        ++abort_page->abort_probe_write_events;
+                    else
+                        ++abort_page->abort_probe_read_events;
+                    abort_probe_events =
+                        abort_page->abort_probe_read_events +
+                        abort_page->abort_probe_write_events +
+                        abort_page->abort_probe_exec_events;
+                    abort_page->abort_probe_last_esr = esr;
+                    abort_page->abort_probe_last_far = far;
+                    abort_probe_hit = true;
+                }
+                abort_page = NULL;
+            } else {
+                abort_page = NULL;
+            }
+            if (!should_begin_abort_read_cycle && !should_release_write)
+                (void)r0lab_raw_hook_page_token_release_locked(
+                    &route_token, false);
         }
     }
     r0lab_unlock(flags);
@@ -4166,11 +4173,11 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
             result = r0lab_raw_finish_read_cycle(&fault_page->raw);
         else
             result = r0lab_raw_activate_shadow(&fault_page->raw);
-    } else if (should_begin_abort_read_cycle) {
+    } else if (should_begin_abort_read_cycle && abort_page) {
         abort_read_cycle_result =
-            r0lab_raw_begin_fault_read_cycle(&g_raw_page.raw);
-    } else if (should_release_write) {
-        write_release_result = r0lab_raw_restore_original(&g_raw_page.raw);
+            r0lab_raw_begin_fault_read_cycle(&abort_page->raw);
+    } else if (should_release_write && abort_page) {
+        write_release_result = r0lab_raw_restore_original(&abort_page->raw);
     }
 
     flags = r0lab_lock();
@@ -4190,42 +4197,46 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
             handled = true;
         }
     }
-    if (should_begin_abort_read_cycle && g_raw_page.generation == generation) {
-        g_raw_page.transitioning = false;
-        g_raw_page.abort_read_cycle_armed = false;
-        ++g_raw_page.abort_read_cycle_events;
+    if (should_begin_abort_read_cycle && abort_page &&
+        abort_page->generation == generation) {
+        abort_page->transitioning = false;
+        abort_page->abort_read_cycle_armed = false;
+        ++abort_page->abort_read_cycle_events;
         if (abort_read_cycle_result)
-            ++g_raw_page.abort_read_cycle_failures;
-        g_raw_page.abort_read_cycle_last_esr = esr;
-        g_raw_page.abort_read_cycle_last_far = far;
-        g_raw_page.abort_read_cycle_last_result = abort_read_cycle_result;
-        abort_read_cycle_events = g_raw_page.abort_read_cycle_events;
-        abort_read_cycle_failures = g_raw_page.abort_read_cycle_failures;
+            ++abort_page->abort_read_cycle_failures;
+        abort_page->abort_read_cycle_last_esr = esr;
+        abort_page->abort_read_cycle_last_far = far;
+        abort_page->abort_read_cycle_last_result = abort_read_cycle_result;
+        abort_read_cycle_events = abort_page->abort_read_cycle_events;
+        abort_read_cycle_failures = abort_page->abort_read_cycle_failures;
         if (!abort_read_cycle_result &&
-            g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_READ) {
-            g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+            abort_page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
+            abort_page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
             args->skip_origin = 1;
         }
         abort_read_cycle_hit = true;
     }
-    if (should_release_write && g_raw_page.generation == generation) {
-        g_raw_page.transitioning = false;
-        g_raw_page.abort_write_release_armed = false;
-        ++g_raw_page.abort_write_release_events;
+    if (should_release_write && abort_page &&
+        abort_page->generation == generation) {
+        abort_page->transitioning = false;
+        abort_page->abort_write_release_armed = false;
+        ++abort_page->abort_write_release_events;
         if (write_release_result)
-            ++g_raw_page.abort_write_release_failures;
-        g_raw_page.abort_write_release_last_esr = esr;
-        g_raw_page.abort_write_release_last_far = far;
-        g_raw_page.abort_write_release_last_result = write_release_result;
-        g_raw_page.record.state = R0LAB_PAGE_RECORD_RESTORING;
+            ++abort_page->abort_write_release_failures;
+        abort_page->abort_write_release_last_esr = esr;
+        abort_page->abort_write_release_last_far = far;
+        abort_page->abort_write_release_last_result = write_release_result;
+        abort_page->record.state = R0LAB_PAGE_RECORD_RESTORING;
         if (!write_release_result)
-            r0lab_raw_deactivate_patch_records_locked(&g_raw_page);
-        write_release_events = g_raw_page.abort_write_release_events;
-        write_release_failures = g_raw_page.abort_write_release_failures;
+            r0lab_raw_deactivate_patch_records_locked(abort_page);
+        write_release_events = abort_page->abort_write_release_events;
+        write_release_failures = abort_page->abort_write_release_failures;
         write_release_hit = true;
     }
     --g_raw_inflight;
     r0lab_unlock(flags);
+    if (current_mm)
+        g_mmput(current_mm);
 
     if (handled)
         r0lab_record_regs(read_cycle_resume ?
@@ -7215,12 +7226,15 @@ static const char *r0lab_raw_abort_probe_source_name(uint8_t source)
     return "none";
 }
 
-static long r0lab_raw_abort_probe_arm_common(uint64_t token,
-                                             char __user *out_msg,
-                                             int outlen, uint8_t source)
+static long r0lab_raw_abort_probe_arm_common(uint64_t token, uint16_t slot_id,
+                                             char __user *out_msg, int outlen,
+                                             uint8_t source,
+                                             bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
+    uint64_t generation;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -7230,31 +7244,43 @@ static long r0lab_raw_abort_probe_arm_common(uint64_t token,
         result = R0LAB_EINVAL;
         goto record;
     }
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
 
     flags = r0lab_lock();
-    if (!g_raw_page.armed || !g_raw_page.hook_installed ||
-        g_raw_page.clearing || g_raw_page.transitioning ||
-        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || !page->hook_installed ||
+        page->clearing || page->transitioning ||
+        page->raw.state != R0LAB_RAW_SHADOW_RX ||
         g_session.owner_tgid != r0lab_current_tgid() ||
-        g_raw_page.abort_probe_armed ||
-        g_raw_page.abort_read_cycle_armed) {
+        page->abort_probe_armed ||
+        page->abort_read_cycle_armed) {
         r0lab_unlock(flags);
         result = R0LAB_EAGAIN;
         goto record;
     }
-    g_raw_page.abort_probe_armed = true;
-    g_raw_page.abort_probe_read_events = 0;
-    g_raw_page.abort_probe_write_events = 0;
-    g_raw_page.abort_probe_exec_events = 0;
-    g_raw_page.abort_probe_failures = 0;
-    g_raw_page.abort_probe_last_esr = 0;
-    g_raw_page.abort_probe_last_far = 0;
-    g_raw_page.abort_probe_source = source;
+    generation = page->generation;
+    page->abort_probe_armed = true;
+    page->abort_probe_read_events = 0;
+    page->abort_probe_write_events = 0;
+    page->abort_probe_exec_events = 0;
+    page->abort_probe_failures = 0;
+    page->abort_probe_last_esr = 0;
+    page->abort_probe_last_far = 0;
+    page->abort_probe_source = source;
     r0lab_unlock(flags);
 
-    snprintf(reply, sizeof(reply),
-             "raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
-             r0lab_raw_abort_probe_source_name(source));
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+                 r0lab_raw_abort_probe_source_name(source));
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_probe_ready slot=%u generation=%llu symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 page_record_routed=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 r0lab_raw_abort_probe_source_name(source));
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -7266,23 +7292,30 @@ static long r0lab_raw_abort_probe_arm(uint64_t token, char __user *out_msg,
                                       int outlen)
 {
     return r0lab_raw_abort_probe_arm_common(
-        token, out_msg, outlen, R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION);
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen,
+        R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION, true);
 }
 
 static long r0lab_raw_abort_write_probe_arm(uint64_t token,
                                             char __user *out_msg, int outlen)
 {
     return r0lab_raw_abort_probe_arm_common(
-        token, out_msg, outlen, R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION);
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen,
+        R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION, true);
 }
 
-static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
-                                         int outlen)
+static long r0lab_raw_abort_probe_status_common(uint64_t token,
+                                                uint16_t slot_id,
+                                                char __user *out_msg,
+                                                int outlen,
+                                                bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
     bool armed;
+    uint64_t generation;
     uint32_t read_events;
     uint32_t write_events;
     uint32_t exec_events;
@@ -7299,16 +7332,24 @@ static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    installed = g_raw_page.hook_installed;
-    armed = g_raw_page.abort_probe_armed;
-    read_events = g_raw_page.abort_probe_read_events;
-    write_events = g_raw_page.abort_probe_write_events;
-    exec_events = g_raw_page.abort_probe_exec_events;
-    failures = g_raw_page.abort_probe_failures;
-    last_esr = g_raw_page.abort_probe_last_esr;
-    last_far = g_raw_page.abort_probe_last_far;
-    source = g_raw_page.abort_probe_source;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->hook_installed;
+    armed = page->abort_probe_armed;
+    generation = page->generation;
+    read_events = page->abort_probe_read_events;
+    write_events = page->abort_probe_write_events;
+    exec_events = page->abort_probe_exec_events;
+    failures = page->abort_probe_failures;
+    last_esr = page->abort_probe_last_esr;
+    last_far = page->abort_probe_last_far;
+    source = page->abort_probe_source;
     r0lab_unlock(flags);
 
     last_ec = last_esr >> R0LAB_M3_ESR_EC_SHIFT;
@@ -7317,23 +7358,48 @@ static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
     permission_fault = last_fsc_type == R0LAB_M3_ESR_FSC_PERM ? 1 : 0;
     translation_fault =
         last_fsc_type == R0LAB_M3_ESR_FSC_TRANSLATION ? 1 : 0;
-    snprintf(reply, sizeof(reply),
-             "raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
-             g_do_mem_abort ? "do_mem_abort" : "absent",
-             installed ? 1 : 0, armed ? 1 : 0, read_events, write_events,
-             exec_events, read_events + write_events + exec_events, failures,
-             (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
-             last_wnr, permission_fault, translation_fault,
-             r0lab_raw_abort_probe_source_name(source));
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+                 g_do_mem_abort ? "do_mem_abort" : "absent",
+                 installed ? 1 : 0, armed ? 1 : 0, read_events,
+                 write_events, exec_events,
+                 read_events + write_events + exec_events, failures,
+                 (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
+                 last_wnr, permission_fault, translation_fault,
+                 r0lab_raw_abort_probe_source_name(source));
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_probe_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 page_record_routed=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_do_mem_abort ? "do_mem_abort" : "absent",
+                 installed ? 1 : 0, armed ? 1 : 0, read_events,
+                 write_events, exec_events,
+                 read_events + write_events + exec_events, failures,
+                 (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
+                 last_wnr, permission_fault, translation_fault,
+                 r0lab_raw_abort_probe_source_name(source));
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
-                                        int outlen)
+static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
+                                         int outlen)
+{
+    return r0lab_raw_abort_probe_status_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_abort_probe_clear_common(uint64_t token,
+                                              uint16_t slot_id,
+                                              char __user *out_msg,
+                                              int outlen,
+                                              bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool armed;
+    uint64_t generation;
     uint32_t read_events;
     uint32_t write_events;
     uint32_t exec_events;
@@ -7345,17 +7411,25 @@ static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    armed = g_raw_page.abort_probe_armed;
-    g_raw_page.abort_probe_armed = false;
-    read_events = g_raw_page.abort_probe_read_events;
-    write_events = g_raw_page.abort_probe_write_events;
-    exec_events = g_raw_page.abort_probe_exec_events;
-    failures = g_raw_page.abort_probe_failures;
-    last_esr = g_raw_page.abort_probe_last_esr;
-    last_far = g_raw_page.abort_probe_last_far;
-    source = g_raw_page.abort_probe_source;
-    g_raw_page.abort_probe_source = R0LAB_ABORT_PROBE_SOURCE_NONE;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    armed = page->abort_probe_armed;
+    page->abort_probe_armed = false;
+    generation = page->generation;
+    read_events = page->abort_probe_read_events;
+    write_events = page->abort_probe_write_events;
+    exec_events = page->abort_probe_exec_events;
+    failures = page->abort_probe_failures;
+    last_esr = page->abort_probe_last_esr;
+    last_far = page->abort_probe_last_far;
+    source = page->abort_probe_source;
+    page->abort_probe_source = R0LAB_ABORT_PROBE_SOURCE_NONE;
     r0lab_unlock(flags);
 
     if (armed) {
@@ -7363,12 +7437,85 @@ static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
         if (result)
             goto record;
     }
-    snprintf(reply, sizeof(reply),
-             "raw_abort_probe_cleared armed=0 read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x source=%s\n",
-             read_events, write_events, exec_events,
-             read_events + write_events + exec_events, failures,
-             (uint64_t)last_far, last_esr,
-             r0lab_raw_abort_probe_source_name(source));
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_probe_cleared armed=0 read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x source=%s\n",
+                 read_events, write_events, exec_events,
+                 read_events + write_events + exec_events, failures,
+                 (uint64_t)last_far, last_esr,
+                 r0lab_raw_abort_probe_source_name(source));
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_probe_cleared slot=%u generation=%llu armed=0 read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x source=%s page_record_routed=1\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 read_events, write_events, exec_events,
+                 read_events + write_events + exec_events, failures,
+                 (uint64_t)last_far, last_esr,
+                 r0lab_raw_abort_probe_source_name(source));
+    return r0lab_copy_reply(out_msg, outlen, reply);
+
+record:
+    r0lab_record(R0LAB_EVENT_REJECT, result);
+    return result;
+}
+
+static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
+                                        int outlen)
+{
+    return r0lab_raw_abort_probe_clear_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_abort_read_cycle_arm_common(uint64_t token,
+                                                  uint16_t slot_id,
+                                                  char __user *out_msg,
+                                                  int outlen,
+                                                  bool legacy_reply)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    unsigned long flags;
+    uint64_t generation;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || !page->hook_installed ||
+        page->clearing || page->transitioning ||
+        page->raw.state != R0LAB_RAW_SHADOW_RX ||
+        page->raw.gup_hide_active || page->raw.fork_hide_active ||
+        page->raw.read_cycle_active ||
+        g_session.owner_tgid != r0lab_current_tgid() ||
+        page->abort_probe_armed ||
+        page->abort_write_release_armed ||
+        page->abort_read_cycle_armed) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    generation = page->generation;
+    page->abort_read_cycle_armed = true;
+    page->abort_read_cycle_events = 0;
+    page->abort_read_cycle_failures = 0;
+    page->abort_read_cycle_last_esr = 0;
+    page->abort_read_cycle_last_far = 0;
+    page->abort_read_cycle_last_result = R0LAB_EINVAL;
+    r0lab_unlock(flags);
+
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_read_cycle_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume skip_origin=1 exec_resume=pending\n");
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_read_cycle_ready slot=%u generation=%llu symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 page_record_routed=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume skip_origin=1 exec_resume=pending\n",
+                 (unsigned int)slot_id, (unsigned long long)generation);
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -7379,52 +7526,22 @@ record:
 static long r0lab_raw_abort_read_cycle_arm(uint64_t token,
                                            char __user *out_msg, int outlen)
 {
-    char reply[R0LAB_OUTPUT_CAPACITY];
-    unsigned long flags;
-    int result = r0lab_validate_owner(token);
-
-    if (result)
-        goto record;
-
-    flags = r0lab_lock();
-    if (!g_raw_page.armed || !g_raw_page.hook_installed ||
-        g_raw_page.clearing || g_raw_page.transitioning ||
-        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
-        g_raw_page.raw.gup_hide_active || g_raw_page.raw.fork_hide_active ||
-        g_raw_page.raw.read_cycle_active ||
-        g_session.owner_tgid != r0lab_current_tgid() ||
-        g_raw_page.abort_probe_armed ||
-        g_raw_page.abort_write_release_armed ||
-        g_raw_page.abort_read_cycle_armed) {
-        r0lab_unlock(flags);
-        result = R0LAB_EAGAIN;
-        goto record;
-    }
-    g_raw_page.abort_read_cycle_armed = true;
-    g_raw_page.abort_read_cycle_events = 0;
-    g_raw_page.abort_read_cycle_failures = 0;
-    g_raw_page.abort_read_cycle_last_esr = 0;
-    g_raw_page.abort_read_cycle_last_far = 0;
-    g_raw_page.abort_read_cycle_last_result = R0LAB_EINVAL;
-    r0lab_unlock(flags);
-
-    snprintf(reply, sizeof(reply),
-             "raw_abort_read_cycle_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume skip_origin=1 exec_resume=pending\n");
-    return r0lab_copy_reply(out_msg, outlen, reply);
-
-record:
-    r0lab_record(R0LAB_EVENT_REJECT, result);
-    return result;
+    return r0lab_raw_abort_read_cycle_arm_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
 }
 
-static long r0lab_raw_abort_read_cycle_status(uint64_t token,
-                                              char __user *out_msg,
-                                              int outlen)
+static long r0lab_raw_abort_read_cycle_status_common(uint64_t token,
+                                                     uint16_t slot_id,
+                                                     char __user *out_msg,
+                                                     int outlen,
+                                                     bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
     bool armed;
+    uint64_t generation;
     uint32_t events;
     uint32_t failures;
     uint32_t last_esr;
@@ -7443,17 +7560,25 @@ static long r0lab_raw_abort_read_cycle_status(uint64_t token,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    installed = g_raw_page.hook_installed;
-    armed = g_raw_page.abort_read_cycle_armed;
-    events = g_raw_page.abort_read_cycle_events;
-    failures = g_raw_page.abort_read_cycle_failures;
-    last_esr = g_raw_page.abort_read_cycle_last_esr;
-    last_far = g_raw_page.abort_read_cycle_last_far;
-    begin_result = g_raw_page.abort_read_cycle_last_result;
-    read_cycle_active = g_raw_page.raw.read_cycle_active;
-    read_cycle_begin_events = g_raw_page.raw.read_cycle_begin_events;
-    read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->hook_installed;
+    armed = page->abort_read_cycle_armed;
+    generation = page->generation;
+    events = page->abort_read_cycle_events;
+    failures = page->abort_read_cycle_failures;
+    last_esr = page->abort_read_cycle_last_esr;
+    last_far = page->abort_read_cycle_last_far;
+    begin_result = page->abort_read_cycle_last_result;
+    read_cycle_active = page->raw.read_cycle_active;
+    read_cycle_begin_events = page->raw.read_cycle_begin_events;
+    read_cycle_finish_events = page->raw.read_cycle_finish_events;
     r0lab_unlock(flags);
 
     last_ec = last_esr >> R0LAB_M3_ESR_EC_SHIFT;
@@ -7465,23 +7590,49 @@ static long r0lab_raw_abort_read_cycle_status(uint64_t token,
     exec_resume = read_cycle_begin_events && read_cycle_finish_events ?
                   "proven" :
                   (read_cycle_begin_events ? "pending" : "absent");
-    snprintf(reply, sizeof(reply),
-             "raw_abort_read_cycle_status symbol=%s installed=%u armed=%u read_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u begin_result=%d target_mm_scoped=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu skip_origin=1 exec_resume=%s\n",
-             g_do_mem_abort ? "do_mem_abort" : "absent",
-             installed ? 1 : 0, armed ? 1 : 0, events, failures,
-             (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
-             last_wnr, permission_fault, translation_fault, begin_result,
-             events && !begin_result ? 1 : 0, read_cycle_active,
-             read_cycle_begin_events, read_cycle_finish_events, exec_resume);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_read_cycle_status symbol=%s installed=%u armed=%u read_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u begin_result=%d target_mm_scoped=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu skip_origin=1 exec_resume=%s\n",
+                 g_do_mem_abort ? "do_mem_abort" : "absent",
+                 installed ? 1 : 0, armed ? 1 : 0, events, failures,
+                 (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
+                 last_wnr, permission_fault, translation_fault, begin_result,
+                 events && !begin_result ? 1 : 0, read_cycle_active,
+                 read_cycle_begin_events, read_cycle_finish_events,
+                 exec_resume);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_read_cycle_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u begin_result=%d target_mm_scoped=1 page_record_routed=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu skip_origin=1 exec_resume=%s\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_do_mem_abort ? "do_mem_abort" : "absent",
+                 installed ? 1 : 0, armed ? 1 : 0, events, failures,
+                 (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
+                 last_wnr, permission_fault, translation_fault, begin_result,
+                 events && !begin_result ? 1 : 0, read_cycle_active,
+                 read_cycle_begin_events, read_cycle_finish_events,
+                 exec_resume);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_abort_read_cycle_clear(uint64_t token,
-                                             char __user *out_msg, int outlen)
+static long r0lab_raw_abort_read_cycle_status(uint64_t token,
+                                              char __user *out_msg,
+                                              int outlen)
+{
+    return r0lab_raw_abort_read_cycle_status_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_abort_read_cycle_clear_common(uint64_t token,
+                                                    uint16_t slot_id,
+                                                    char __user *out_msg,
+                                                    int outlen,
+                                                    bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool armed;
+    uint64_t generation;
     uint32_t events;
     uint32_t failures;
     uint32_t last_esr;
@@ -7491,14 +7642,22 @@ static long r0lab_raw_abort_read_cycle_clear(uint64_t token,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    armed = g_raw_page.abort_read_cycle_armed;
-    g_raw_page.abort_read_cycle_armed = false;
-    events = g_raw_page.abort_read_cycle_events;
-    failures = g_raw_page.abort_read_cycle_failures;
-    last_esr = g_raw_page.abort_read_cycle_last_esr;
-    last_far = g_raw_page.abort_read_cycle_last_far;
-    begin_result = g_raw_page.abort_read_cycle_last_result;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    armed = page->abort_read_cycle_armed;
+    page->abort_read_cycle_armed = false;
+    generation = page->generation;
+    events = page->abort_read_cycle_events;
+    failures = page->abort_read_cycle_failures;
+    last_esr = page->abort_read_cycle_last_esr;
+    last_far = page->abort_read_cycle_last_far;
+    begin_result = page->abort_read_cycle_last_result;
     r0lab_unlock(flags);
 
     if (armed) {
@@ -7506,9 +7665,79 @@ static long r0lab_raw_abort_read_cycle_clear(uint64_t token,
         if (result)
             goto record;
     }
-    snprintf(reply, sizeof(reply),
-             "raw_abort_read_cycle_cleared armed=0 read_events=%u failures=%u last_far=%llx last_esr=%x begin_result=%d\n",
-             events, failures, (uint64_t)last_far, last_esr, begin_result);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_read_cycle_cleared armed=0 read_events=%u failures=%u last_far=%llx last_esr=%x begin_result=%d\n",
+                 events, failures, (uint64_t)last_far, last_esr,
+                 begin_result);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_read_cycle_cleared slot=%u generation=%llu armed=0 read_events=%u failures=%u last_far=%llx last_esr=%x begin_result=%d page_record_routed=1\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 events, failures, (uint64_t)last_far, last_esr,
+                 begin_result);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+
+record:
+    r0lab_record(R0LAB_EVENT_REJECT, result);
+    return result;
+}
+
+static long r0lab_raw_abort_read_cycle_clear(uint64_t token,
+                                             char __user *out_msg, int outlen)
+{
+    return r0lab_raw_abort_read_cycle_clear_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_abort_write_release_arm_common(uint64_t token,
+                                                     uint16_t slot_id,
+                                                     char __user *out_msg,
+                                                     int outlen,
+                                                     bool legacy_reply)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    unsigned long flags;
+    uint64_t generation;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || !page->hook_installed ||
+        page->clearing || page->transitioning ||
+        page->raw.state != R0LAB_RAW_SHADOW_RX ||
+        g_session.owner_tgid != r0lab_current_tgid() ||
+        page->abort_probe_armed ||
+        page->abort_write_release_armed ||
+        page->abort_read_cycle_armed) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    generation = page->generation;
+    page->abort_write_release_armed = true;
+    page->abort_write_release_events = 0;
+    page->abort_write_release_failures = 0;
+    page->abort_write_release_last_esr = 0;
+    page->abort_write_release_last_far = 0;
+    page->abort_write_release_last_result = R0LAB_EINVAL;
+    r0lab_unlock(flags);
+
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_write_release_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=absent skip_origin=0\n");
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_write_release_ready slot=%u generation=%llu symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 page_record_routed=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=absent skip_origin=0\n",
+                 (unsigned int)slot_id, (unsigned long long)generation);
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -7520,50 +7749,22 @@ static long r0lab_raw_abort_write_release_arm(uint64_t token,
                                               char __user *out_msg,
                                               int outlen)
 {
-    char reply[R0LAB_OUTPUT_CAPACITY];
-    unsigned long flags;
-    int result = r0lab_validate_owner(token);
-
-    if (result)
-        goto record;
-
-    flags = r0lab_lock();
-    if (!g_raw_page.armed || !g_raw_page.hook_installed ||
-        g_raw_page.clearing || g_raw_page.transitioning ||
-        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
-        g_session.owner_tgid != r0lab_current_tgid() ||
-        g_raw_page.abort_probe_armed ||
-        g_raw_page.abort_write_release_armed ||
-        g_raw_page.abort_read_cycle_armed) {
-        r0lab_unlock(flags);
-        result = R0LAB_EAGAIN;
-        goto record;
-    }
-    g_raw_page.abort_write_release_armed = true;
-    g_raw_page.abort_write_release_events = 0;
-    g_raw_page.abort_write_release_failures = 0;
-    g_raw_page.abort_write_release_last_esr = 0;
-    g_raw_page.abort_write_release_last_far = 0;
-    g_raw_page.abort_write_release_last_result = R0LAB_EINVAL;
-    r0lab_unlock(flags);
-
-    snprintf(reply, sizeof(reply),
-             "raw_abort_write_release_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=absent skip_origin=0\n");
-    return r0lab_copy_reply(out_msg, outlen, reply);
-
-record:
-    r0lab_record(R0LAB_EVENT_REJECT, result);
-    return result;
+    return r0lab_raw_abort_write_release_arm_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
 }
 
-static long r0lab_raw_abort_write_release_status(uint64_t token,
-                                                 char __user *out_msg,
-                                                 int outlen)
+static long r0lab_raw_abort_write_release_status_common(uint64_t token,
+                                                        uint16_t slot_id,
+                                                        char __user *out_msg,
+                                                        int outlen,
+                                                        bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
     bool armed;
+    uint64_t generation;
     uint32_t release_events;
     uint32_t failures;
     uint32_t last_esr;
@@ -7579,14 +7780,22 @@ static long r0lab_raw_abort_write_release_status(uint64_t token,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    installed = g_raw_page.hook_installed;
-    armed = g_raw_page.abort_write_release_armed;
-    release_events = g_raw_page.abort_write_release_events;
-    failures = g_raw_page.abort_write_release_failures;
-    last_esr = g_raw_page.abort_write_release_last_esr;
-    last_far = g_raw_page.abort_write_release_last_far;
-    restore_result = g_raw_page.abort_write_release_last_result;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->hook_installed;
+    armed = page->abort_write_release_armed;
+    generation = page->generation;
+    release_events = page->abort_write_release_events;
+    failures = page->abort_write_release_failures;
+    last_esr = page->abort_write_release_last_esr;
+    last_far = page->abort_write_release_last_far;
+    restore_result = page->abort_write_release_last_result;
     r0lab_unlock(flags);
 
     last_ec = last_esr >> R0LAB_M3_ESR_EC_SHIFT;
@@ -7596,22 +7805,44 @@ static long r0lab_raw_abort_write_release_status(uint64_t token,
     translation_fault =
         last_fsc_type == R0LAB_M3_ESR_FSC_TRANSLATION ? 1 : 0;
     pte_switch = release_events && !restore_result ? 1 : 0;
-    snprintf(reply, sizeof(reply),
-             "raw_abort_write_release_status symbol=%s installed=%u armed=%u release_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u restore_result=%d target_mm_scoped=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=absent skip_origin=0\n",
-             g_do_mem_abort ? "do_mem_abort" : "absent",
-             installed ? 1 : 0, armed ? 1 : 0, release_events, failures,
-             (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
-             last_wnr, permission_fault, translation_fault, restore_result,
-             pte_switch);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_write_release_status symbol=%s installed=%u armed=%u release_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u restore_result=%d target_mm_scoped=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=absent skip_origin=0\n",
+                 g_do_mem_abort ? "do_mem_abort" : "absent",
+                 installed ? 1 : 0, armed ? 1 : 0, release_events,
+                 failures, (uint64_t)last_far, last_esr, last_ec,
+                 last_fsc_type, last_wnr, permission_fault,
+                 translation_fault, restore_result, pte_switch);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_write_release_status slot=%u generation=%llu symbol=%s installed=%u armed=%u release_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u restore_result=%d target_mm_scoped=1 page_record_routed=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=absent skip_origin=0\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_do_mem_abort ? "do_mem_abort" : "absent",
+                 installed ? 1 : 0, armed ? 1 : 0, release_events,
+                 failures, (uint64_t)last_far, last_esr, last_ec,
+                 last_fsc_type, last_wnr, permission_fault,
+                 translation_fault, restore_result, pte_switch);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_abort_write_release_clear(uint64_t token,
-                                                char __user *out_msg,
-                                                int outlen)
+static long r0lab_raw_abort_write_release_status(uint64_t token,
+                                                 char __user *out_msg,
+                                                 int outlen)
+{
+    return r0lab_raw_abort_write_release_status_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_abort_write_release_clear_common(uint64_t token,
+                                                       uint16_t slot_id,
+                                                       char __user *out_msg,
+                                                       int outlen,
+                                                       bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
+    uint64_t generation;
     uint32_t release_events;
     uint32_t failures;
     uint32_t last_esr;
@@ -7621,20 +7852,43 @@ static long r0lab_raw_abort_write_release_clear(uint64_t token,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    g_raw_page.abort_write_release_armed = false;
-    release_events = g_raw_page.abort_write_release_events;
-    failures = g_raw_page.abort_write_release_failures;
-    last_esr = g_raw_page.abort_write_release_last_esr;
-    last_far = g_raw_page.abort_write_release_last_far;
-    restore_result = g_raw_page.abort_write_release_last_result;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    page->abort_write_release_armed = false;
+    generation = page->generation;
+    release_events = page->abort_write_release_events;
+    failures = page->abort_write_release_failures;
+    last_esr = page->abort_write_release_last_esr;
+    last_far = page->abort_write_release_last_far;
+    restore_result = page->abort_write_release_last_result;
     r0lab_unlock(flags);
 
-    snprintf(reply, sizeof(reply),
-             "raw_abort_write_release_cleared armed=0 release_events=%u failures=%u last_far=%llx last_esr=%x restore_result=%d source=raw_va_rx_write action=restore_original logical_release=1\n",
-             release_events, failures, (uint64_t)last_far, last_esr,
-             restore_result);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_abort_write_release_cleared armed=0 release_events=%u failures=%u last_far=%llx last_esr=%x restore_result=%d source=raw_va_rx_write action=restore_original logical_release=1\n",
+                 release_events, failures, (uint64_t)last_far, last_esr,
+                 restore_result);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_abort_write_release_cleared slot=%u generation=%llu armed=0 release_events=%u failures=%u last_far=%llx last_esr=%x restore_result=%d source=raw_va_rx_write action=restore_original logical_release=1 page_record_routed=1\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 release_events, failures, (uint64_t)last_far, last_esr,
+                 restore_result);
     return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_abort_write_release_clear(uint64_t token,
+                                                char __user *out_msg,
+                                                int outlen)
+{
+    return r0lab_raw_abort_write_release_clear_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
 }
 
 static long r0lab_raw_fault_probe_arm(uint64_t token,
@@ -9248,6 +9502,104 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_fault_hook_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot abort write probe arm ", 31)) {
+        value = args + 31;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_arm_common(
+            token, slot_id, out_msg, outlen,
+            R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION, false);
+    }
+    if (!strncmp(args, "raw slot abort write probe status ", 34)) {
+        value = args + 34;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort write probe clear ", 33)) {
+        value = args + 33;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_clear_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort write release arm ", 33)) {
+        value = args + 33;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_write_release_arm_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort write release status ", 36)) {
+        value = args + 36;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_write_release_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort write release clear ", 35)) {
+        value = args + 35;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_write_release_clear_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort read cycle arm ", 30)) {
+        value = args + 30;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_read_cycle_arm_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort read cycle status ", 33)) {
+        value = args + 33;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_read_cycle_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort read cycle clear ", 32)) {
+        value = args + 32;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_read_cycle_clear_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort probe arm ", 25)) {
+        value = args + 25;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_arm_common(
+            token, slot_id, out_msg, outlen,
+            R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION, false);
+    }
+    if (!strncmp(args, "raw slot abort probe status ", 28)) {
+        value = args + 28;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot abort probe clear ", 27)) {
+        value = args + 27;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_clear_common(
+            token, slot_id, out_msg, outlen, false);
     }
     if (!strncmp(args, "raw abort write probe arm ", 26)) {
         value = args + 26;
