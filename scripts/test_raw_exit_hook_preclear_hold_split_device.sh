@@ -36,6 +36,12 @@ app_logs() {
   adb_device logcat -d -v brief -s R0Lab:I '*:S' | LC_ALL=C tr -d '\r'
 }
 
+extract_boot_uuid() {
+  printf '%s\n' "$1" |
+    LC_ALL=C grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' |
+    sed -n '1p'
+}
+
 run_app_command() {
   command=$1
   output=''
@@ -61,8 +67,9 @@ run_app_command() {
 }
 
 boot_id() {
-  adb_device shell cat /proc/sys/kernel/random/boot_id 2>/dev/null |
-    LC_ALL=C tr -d '\r'
+  raw=$(adb_device shell cat /proc/sys/kernel/random/boot_id 2>/dev/null |
+    LC_ALL=C tr -d '\r' || true)
+  extract_boot_uuid "$raw"
 }
 
 boot_props() {
@@ -115,12 +122,13 @@ require_boot_stable_after_reader() {
   rc=$?
   set -e
   output=$(printf '%s' "$raw_output" | LC_ALL=C tr -d '\r')
+  parsed=$(extract_boot_uuid "$output")
   props=$(boot_props || true)
-  printf 'phase=%s boot_id_reader_rc=%s boot_before=%s boot_after=%s output="%s" %s\n' \
-    "$phase" "$rc" "$before" "$output" "$output" "$props" >> "$EVIDENCE"
-  if [ "$rc" -ne 0 ] || [ -z "$output" ] || [ "$before" != "$output" ]; then
+  printf 'phase=%s boot_id_reader_rc=%s boot_before=%s boot_after_uuid=%s output="%s" %s\n' \
+    "$phase" "$rc" "$before" "$parsed" "$output" "$props" >> "$EVIDENCE"
+  if [ "$rc" -ne 0 ] || [ -z "$parsed" ] || [ "$before" != "$parsed" ]; then
     capture_pstore "$(basename "$EVIDENCE" .log)-$phase"
-    fail "boot-id reader unstable during $phase: rc=$rc before=$before after=$output"
+    fail "boot-id reader unstable during $phase: rc=$rc before=$before after=$parsed"
   fi
 }
 
