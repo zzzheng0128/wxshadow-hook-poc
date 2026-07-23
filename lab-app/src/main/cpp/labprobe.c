@@ -92,6 +92,14 @@ struct r0lab_fork_child_result {
     uint32_t word;
 };
 
+struct r0lab_fork_routing_child_result {
+    int32_t value0;
+    int32_t value1;
+    int32_t err;
+    uint32_t word0;
+    uint32_t word1;
+};
+
 struct r0lab_prctl_passthrough_stress {
     atomic_bool stop;
     atomic_ulong iterations;
@@ -176,6 +184,20 @@ static long r0lab_control_raw(const char *args, char *reply, size_t reply_size)
                      R0LAB_MODULE_NAME, args, reply, reply_size);
     pthread_mutex_unlock(&g_r0lab_control_lock);
     return result;
+}
+
+static long r0lab_control_raw_retry_once(const char *args, char *reply,
+                                         size_t reply_size, long *first_rc)
+{
+    long result = r0lab_control_raw(args, reply, reply_size);
+
+    if (first_rc)
+        *first_rc = result;
+    if (result >= 0)
+        return result;
+    if (reply && reply_size)
+        reply[0] = '\0';
+    return r0lab_control_raw(args, reply, reply_size);
 }
 
 static int r0lab_parse_token(const char *text, uint64_t *token)
@@ -3053,7 +3075,8 @@ static int r0lab_raw_fork_hook_run(const char *token_text, char *output,
     char command[96];
     char reply[256] = {0};
     char hook_reply[512] = {0};
-    char hook_status[512] = {0};
+    char hook_status[2048] = {0};
+    char slot_hook_status[2048] = {0};
     char hook_clear_reply[512] = {0};
     char inspect_reply[2048] = {0};
     unsigned int activations = 0;
@@ -3068,7 +3091,10 @@ static int r0lab_raw_fork_hook_run(const char *token_text, char *output,
     long ready_rc = -1;
     long observed_rc = -1;
     long hook_arm_rc = -1;
+    long hook_status_first_rc = -1;
     long hook_status_rc = -1;
+    long slot_hook_status_first_rc = -1;
+    long slot_hook_status_rc = -1;
     long hook_clear_rc = -1;
     long inspect_rc = -1;
     long clear_rc = -1;
@@ -3208,8 +3234,15 @@ static int r0lab_raw_fork_hook_run(const char *token_text, char *output,
 
     snprintf(command, sizeof(command), "raw fork hook status 0x%llx",
              (unsigned long long)token);
-    hook_status_rc = r0lab_control_raw(command, hook_status,
-                                       sizeof(hook_status));
+    hook_status_rc = r0lab_control_raw_retry_once(
+        command, hook_status, sizeof(hook_status), &hook_status_first_rc);
+    if (hook_status_rc < 0) {
+        snprintf(command, sizeof(command), "raw slot fork hook status 0x%llx 0",
+                 (unsigned long long)token);
+        slot_hook_status_rc = r0lab_control_raw_retry_once(
+            command, slot_hook_status, sizeof(slot_hook_status),
+            &slot_hook_status_first_rc);
+    }
 
     snprintf(command, sizeof(command), "raw inspect 0x%llx",
              (unsigned long long)token);
@@ -3218,18 +3251,24 @@ static int r0lab_raw_fork_hook_run(const char *token_text, char *output,
     if (hook_arm_rc < 0 ||
         child_result_read != (ssize_t)sizeof(child_result) ||
         waited != child || child_exit != 0 ||
-        hook_status_rc < 0 || inspect_rc < 0 ||
+        (hook_status_rc < 0 && slot_hook_status_rc < 0) || inspect_rc < 0 ||
         !strstr(hook_reply, "raw_fork_hook_ready") ||
         !strstr(hook_reply, "installed=1") ||
         !strstr(hook_reply, "parent_pause=1") ||
         !strstr(hook_reply, "child_original_inherit=1") ||
         !strstr(hook_reply, "target_mm_scoped=1") ||
-        !strstr(hook_status, "hook_begin_events=1") ||
-        !strstr(hook_status, "hook_finish_events=1") ||
-        !strstr(hook_status, "hook_failures=0") ||
-        !strstr(hook_status, "primitive_begin_events=1") ||
-        !strstr(hook_status, "primitive_finish_events=1") ||
-        !strstr(hook_status, "child_original_inherit=1") ||
+        !strstr(hook_status_rc >= 0 ? hook_status : slot_hook_status,
+                "hook_begin_events=1") ||
+        !strstr(hook_status_rc >= 0 ? hook_status : slot_hook_status,
+                "hook_finish_events=1") ||
+        !strstr(hook_status_rc >= 0 ? hook_status : slot_hook_status,
+                "hook_failures=0") ||
+        !strstr(hook_status_rc >= 0 ? hook_status : slot_hook_status,
+                "primitive_begin_events=1") ||
+        !strstr(hook_status_rc >= 0 ? hook_status : slot_hook_status,
+                "primitive_finish_events=1") ||
+        !strstr(hook_status_rc >= 0 ? hook_status : slot_hook_status,
+                "child_original_inherit=1") ||
         !strstr(inspect_reply, "fork_hook_begin_events=1") ||
         !strstr(inspect_reply, "fork_hook_finish_events=1") ||
         !strstr(inspect_reply, "fork_hook_failures=0") ||
@@ -3266,21 +3305,417 @@ finish:
         word_after_fork != R0LAB_M4_CODE_MOV_W0_99 ||
         word_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
         arm_rc < 0 || ready_rc < 0 || observed_rc < 0 ||
-        hook_arm_rc < 0 || hook_status_rc < 0 || hook_clear_rc < 0 ||
+        hook_arm_rc < 0 ||
+        (hook_status_rc < 0 && slot_hook_status_rc < 0) ||
+        hook_clear_rc < 0 ||
         inspect_rc < 0 || clear_rc < 0 || cleared_rc < 0 ||
         activations != 1 || state != 3 || g_r0lab_raw_handler_faults)
         ++failures;
     snprintf(output, output_size,
-             "raw mode=fork-hook failures=%d parent_pause=1 child_original_inherit=1 normal_value=%d shadow_value=%d child_word=%08x child_value=%d shadow_after_fork=%08x shadow_after_fork_value=%d restored_value=%d words=%08x/%08x/%08x child_result_read=%zd child_errno=%d child_pid=%d waited_pid=%d child_status=%d child_exit=%d activations=%u state=%lu arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
+             "raw mode=fork-hook failures=%d parent_pause=1 child_original_inherit=1 normal_value=%d shadow_value=%d child_word=%08x child_value=%d shadow_after_fork=%08x shadow_after_fork_value=%d restored_value=%d words=%08x/%08x/%08x child_result_read=%zd child_errno=%d child_pid=%d waited_pid=%d child_status=%d child_exit=%d activations=%u state=%lu arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_first_rc=%ld hook_status_rc=%ld slot_hook_status_first_rc=%ld slot_hook_status_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status=\"%s\" slot_status=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
              failures, normal_value, shadow_value, child_word, child_value,
              word_after_fork, shadow_after_fork_value, restored_value,
              word_before, word_shadow, word_after_clear, child_result_read,
              child_result.err, (int)child, (int)waited, child_status,
              child_exit, activations, state, arm_rc, ready_rc, observed_rc,
-             hook_arm_rc, hook_status_rc, hook_clear_rc, inspect_rc, clear_rc,
-             cleared_rc, (int)g_r0lab_raw_handler_faults, hook_reply,
-             hook_status, hook_clear_reply, inspect_reply);
+             hook_arm_rc, hook_status_first_rc, hook_status_rc,
+             slot_hook_status_first_rc, slot_hook_status_rc, hook_clear_rc,
+             inspect_rc, clear_rc, cleared_rc,
+             (int)g_r0lab_raw_handler_faults, hook_reply, hook_status,
+             slot_hook_status, hook_clear_reply, inspect_reply);
     munmap(page, page_size);
+    return failures ? -1 : 0;
+}
+
+static int r0lab_raw_fork_hook_routing_run(const char *token_text,
+                                           char *output,
+                                           size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint64_t token;
+    uint64_t generation0 = 0;
+    uint64_t generation1 = 0;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    uint32_t *code0;
+    uint32_t *code1;
+    volatile uint32_t *readable0;
+    volatile uint32_t *readable1;
+    size_t page_size;
+    char command[160];
+    char reply[512] = {0};
+    char ready0[256] = {0};
+    char ready1[256] = {0};
+    char observed0[256] = {0};
+    char observed1[256] = {0};
+    char hook0_reply[512] = {0};
+    char hook1_reply[512] = {0};
+    char status0_reply[2048] = {0};
+    char status1_reply[2048] = {0};
+    char hook0_clear_reply[512] = {0};
+    char hook1_clear_reply[512] = {0};
+    unsigned int slot0_activations = 0;
+    unsigned int slot1_activations = 0;
+    unsigned long slot0_state = 0;
+    unsigned long slot1_state = 0;
+    uint32_t word0_before = 0;
+    uint32_t word1_before = 0;
+    uint32_t word0_shadow = 0;
+    uint32_t word1_shadow = 0;
+    uint32_t child_word0 = 0;
+    uint32_t child_word1 = 0;
+    uint32_t word0_after_fork = 0;
+    uint32_t word1_after_fork = 0;
+    uint32_t word0_after_clear = 0;
+    uint32_t word1_after_clear = 0;
+    ssize_t child_result_read = -1;
+    long arm0_rc = -1;
+    long arm1_rc = -1;
+    long ready0_rc = -1;
+    long ready1_rc = -1;
+    long observed0_rc = -1;
+    long observed1_rc = -1;
+    long hook0_arm_rc = -1;
+    long hook1_arm_rc = -1;
+    long status0_first_rc = -1;
+    long status1_first_rc = -1;
+    long status0_rc = -1;
+    long status1_rc = -1;
+    long hook0_clear_rc = -1;
+    long hook1_clear_rc = -1;
+    long clear0_rc = -1;
+    long clear1_rc = -1;
+    long cleared0_rc = -1;
+    long cleared1_rc = -1;
+    int normal0 = -1;
+    int normal1 = -1;
+    int shadow0 = -1;
+    int shadow1 = -1;
+    int child_value0 = -1;
+    int child_value1 = -1;
+    int shadow0_after_fork = -1;
+    int shadow1_after_fork = -1;
+    int final0 = -1;
+    int final1 = -1;
+    int handler_installed = 0;
+    int pipe_fds[2] = {-1, -1};
+    pid_t child = -1;
+    pid_t waited = -1;
+    int child_status = -1;
+    int child_exit = -1;
+    struct r0lab_fork_routing_child_result child_result = {
+        .value0 = -1,
+        .value1 = -1,
+        .err = 0,
+        .word0 = 0,
+        .word1 = 0,
+    };
+    int route_ok = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw fork hook routing token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+
+    page0 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page1 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page0 == MAP_FAILED || page1 == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw fork hook routing page allocation errno=%d",
+                 errno);
+        goto finish;
+    }
+    code0 = page0;
+    code1 = page1;
+    code0[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code0[1] = R0LAB_M3_CODE_RET;
+    code1[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code1[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page0, (char *)page0 + page_size);
+    __builtin___clear_cache((char *)page1, (char *)page1 + page_size);
+    if (mprotect(page0, page_size, PROT_READ | PROT_EXEC) ||
+        mprotect(page1, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw fork hook routing mprotect errno=%d",
+                 errno);
+        goto finish;
+    }
+
+    readable0 = (volatile uint32_t *)page0;
+    readable1 = (volatile uint32_t *)page1;
+    word0_before = readable0[0];
+    word1_before = readable1[0];
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0);
+    arm0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm0_rc < 0)
+        goto clear_all;
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page1);
+    arm1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm1_rc < 0)
+        goto clear_all;
+
+    ready0_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 0,
+                                        ready0, sizeof(ready0));
+    ready1_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 1,
+                                        ready1, sizeof(ready1));
+    if (ready0_rc < 0 || ready1_rc < 0 ||
+        r0lab_raw_parse_slot_generation(ready0, "raw_slot_ready", 0,
+                                        &generation0) ||
+        r0lab_raw_parse_slot_generation(ready1, "raw_slot_ready", 1,
+                                        &generation1))
+        goto clear_all;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page_size = page_size;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear_all;
+    handler_installed = 1;
+
+    g_r0lab_raw_signal_page = page0;
+    shadow0 = ((int (*)(void))page0)();
+    word0_shadow = readable0[0];
+    g_r0lab_raw_signal_page = page1;
+    shadow1 = ((int (*)(void))page1)();
+    word1_shadow = readable1[0];
+
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 0",
+             (unsigned long long)token);
+    observed0_rc = r0lab_control_raw(command, observed0, sizeof(observed0));
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 1",
+             (unsigned long long)token);
+    observed1_rc = r0lab_control_raw(command, observed1, sizeof(observed1));
+    if (observed0_rc < 0 || observed1_rc < 0 ||
+        r0lab_raw_parse_slot_observed(observed0, 0, &slot0_activations,
+                                      &slot0_state) ||
+        r0lab_raw_parse_slot_observed(observed1, 1, &slot1_activations,
+                                      &slot1_state))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw slot fork hook arm 0x%llx 0",
+             (unsigned long long)token);
+    hook0_arm_rc = r0lab_control_raw(command, hook0_reply,
+                                     sizeof(hook0_reply));
+    snprintf(command, sizeof(command), "raw slot fork hook arm 0x%llx 1",
+             (unsigned long long)token);
+    hook1_arm_rc = r0lab_control_raw(command, hook1_reply,
+                                     sizeof(hook1_reply));
+
+    if (hook0_arm_rc >= 0 && hook1_arm_rc >= 0) {
+        errno = 0;
+        if (pipe(pipe_fds)) {
+            child_result.err = errno;
+        } else {
+            child = fork();
+            if (child == 0) {
+                struct r0lab_fork_routing_child_result local_result = {
+                    .value0 = -1,
+                    .value1 = -1,
+                    .err = 0,
+                    .word0 = 0,
+                    .word1 = 0,
+                };
+
+                close(pipe_fds[0]);
+                errno = 0;
+                local_result.word0 = ((volatile uint32_t *)page0)[0];
+                local_result.word1 = ((volatile uint32_t *)page1)[0];
+                local_result.value0 = ((int (*)(void))page0)();
+                local_result.value1 = ((int (*)(void))page1)();
+                local_result.err = errno;
+                (void)write(pipe_fds[1], &local_result,
+                            sizeof(local_result));
+                close(pipe_fds[1]);
+                _exit(local_result.word0 == R0LAB_M3_CODE_MOV_W0_42 &&
+                          local_result.word1 == R0LAB_M3_CODE_MOV_W0_42 &&
+                          local_result.value0 == 42 &&
+                          local_result.value1 == 42
+                          ? 0
+                          : 65);
+            }
+
+            close(pipe_fds[1]);
+            pipe_fds[1] = -1;
+            if (child > 0) {
+                child_result_read = read(pipe_fds[0], &child_result,
+                                         sizeof(child_result));
+                close(pipe_fds[0]);
+                pipe_fds[0] = -1;
+                waited = waitpid(child, &child_status, 0);
+                if (waited == child && WIFEXITED(child_status))
+                    child_exit = WEXITSTATUS(child_status);
+                child_word0 = child_result.word0;
+                child_word1 = child_result.word1;
+                child_value0 = child_result.value0;
+                child_value1 = child_result.value1;
+            } else {
+                child_result.err = errno;
+                close(pipe_fds[0]);
+                pipe_fds[0] = -1;
+            }
+        }
+        word0_after_fork = readable0[0];
+        word1_after_fork = readable1[0];
+        g_r0lab_raw_signal_page = page0;
+        shadow0_after_fork = ((int (*)(void))page0)();
+        g_r0lab_raw_signal_page = page1;
+        shadow1_after_fork = ((int (*)(void))page1)();
+    }
+
+    snprintf(command, sizeof(command), "raw slot fork hook status 0x%llx 0",
+             (unsigned long long)token);
+    status0_rc = r0lab_control_raw_retry_once(
+        command, status0_reply, sizeof(status0_reply), &status0_first_rc);
+    snprintf(command, sizeof(command), "raw slot fork hook status 0x%llx 1",
+             (unsigned long long)token);
+    status1_rc = r0lab_control_raw_retry_once(
+        command, status1_reply, sizeof(status1_reply), &status1_first_rc);
+
+    snprintf(command, sizeof(command), "raw slot fork hook clear 0x%llx 0",
+             (unsigned long long)token);
+    hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                       sizeof(hook0_clear_reply));
+    snprintf(command, sizeof(command), "raw slot fork hook clear 0x%llx 1",
+             (unsigned long long)token);
+    hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                       sizeof(hook1_clear_reply));
+
+    route_ok =
+        child_result_read == (ssize_t)sizeof(child_result) &&
+        waited == child && child_exit == 0 &&
+        child_word0 == R0LAB_M3_CODE_MOV_W0_42 &&
+        child_word1 == R0LAB_M3_CODE_MOV_W0_42 &&
+        child_value0 == 42 && child_value1 == 42 &&
+        strstr(hook0_reply, "raw_slot_fork_hook_ready slot=0") &&
+        strstr(hook1_reply, "raw_slot_fork_hook_ready slot=1") &&
+        strstr(hook0_reply, "page_record_routed=1") &&
+        strstr(hook1_reply, "page_record_routed=1") &&
+        strstr(hook0_clear_reply, "raw_slot_fork_hook_cleared slot=0") &&
+        strstr(hook0_clear_reply, "hook_begin_events=1") &&
+        strstr(hook0_clear_reply, "hook_finish_events=1") &&
+        strstr(hook0_clear_reply, "hook_failures=0") &&
+        strstr(hook0_clear_reply, "primitive_begin_events=1") &&
+        strstr(hook0_clear_reply, "primitive_finish_events=1") &&
+        strstr(hook0_clear_reply, "page_record_routed=1") &&
+        strstr(hook1_clear_reply, "raw_slot_fork_hook_cleared slot=1") &&
+        strstr(hook1_clear_reply, "hook_begin_events=1") &&
+        strstr(hook1_clear_reply, "hook_finish_events=1") &&
+        strstr(hook1_clear_reply, "hook_failures=0") &&
+        strstr(hook1_clear_reply, "primitive_begin_events=1") &&
+        strstr(hook1_clear_reply, "primitive_finish_events=1") &&
+        strstr(hook1_clear_reply, "page_record_routed=1");
+
+    if (hook0_arm_rc < 0 || hook1_arm_rc < 0 ||
+        hook0_clear_rc < 0 || hook1_clear_rc < 0 || !route_ok)
+        ++failures;
+
+clear_all:
+    if (pipe_fds[0] >= 0)
+        close(pipe_fds[0]);
+    if (pipe_fds[1] >= 0)
+        close(pipe_fds[1]);
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    if (hook0_arm_rc >= 0 && hook0_clear_rc < 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot fork hook clear 0x%llx 0",
+                 (unsigned long long)token);
+        hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                           sizeof(hook0_clear_reply));
+    }
+    if (hook1_arm_rc >= 0 && hook1_clear_rc < 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot fork hook clear 0x%llx 1",
+                 (unsigned long long)token);
+        hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                           sizeof(hook1_clear_reply));
+    }
+    if (arm0_rc >= 0)
+        r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+    if (arm1_rc >= 0)
+        r0lab_raw_slot_clear(token, 1, &clear1_rc, &cleared1_rc);
+    if (cleared0_rc >= 0 && cleared1_rc >= 0) {
+        word0_after_clear = readable0[0];
+        word1_after_clear = readable1[0];
+        final0 = ((int (*)(void))page0)();
+        final1 = ((int (*)(void))page1)();
+    }
+
+finish:
+    if (page0 != MAP_FAILED && page1 != MAP_FAILED &&
+        (normal0 != 42 || normal1 != 42 || shadow0 != 99 || shadow1 != 99 ||
+         child_value0 != 42 || child_value1 != 42 ||
+         shadow0_after_fork != 99 || shadow1_after_fork != 99 ||
+         final0 != 42 || final1 != 42 ||
+         word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
+         word1_before != R0LAB_M3_CODE_MOV_W0_42 ||
+         word0_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+         word1_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+         child_word0 != R0LAB_M3_CODE_MOV_W0_42 ||
+         child_word1 != R0LAB_M3_CODE_MOV_W0_42 ||
+         word0_after_fork != R0LAB_M4_CODE_MOV_W0_99 ||
+         word1_after_fork != R0LAB_M4_CODE_MOV_W0_99 ||
+         word0_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+         word1_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+         arm0_rc < 0 || arm1_rc < 0 || ready0_rc < 0 || ready1_rc < 0 ||
+         observed0_rc < 0 || observed1_rc < 0 ||
+         hook0_arm_rc < 0 || hook1_arm_rc < 0 ||
+         hook0_clear_rc < 0 || hook1_clear_rc < 0 ||
+         clear0_rc < 0 || cleared0_rc < 0 || clear1_rc < 0 ||
+         cleared1_rc < 0 || slot0_activations != 1 ||
+         slot1_activations != 1 || slot0_state != 3 || slot1_state != 3 ||
+         !route_ok || g_r0lab_raw_handler_faults))
+        ++failures;
+
+    if (output[0] == '\0') {
+        snprintf(output, output_size,
+                 "raw mode=fork-hook-routing failures=%d parent_pause=1 child_original_inherit=1 target_mm_scoped=1 page_record_routed=%d status_source=cross_clear normal=%d/%d shadow=%d/%d child_word=%08x/%08x child_value=%d/%d after_fork_shadow=%08x/%08x after_fork_shadow_values=%d/%d final=%d/%d route_slot0_events=%d route_slot1_events=%d child_exit=%d result_read=%zd child_errno=%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld hook_arm_rc=%ld/%ld status_first_rc=%ld/%ld status_rc=%ld/%ld hook_clear_rc=%ld/%ld clear_rc=%ld/%ld cleared_rc=%ld/%ld generation=%llu/%llu handler_faults=%d hook0=\"%s\" hook1=\"%s\" status0=\"%s\" status1=\"%s\" hook0_clear=\"%s\" hook1_clear=\"%s\"",
+                 failures, route_ok ? 1 : 0, normal0, normal1, shadow0,
+                 shadow1, child_word0, child_word1, child_value0,
+                 child_value1, word0_after_fork, word1_after_fork,
+                 shadow0_after_fork, shadow1_after_fork, final0, final1,
+                 route_ok ? 1 : 0, route_ok ? 1 : 0, child_exit,
+                 child_result_read, child_result.err, arm0_rc, arm1_rc,
+                 ready0_rc, ready1_rc, observed0_rc, observed1_rc,
+                 hook0_arm_rc, hook1_arm_rc, status0_first_rc,
+                 status1_first_rc, status0_rc, status1_rc, hook0_clear_rc,
+                 hook1_clear_rc, clear0_rc, clear1_rc, cleared0_rc, cleared1_rc,
+                 (unsigned long long)generation0,
+                 (unsigned long long)generation1,
+                 (int)g_r0lab_raw_handler_faults, hook0_reply, hook1_reply,
+                 status0_reply, status1_reply, hook0_clear_reply,
+                 hook1_clear_reply);
+    }
+    if (page1 != MAP_FAILED)
+        munmap(page1, page_size);
+    if (page0 != MAP_FAILED)
+        munmap(page0, page_size);
     return failures ? -1 : 0;
 }
 
@@ -8320,6 +8755,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw gup hook routing run ", 25)) {
         r0lab_raw_gup_hook_routing_run(args + 25, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw fork hook routing run ", 26)) {
+        r0lab_raw_fork_hook_routing_run(args + 26, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
