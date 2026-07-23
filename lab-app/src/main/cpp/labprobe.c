@@ -2555,6 +2555,208 @@ finish:
     return failures ? -1 : 0;
 }
 
+static int r0lab_raw_abort_write_release_run(const char *token_text,
+                                             char *output, size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint32_t *code;
+    volatile uint32_t *readable_code;
+    uint64_t token;
+    void *page = MAP_FAILED;
+    size_t page_size;
+    char command[96];
+    char reply[256] = {0};
+    char release_reply[512] = {0};
+    char release_status[512] = {0};
+    char release_clear_reply[512] = {0};
+    char inspect_reply[2048] = {0};
+    unsigned int activations = 0;
+    unsigned long state = 0;
+    uint32_t word_before = 0;
+    uint32_t word_shadow = 0;
+    uint32_t release_write_word = 0;
+    uint32_t word_after_clear = 0;
+    long arm_rc = -1;
+    long ready_rc = -1;
+    long observed_rc = -1;
+    long release_arm_rc = -1;
+    long release_status_rc = -1;
+    long inspect_rc = -1;
+    long release_clear_rc = -1;
+    long clear_rc = -1;
+    long cleared_rc = -1;
+    int normal_value = -1;
+    int shadow_value = -1;
+    int post_release_exec_value = -1;
+    int restored_value = -1;
+    int handler_installed = 0;
+    int release_write_completed = 0;
+    int release_write_fault_caught = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw abort write release token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    page = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw abort write release page allocation errno=%d",
+                 errno);
+        return -1;
+    }
+    code = page;
+    code[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page, (char *)page + page_size);
+    if (mprotect(page, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=initial raw abort write release mprotect errno=%d",
+                 errno);
+        munmap(page, page_size);
+        return -1;
+    }
+
+    readable_code = (volatile uint32_t *)page;
+    word_before = readable_code[0];
+    normal_value = ((int (*)(void))page)();
+
+    snprintf(command, sizeof(command), "raw arm 0x%llx 0x%llx",
+             (unsigned long long)token, (unsigned long long)(uintptr_t)page);
+    arm_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm_rc < 0)
+        goto finish;
+    ready_rc = r0lab_m3_wait_for("raw ready", token);
+    if (ready_rc < 0)
+        goto clear;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_page = page;
+    g_r0lab_raw_signal_page_size = page_size;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear;
+    handler_installed = 1;
+
+    shadow_value = ((int (*)(void))page)();
+    word_shadow = readable_code[0];
+
+    snprintf(command, sizeof(command), "raw observed 0x%llx",
+             (unsigned long long)token);
+    observed_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (observed_rc < 0 ||
+        sscanf(reply, "raw_observed activations=%u state=%lu",
+               &activations, &state) != 2)
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw abort write release arm 0x%llx",
+             (unsigned long long)token);
+    release_arm_rc = r0lab_control_raw(command, release_reply,
+                                       sizeof(release_reply));
+    if (release_arm_rc >= 0) {
+        g_r0lab_raw_signal_jump_on_fault = 1;
+        if (!sigsetjmp(g_r0lab_raw_signal_jump, 1)) {
+            readable_code[0] = R0LAB_M4_CODE_MOV_W0_99;
+            release_write_completed = 1;
+        } else {
+            release_write_fault_caught = 1;
+        }
+        g_r0lab_raw_signal_jump_on_fault = 0;
+        release_write_word = readable_code[0];
+        __builtin___clear_cache((char *)page, (char *)page + page_size);
+        post_release_exec_value = ((int (*)(void))page)();
+    }
+
+    snprintf(command, sizeof(command), "raw abort write release status 0x%llx",
+             (unsigned long long)token);
+    release_status_rc = r0lab_control_raw(command, release_status,
+                                          sizeof(release_status));
+
+    snprintf(command, sizeof(command), "raw inspect 0x%llx",
+             (unsigned long long)token);
+    inspect_rc = r0lab_control_raw(command, inspect_reply,
+                                   sizeof(inspect_reply));
+
+    if (release_arm_rc < 0 || release_status_rc < 0 || inspect_rc < 0 ||
+        !strstr(release_reply, "raw_abort_write_release_ready") ||
+        !strstr(release_reply, "source=raw_va_rx_write") ||
+        !strstr(release_reply, "action=restore_original") ||
+        !strstr(release_reply, "logical_release=1") ||
+        !strstr(release_reply, "observe_only=0") ||
+        !strstr(release_reply, "pte_switch=1") ||
+        !strstr(release_reply, "skip_origin=0") ||
+        !strstr(release_status, "armed=0") ||
+        !strstr(release_status, "release_events=1") ||
+        !strstr(release_status, "failures=0") ||
+        !strstr(release_status, "last_ec=36") ||
+        !strstr(release_status, "last_fsc_type=c") ||
+        !strstr(release_status, "last_wnr=1") ||
+        !strstr(release_status, "permission_fault=1") ||
+        !strstr(release_status, "translation_fault=0") ||
+        !strstr(release_status, "restore_result=0") ||
+        !strstr(release_status, "pte_switch=1") ||
+        !strstr(release_status, "skip_origin=0") ||
+        !strstr(inspect_reply, "active_kind=original") ||
+        !strstr(inspect_reply, "record_state=restoring"))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw abort write release clear 0x%llx",
+             (unsigned long long)token);
+    release_clear_rc = r0lab_control_raw(command, release_clear_reply,
+                                         sizeof(release_clear_reply));
+
+clear:
+    r0lab_raw_clear(token, &clear_rc, &cleared_rc);
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    if (cleared_rc >= 0) {
+        word_after_clear = readable_code[0];
+        restored_value = ((int (*)(void))page)();
+    }
+
+finish:
+    if (normal_value != 42 || shadow_value != 99 ||
+        post_release_exec_value != 42 || restored_value != 42 ||
+        word_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        release_write_word != R0LAB_M3_CODE_MOV_W0_42 ||
+        word_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+        arm_rc < 0 || ready_rc < 0 || observed_rc < 0 ||
+        release_arm_rc < 0 || release_status_rc < 0 || inspect_rc < 0 ||
+        release_clear_rc < 0 || clear_rc < 0 || cleared_rc < 0 ||
+        activations != 1 || state != 3 || release_write_completed ||
+        !release_write_fault_caught || g_r0lab_raw_handler_faults != 1)
+        ++failures;
+    snprintf(output, output_size,
+             "raw mode=abort-write-release failures=%d target_mm_scoped=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=absent skip_origin=0 normal_value=%d shadow_value=%d release_write_word=%08x post_release_exec_value=%d restored_value=%d words=%08x/%08x/%08x activations=%u state=%lu release_write_completed=%d release_write_fault_caught=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld release_arm_rc=%ld release_status_rc=%ld inspect_rc=%ld release_clear_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d release=\"%s\" status=\"%s\" inspect=\"%s\" release_clear=\"%s\"",
+             failures, normal_value, shadow_value, release_write_word,
+             post_release_exec_value, restored_value, word_before, word_shadow,
+             word_after_clear, activations, state, release_write_completed,
+             release_write_fault_caught, arm_rc, ready_rc, observed_rc,
+             release_arm_rc, release_status_rc, inspect_rc, release_clear_rc,
+             clear_rc, cleared_rc, (int)g_r0lab_raw_handler_faults,
+             release_reply, release_status, inspect_reply,
+             release_clear_reply);
+    munmap(page, page_size);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_raw_syscall_hook_run(const char *token_text, char *output,
                                       size_t output_size)
 {
@@ -4754,6 +4956,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw abort write probe run ", 26)) {
         r0lab_raw_abort_write_probe_run(args + 26, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw abort write release run ", 28)) {
+        r0lab_raw_abort_write_release_run(args + 28, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
