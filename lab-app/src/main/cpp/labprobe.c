@@ -8375,6 +8375,264 @@ finish:
     return success ? 0 : -1;
 }
 
+static int r0lab_raw_hold_routing_hold(const char *token_text, char *output,
+                                       size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint32_t *code0;
+    uint32_t *code1;
+    volatile uint32_t *readable0;
+    volatile uint32_t *readable1;
+    uint64_t token;
+    uint64_t generation0 = 0;
+    uint64_t generation1 = 0;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    size_t page_size;
+    char command[160];
+    char reply[512] = {0};
+    char ready0[256] = {0};
+    char ready1[256] = {0};
+    char observed0[256] = {0};
+    char observed1[256] = {0};
+    char inspect0_reply[512] = {0};
+    char inspect1_reply[512] = {0};
+    unsigned int slot0_activations = 0;
+    unsigned int slot1_activations = 0;
+    unsigned long slot0_state = 0;
+    unsigned long slot1_state = 0;
+    uint32_t word0_before = 0;
+    uint32_t word1_before = 0;
+    uint32_t word0_shadow = 0;
+    uint32_t word1_shadow = 0;
+    long arm0_rc = -1;
+    long arm1_rc = -1;
+    long ready0_rc = -1;
+    long ready1_rc = -1;
+    long observed0_rc = -1;
+    long observed1_rc = -1;
+    long inspect0_rc = -1;
+    long inspect1_rc = -1;
+    long hook0_arm_rc = -1;
+    long hook1_arm_rc = -1;
+    long hook0_status_rc = -1;
+    long hook1_status_rc = -1;
+    int normal0 = -1;
+    int normal1 = -1;
+    int shadow0 = -1;
+    int shadow1 = -1;
+    int handler_installed = 0;
+    int inspect_ok = 0;
+    int exit_hook_clear = 0;
+    int failures = 0;
+    int success = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw hold routing token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    if (g_r0lab_m5_hold.armed) {
+        snprintf(output, output_size, "rc=-16 error=hold already active");
+        return -1;
+    }
+    page0 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page1 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page0 == MAP_FAILED || page1 == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw hold routing mmap errno=%d", errno);
+        failures = 1;
+        goto finish;
+    }
+
+    code0 = page0;
+    code1 = page1;
+    code0[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code0[1] = R0LAB_M3_CODE_RET;
+    code1[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code1[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page0, (char *)page0 + page_size);
+    __builtin___clear_cache((char *)page1, (char *)page1 + page_size);
+    if (mprotect(page0, page_size, PROT_READ | PROT_EXEC) ||
+        mprotect(page1, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw hold routing mprotect errno=%d", errno);
+        failures = 1;
+        goto finish;
+    }
+
+    readable0 = (volatile uint32_t *)page0;
+    readable1 = (volatile uint32_t *)page1;
+    word0_before = readable0[0];
+    word1_before = readable1[0];
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0);
+    arm0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm0_rc < 0) {
+        failures = 1;
+        goto finish;
+    }
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page1);
+    arm1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm1_rc < 0) {
+        failures = 1;
+        goto finish;
+    }
+
+    ready0_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 0,
+                                        ready0, sizeof(ready0));
+    ready1_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 1,
+                                        ready1, sizeof(ready1));
+    if (ready0_rc < 0 || ready1_rc < 0 ||
+        r0lab_raw_parse_slot_generation(ready0, "raw_slot_ready", 0,
+                                        &generation0) ||
+        r0lab_raw_parse_slot_generation(ready1, "raw_slot_ready", 1,
+                                        &generation1)) {
+        failures = 1;
+        goto finish;
+    }
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page_size = page_size;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action)) {
+        failures = 1;
+        goto finish;
+    }
+    handler_installed = 1;
+
+    g_r0lab_raw_signal_page = page0;
+    shadow0 = ((int (*)(void))page0)();
+    word0_shadow = readable0[0];
+    g_r0lab_raw_signal_page = page1;
+    shadow1 = ((int (*)(void))page1)();
+    word1_shadow = readable1[0];
+
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    handler_installed = 0;
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 0",
+             (unsigned long long)token);
+    observed0_rc = r0lab_control_raw(command, observed0, sizeof(observed0));
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 1",
+             (unsigned long long)token);
+    observed1_rc = r0lab_control_raw(command, observed1, sizeof(observed1));
+    if (observed0_rc < 0 || observed1_rc < 0 ||
+        r0lab_raw_parse_slot_observed(observed0, 0, &slot0_activations,
+                                      &slot0_state) ||
+        r0lab_raw_parse_slot_observed(observed1, 1, &slot1_activations,
+                                      &slot1_state))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw slot inspect 0x%llx 0",
+             (unsigned long long)token);
+    inspect0_rc = r0lab_control_raw(command, inspect0_reply,
+                                    sizeof(inspect0_reply));
+    snprintf(command, sizeof(command), "raw slot inspect 0x%llx 1",
+             (unsigned long long)token);
+    inspect1_rc = r0lab_control_raw(command, inspect1_reply,
+                                    sizeof(inspect1_reply));
+
+    inspect_ok =
+        inspect0_rc >= 0 && inspect1_rc >= 0 &&
+        strstr(inspect0_reply, "active_kind=shadow_rx") &&
+        strstr(inspect1_reply, "active_kind=shadow_rx") &&
+        strstr(inspect0_reply, "record_state=shadow_active") &&
+        strstr(inspect1_reply, "record_state=shadow_active");
+    exit_hook_clear =
+        inspect_ok &&
+        strstr(inspect0_reply, "exit_hook_installed=0") &&
+        strstr(inspect1_reply, "exit_hook_installed=0");
+
+    if (normal0 != 42 || normal1 != 42 ||
+        shadow0 != 99 || shadow1 != 99 ||
+        word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word0_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        word1_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        arm0_rc < 0 || arm1_rc < 0 ||
+        ready0_rc < 0 || ready1_rc < 0 ||
+        observed0_rc < 0 || observed1_rc < 0 ||
+        slot0_activations != 1 || slot1_activations != 1 ||
+        slot0_state != 3 || slot1_state != 3 ||
+        g_r0lab_raw_handler_faults || !inspect_ok || !exit_hook_clear)
+        ++failures;
+
+    if (!failures) {
+        g_r0lab_m5_hold.source_page = page0;
+        g_r0lab_m5_hold.clone_page = page1;
+        g_r0lab_m5_hold.page_size = page_size;
+        g_r0lab_m5_hold.token = token;
+        g_r0lab_m5_hold.mode = 10;
+        g_r0lab_m5_hold.armed = 1;
+        success = 1;
+    }
+
+finish:
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    if (!success) {
+        long clear0_rc = -1;
+        long cleared0_rc = -1;
+        long clear1_rc = -1;
+        long cleared1_rc = -1;
+
+        if (arm0_rc >= 0)
+            r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+        if (arm1_rc >= 0)
+            r0lab_raw_slot_clear(token, 1, &clear1_rc, &cleared1_rc);
+        if (page1 != MAP_FAILED)
+            munmap(page1, page_size);
+        if (page0 != MAP_FAILED)
+            munmap(page0, page_size);
+    }
+    snprintf(output, output_size,
+             "raw mode=raw-hold-routing-hold failures=%d exit_mmap_armed=0 raw_slots=%d page_records=%d normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld hook_arm_rc=%ld/%ld hook_status_rc=%ld/%ld exit_hook_installed=%d/%d handler_faults=%d source=%llx/%llx generation=%llu/%llu",
+             failures, inspect_ok ? 2 : 0, inspect_ok ? 2 : 0, normal0,
+             normal1, shadow0, shadow1, slot0_activations,
+             slot1_activations, slot0_state, slot1_state,
+             inspect_ok && strstr(inspect0_reply, "shadow_active") ? 1 : 0,
+             inspect_ok && strstr(inspect1_reply, "shadow_active") ? 1 : 0,
+             arm0_rc, arm1_rc, ready0_rc, ready1_rc, observed0_rc,
+             observed1_rc, inspect0_rc, inspect1_rc,
+             hook0_arm_rc, hook1_arm_rc, hook0_status_rc, hook1_status_rc,
+             exit_hook_clear ? 0 : -1, exit_hook_clear ? 0 : -1,
+             (int)g_r0lab_raw_handler_faults,
+             (unsigned long long)(uintptr_t)page0,
+             (unsigned long long)(uintptr_t)page1,
+             (unsigned long long)generation0,
+             (unsigned long long)generation1);
+    return success ? 0 : -1;
+}
+
 static int r0lab_raw_fault_data_probe_run(const char *token_text,
                                           char *output, size_t output_size)
 {
@@ -10223,6 +10481,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw exit hook routing hold ", 27)) {
         r0lab_raw_exit_hook_routing_hold(args + 27, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw raw-hold routing hold ", 26)) {
+        r0lab_raw_hold_routing_hold(args + 26, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
