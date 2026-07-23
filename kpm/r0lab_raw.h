@@ -12,6 +12,7 @@ enum r0lab_raw_state {
     R0LAB_RAW_ORIGINAL_STEP = 4,
     R0LAB_RAW_RESTORED = 5,
     R0LAB_RAW_POISONED = 6,
+    R0LAB_RAW_ORIGINAL_READ = 7,
 };
 
 struct r0lab_raw_page {
@@ -32,6 +33,10 @@ struct r0lab_raw_page {
     unsigned long fork_hide_active;
     unsigned long fork_begin_events;
     unsigned long fork_finish_events;
+    unsigned long read_cycle_saved_pte;
+    unsigned long read_cycle_active;
+    unsigned long read_cycle_begin_events;
+    unsigned long read_cycle_finish_events;
     unsigned long state;
 };
 
@@ -50,6 +55,8 @@ int r0lab_raw_arm_source_uxn_only(struct r0lab_raw_page *page);
 int r0lab_raw_activate_shadow(struct r0lab_raw_page *page);
 int r0lab_raw_begin_stepping(struct r0lab_raw_page *page);
 int r0lab_raw_finish_stepping(struct r0lab_raw_page *page);
+int r0lab_raw_begin_read_cycle(struct r0lab_raw_page *page);
+int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page);
 int r0lab_raw_vma_matches(const struct r0lab_raw_page *page, void *vma,
                           unsigned long address);
 int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page);

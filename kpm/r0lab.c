@@ -90,6 +90,8 @@ enum r0lab_event_op {
     R0LAB_EVENT_RAW_FAULT_HOOK_HIT = 33,
     R0LAB_EVENT_RAW_EXIT_MMAP_HIT = 34,
     R0LAB_EVENT_RAW_SYSCALL_HOOK_HIT = 35,
+    R0LAB_EVENT_RAW_READ_CYCLE_BEGIN = 36,
+    R0LAB_EVENT_RAW_READ_CYCLE_FINISH = 37,
 };
 
 struct r0lab_event {
@@ -224,6 +226,7 @@ enum r0lab_page_record_state {
     R0LAB_PAGE_RECORD_SHADOW_ACTIVE = 3,
     R0LAB_PAGE_RECORD_RESTORING = 4,
     R0LAB_PAGE_RECORD_ORIGINAL_STEP = 5,
+    R0LAB_PAGE_RECORD_ORIGINAL_READ = 6,
 };
 
 enum r0lab_s4_state {
@@ -800,6 +803,8 @@ static const char *r0lab_page_record_state_name(uint8_t state)
         return "restoring";
     case R0LAB_PAGE_RECORD_ORIGINAL_STEP:
         return "original_step";
+    case R0LAB_PAGE_RECORD_ORIGINAL_READ:
+        return "original_read";
     default:
         return "empty";
     }
@@ -3507,6 +3512,7 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     unsigned long flags;
     bool should_handle = false;
     bool handled = false;
+    bool read_cycle_resume = false;
     int result = R0LAB_EINVAL;
 
     (void)udata;
@@ -3516,12 +3522,16 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
         g_session.active && g_raw_page.armed && !g_raw_page.clearing &&
         !g_raw_page.transitioning &&
-        g_raw_page.raw.state == R0LAB_RAW_SOURCE_UXN &&
+        (g_raw_page.raw.state == R0LAB_RAW_SOURCE_UXN ||
+         (g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_READ &&
+          g_raw_page.raw.read_cycle_active)) &&
         g_session.owner_tgid == r0lab_current_tgid()) {
         page_address = g_raw_page.raw.address;
         if ((far & ~(R0LAB_RAW_PAGE_SIZE - 1UL)) == page_address &&
             regs->pc >= page_address &&
             regs->pc < page_address + R0LAB_RAW_PAGE_SIZE) {
+            read_cycle_resume =
+                g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_READ;
             g_raw_page.transitioning = true;
             generation = g_raw_page.generation;
             should_handle = true;
@@ -3529,17 +3539,23 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     }
     r0lab_unlock(flags);
 
-    if (should_handle)
-        result = r0lab_raw_activate_shadow(&g_raw_page.raw);
+    if (should_handle) {
+        if (read_cycle_resume)
+            result = r0lab_raw_finish_read_cycle(&g_raw_page.raw);
+        else
+            result = r0lab_raw_activate_shadow(&g_raw_page.raw);
+    }
 
     flags = r0lab_lock();
     if (should_handle && g_raw_page.generation == generation) {
         g_raw_page.transitioning = false;
         if (!result && g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
-            ++g_raw_page.activation_events;
-            g_raw_page.record.events = g_raw_page.activation_events;
-            g_raw_page.record.source_pfn = g_raw_page.raw.source_pfn;
-            g_raw_page.record.shadow_pfn = g_raw_page.raw.shadow_pfn;
+            if (!read_cycle_resume) {
+                ++g_raw_page.activation_events;
+                g_raw_page.record.events = g_raw_page.activation_events;
+                g_raw_page.record.source_pfn = g_raw_page.raw.source_pfn;
+                g_raw_page.record.shadow_pfn = g_raw_page.raw.shadow_pfn;
+            }
             g_raw_page.record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
             args->skip_origin = 1;
             handled = true;
@@ -3549,7 +3565,9 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     r0lab_unlock(flags);
 
     if (handled)
-        r0lab_record_regs(R0LAB_EVENT_RAW_ACTIVATE, 0, regs);
+        r0lab_record_regs(read_cycle_resume ?
+                          R0LAB_EVENT_RAW_READ_CYCLE_FINISH :
+                          R0LAB_EVENT_RAW_ACTIVATE, 0, regs);
     else if (should_handle)
         r0lab_record_regs(R0LAB_EVENT_REJECT, result, regs);
 }
@@ -4562,6 +4580,9 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     unsigned long fork_hide_active;
     unsigned long fork_begin_events;
     unsigned long fork_finish_events;
+    unsigned long read_cycle_active;
+    unsigned long read_cycle_begin_events;
+    unsigned long read_cycle_finish_events;
     bool gup_hook_installed;
     uint32_t gup_hook_begin_events;
     uint32_t gup_hook_finish_events;
@@ -4589,6 +4610,8 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     uint8_t record_backend;
     uint8_t record_state;
     const char *active_kind = "none";
+    const char *read_cycle_mode = "absent";
+    unsigned int read_cycle_pte_switch = 0;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -4612,6 +4635,9 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     fork_hide_active = g_raw_page.raw.fork_hide_active;
     fork_begin_events = g_raw_page.raw.fork_begin_events;
     fork_finish_events = g_raw_page.raw.fork_finish_events;
+    read_cycle_active = g_raw_page.raw.read_cycle_active;
+    read_cycle_begin_events = g_raw_page.raw.read_cycle_begin_events;
+    read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
     gup_hook_installed = g_raw_page.gup_hook_installed;
     gup_hook_begin_events = g_raw_page.gup_hook_begin_events;
     gup_hook_finish_events = g_raw_page.gup_hook_finish_events;
@@ -4640,7 +4666,9 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     record_state = g_raw_page.record.state;
     r0lab_unlock(flags);
 
-    if (active_pte == original_pte)
+    if (state == R0LAB_RAW_ORIGINAL_READ)
+        active_kind = "original_read";
+    else if (active_pte == original_pte)
         active_kind = "original";
     else if (active_pte == source_uxn_pte)
         active_kind = "source_uxn";
@@ -4649,13 +4677,21 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     else if (state == R0LAB_RAW_ORIGINAL_STEP)
         active_kind = "original_step";
 
+    if (read_cycle_active || read_cycle_begin_events ||
+        read_cycle_finish_events)
+        read_cycle_mode = "uxn_original_exec_resume";
+    if (read_cycle_begin_events)
+        read_cycle_pte_switch = 1;
+
     snprintf(reply, sizeof(reply),
-             "raw_inspect page=%llx state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx gup_hide_active=%lu gup_begin_events=%lu gup_finish_events=%lu gup_hook_installed=%u gup_hook_begin_events=%u gup_hook_finish_events=%u gup_hook_failures=%u fork_hide_active=%lu fork_begin_events=%lu fork_finish_events=%lu fork_hook_installed=%u fork_hook_begin_events=%u fork_hook_finish_events=%u fork_hook_failures=%u fault_hook_installed=%u fault_hook_read_events=%u fault_hook_write_events=%u fault_hook_exec_events=%u fault_hook_failures=%u exit_hook_installed=%u exit_hook_events=%u exit_hook_failures=%u fault_probe_armed=%u fault_probe_page=%llx fault_probe_reader_tgid=%d fault_probe_read_events=%u fault_probe_write_events=%u fault_probe_exec_events=%u fault_probe_failures=%u record_backend=%s record_state=%s read_cycle=absent fault_hook=observe_only exit_hook=exit_mmap_observe fault_probe=normal_anon_remote_gup original_view_after_shadow=%s gup_hide_primitive=%s fork_hide_primitive=%s\n",
+             "raw_inspect page=%llx state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx gup_hide_active=%lu gup_begin_events=%lu gup_finish_events=%lu gup_hook_installed=%u gup_hook_begin_events=%u gup_hook_finish_events=%u gup_hook_failures=%u fork_hide_active=%lu fork_begin_events=%lu fork_finish_events=%lu read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu fork_hook_installed=%u fork_hook_begin_events=%u fork_hook_finish_events=%u fork_hook_failures=%u fault_hook_installed=%u fault_hook_read_events=%u fault_hook_write_events=%u fault_hook_exec_events=%u fault_hook_failures=%u exit_hook_installed=%u exit_hook_events=%u exit_hook_failures=%u fault_probe_armed=%u fault_probe_page=%llx fault_probe_reader_tgid=%d fault_probe_read_events=%u fault_probe_write_events=%u fault_probe_exec_events=%u fault_probe_failures=%u record_backend=%s record_state=%s read_cycle=%s read_cycle_pte_switch=%u read_cycle_data_fault=absent read_cycle_exec_resume=%s fault_hook=observe_only exit_hook=exit_mmap_observe fault_probe=normal_anon_remote_gup original_view_after_shadow=%s gup_hide_primitive=%s fork_hide_primitive=%s\n",
              (uint64_t)address, state, activation_events, active_kind,
              source_pfn & 0xffffUL, shadow_pfn & 0xffffUL, gup_hide_active,
              gup_begin_events, gup_finish_events, gup_hook_installed ? 1 : 0,
              gup_hook_begin_events, gup_hook_finish_events, gup_hook_failures,
              fork_hide_active, fork_begin_events, fork_finish_events,
+             read_cycle_active, read_cycle_begin_events,
+             read_cycle_finish_events,
              fork_hook_installed ? 1 : 0, fork_hook_begin_events,
              fork_hook_finish_events, fork_hook_failures,
              fault_hook_installed ? 1 : 0, fault_hook_read_events,
@@ -4668,7 +4704,10 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
              fault_probe_read_events, fault_probe_write_events,
              fault_probe_exec_events, fault_probe_failures,
              r0lab_page_record_backend_name(record_backend),
-             r0lab_page_record_state_name(record_state),
+             r0lab_page_record_state_name(record_state), read_cycle_mode,
+             read_cycle_pte_switch,
+             read_cycle_begin_events && read_cycle_finish_events ?
+             "proven" : "absent",
              gup_begin_events && gup_finish_events ? "proven" : "absent",
              gup_begin_events && gup_finish_events ? "proven" : "absent",
              fork_begin_events && fork_finish_events ? "proven" : "absent");
@@ -4751,6 +4790,134 @@ record:
                          R0LAB_EVENT_RAW_GUP_FINISH,
                  result);
     return result;
+}
+
+static long r0lab_raw_read_cycle_begin_cmd(uint64_t token, char __user *out_msg,
+                                           int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    unsigned long flags;
+    uint64_t generation = 0;
+    int result = r0lab_validate_owner(token);
+    unsigned long state = 0;
+    unsigned long active_pte = 0;
+    unsigned long original_pte = 0;
+    unsigned long source_uxn_pte = 0;
+    unsigned long shadow_rx_pte = 0;
+    unsigned long read_cycle_active = 0;
+    unsigned long read_cycle_begin_events = 0;
+    unsigned long read_cycle_finish_events = 0;
+    const char *active_kind = "none";
+
+    if (result)
+        goto record;
+    flags = r0lab_lock();
+    if (!g_raw_page.armed || g_raw_page.clearing ||
+        g_raw_page.transitioning ||
+        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+        g_raw_page.raw.gup_hide_active ||
+        g_raw_page.raw.fork_hide_active ||
+        g_raw_page.raw.read_cycle_active) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    g_raw_page.transitioning = true;
+    generation = g_raw_page.generation;
+    r0lab_unlock(flags);
+
+    result = r0lab_raw_begin_read_cycle(&g_raw_page.raw);
+
+    flags = r0lab_lock();
+    if (g_raw_page.generation == generation) {
+        g_raw_page.transitioning = false;
+        if (!result)
+            g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+        state = g_raw_page.raw.state;
+        active_pte = g_raw_page.raw.active_pte;
+        original_pte = g_raw_page.raw.original_pte;
+        source_uxn_pte = g_raw_page.raw.source_uxn_pte;
+        shadow_rx_pte = g_raw_page.raw.shadow_rx_pte;
+        read_cycle_active = g_raw_page.raw.read_cycle_active;
+        read_cycle_begin_events = g_raw_page.raw.read_cycle_begin_events;
+        read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
+    } else {
+        result = R0LAB_EAGAIN;
+    }
+    r0lab_unlock(flags);
+
+    if (state == R0LAB_RAW_ORIGINAL_READ)
+        active_kind = "original_read";
+    else if (active_pte == original_pte)
+        active_kind = "original";
+    else if (active_pte == source_uxn_pte)
+        active_kind = "source_uxn";
+    else if (active_pte == shadow_rx_pte)
+        active_kind = "shadow_rx";
+
+    snprintf(reply, sizeof(reply),
+             "raw_read_cycle_begin result=%d state=%lu active_kind=%s read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu read_cycle=uxn_original_exec_resume trigger=supercall pte_switch=1 data_fault=absent exec_resume=pending\n",
+             result, state, active_kind, read_cycle_active,
+             read_cycle_begin_events, read_cycle_finish_events);
+    if (!result) {
+        r0lab_record(R0LAB_EVENT_RAW_READ_CYCLE_BEGIN, 0);
+        return r0lab_copy_reply(out_msg, outlen, reply);
+    }
+
+record:
+    r0lab_record(R0LAB_EVENT_RAW_READ_CYCLE_BEGIN, result);
+    return result;
+}
+
+static long r0lab_raw_read_cycle_status(uint64_t token, char __user *out_msg,
+                                        int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    unsigned long flags;
+    unsigned long state;
+    unsigned long active_pte;
+    unsigned long original_pte;
+    unsigned long source_uxn_pte;
+    unsigned long shadow_rx_pte;
+    unsigned long read_cycle_active;
+    unsigned long read_cycle_begin_events;
+    unsigned long read_cycle_finish_events;
+    const char *active_kind = "none";
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    flags = r0lab_lock();
+    if (!g_raw_page.armed || g_raw_page.clearing) {
+        r0lab_unlock(flags);
+        return R0LAB_EAGAIN;
+    }
+    state = g_raw_page.raw.state;
+    active_pte = g_raw_page.raw.active_pte;
+    original_pte = g_raw_page.raw.original_pte;
+    source_uxn_pte = g_raw_page.raw.source_uxn_pte;
+    shadow_rx_pte = g_raw_page.raw.shadow_rx_pte;
+    read_cycle_active = g_raw_page.raw.read_cycle_active;
+    read_cycle_begin_events = g_raw_page.raw.read_cycle_begin_events;
+    read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
+    r0lab_unlock(flags);
+
+    if (state == R0LAB_RAW_ORIGINAL_READ)
+        active_kind = "original_read";
+    else if (active_pte == original_pte)
+        active_kind = "original";
+    else if (active_pte == source_uxn_pte)
+        active_kind = "source_uxn";
+    else if (active_pte == shadow_rx_pte)
+        active_kind = "shadow_rx";
+
+    snprintf(reply, sizeof(reply),
+             "raw_read_cycle_status state=%lu active_kind=%s read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu read_cycle=uxn_original_exec_resume trigger=supercall pte_switch=%u data_fault=absent exec_resume=%s\n",
+             state, active_kind, read_cycle_active, read_cycle_begin_events,
+             read_cycle_finish_events, read_cycle_begin_events ? 1 : 0,
+             read_cycle_begin_events && read_cycle_finish_events ?
+             "proven" : "pending");
+    return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
 static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
@@ -6056,6 +6223,20 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_inspect(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw read cycle begin ", 21)) {
+        value = args + 21;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_read_cycle_begin_cmd(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw read cycle status ", 22)) {
+        value = args + 22;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_read_cycle_status(token, out_msg, outlen);
     }
     if (!strncmp(args, "raw fault probe arm ", 20)) {
         value = args + 20;
