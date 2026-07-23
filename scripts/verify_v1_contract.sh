@@ -47,6 +47,7 @@ F42_POSITIVE_PLAN=docs/wxshadow-f4.2-positive-trigger-plan.md
 F43_GUP_PLAN=docs/wxshadow-f4.3-gup-hook-routing-plan.md
 F44_FORK_PLAN=docs/wxshadow-f4.4-fork-hook-routing-plan.md
 F45_SYSCALL_PRCTL_PLAN=docs/wxshadow-f4.5-syscall-prctl-routing-plan.md
+F45_PRCTL_CHECKPOINT=docs/wxshadow-f4.5-prctl-routing-source-checkpoint.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -64,6 +65,7 @@ require_file "$F42_POSITIVE_PLAN"
 require_file "$F43_GUP_PLAN"
 require_file "$F44_FORK_PLAN"
 require_file "$F45_SYSCALL_PRCTL_PLAN"
+require_file "$F45_PRCTL_CHECKPOINT"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
@@ -144,7 +146,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-fork-hook-routing-20260
 require_text "$DEVELOPMENT_SEQUENCE" 'The next source checkpoint is'
 require_text "$DEVELOPMENT_SEQUENCE" 'D0 plan gate is complete.'
 require_text "$DEVELOPMENT_SEQUENCE" 'D1-D3 syscall/getpid read-cycle routing is implemented and gate-passed'
-require_text "$DEVELOPMENT_SEQUENCE" 'D4-D6 Lab-private prctl dispatch/patch routing has not started.'
+require_text "$DEVELOPMENT_SEQUENCE" 'D4-D6 Lab-private prctl dispatch/patch routing is plan-locked'
 require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-syscall-hook-routing-20260724-033233.log'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
@@ -272,15 +274,35 @@ require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D4 prctl source scaffold'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D5 prctl slot-0 regression'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D6 prctl two-slot routing'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D7 commit/tag'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'docs/wxshadow-f4.5-prctl-routing-source-checkpoint.md'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'Legacy `raw syscall ... <token>` and `raw prctl ... <token>` commands remain'
 require_text "$F45_SYSCALL_PRCTL_PLAN" '<token> <slot> <generation>'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'raw slot syscall read cycle hook select <token> <slot> <generation>'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'routes through selected slot plus generation'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'route through `current_mm + address` or `current_mm + request.address`'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'Patch-record capacity remains `1024` per page record.'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_syscall_read_cycle_device.sh'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_syscall_hook_routing_device.sh'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_prctl_patch_records_device.sh'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_prctl_hook_routing_device.sh'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'Stale generation accepted'
 require_text "$F45_SYSCALL_PRCTL_PLAN" 'build/evidence/raw-syscall-hook-routing-20260724-033233.log'
+require_text "$F45_PRCTL_CHECKPOINT" 'wxshadow F4.5 D4-D6 Prctl Routing Source Checkpoint'
+require_text "$F45_PRCTL_CHECKPOINT" 'Status: plan locked. Source implementation is not started.'
+require_text "$F45_PRCTL_CHECKPOINT" 'r0lab_raw_prctl_before()'
+require_text "$F45_PRCTL_CHECKPOINT" 'r0lab_raw_prctl_hook_users_locked()'
+require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook arm <token> <slot> <generation>'
+require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook select <token> <slot> <generation>'
+require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook status <token> <slot>'
+require_text "$F45_PRCTL_CHECKPOINT" 'raw slot prctl hook clear <token> <slot> <generation>'
+require_text "$F45_PRCTL_CHECKPOINT" 'R0LAB_PRCTL_OP_READ_CYCLE` has no address argument'
+require_text "$F45_PRCTL_CHECKPOINT" 'route by `current_mm + address`'
+require_text "$F45_PRCTL_CHECKPOINT" 'route by `current_mm + request.address`'
+require_text "$F45_PRCTL_CHECKPOINT" 'r0lab_raw_hook_page_token_acquire_locked()'
+require_text "$F45_PRCTL_CHECKPOINT" 'R0LAB_RAW_HOOK_PRCTL'
+require_text "$F45_PRCTL_CHECKPOINT" 'raw_slot_prctl_hook_ready slot=%u generation=%llu symbol=prctl installed=1 selected=1 page_record_routed=1'
+require_text "$F45_PRCTL_CHECKPOINT" 'raw mode=prctl-routing failures=0 trigger=prctl_magic route=selected_slot,address page_record_routed=1'
+require_text "$F45_PRCTL_CHECKPOINT" 'scripts/test_raw_prctl_hook_routing_device.sh'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_kind'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_route_flags'
 require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_ROUTE_MUTATING'
