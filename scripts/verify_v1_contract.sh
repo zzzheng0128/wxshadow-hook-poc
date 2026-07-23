@@ -43,6 +43,7 @@ FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
+F42_POSITIVE_PLAN=docs/wxshadow-f4.2-positive-trigger-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -56,6 +57,7 @@ require_file "$FINAL_ROADMAP"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
+require_file "$F42_POSITIVE_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
@@ -91,6 +93,7 @@ require_text "$FINAL_ROADMAP" 'Slot 1 is intentionally inert until F2'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f2-two-page-lab-harness-plan.md'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f3-page-local-patch-records-plan.md'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4-hook-routing-by-page-record-plan.md'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.2-positive-trigger-plan.md'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-development-sequence.md'
 require_text "$FINAL_ROADMAP" 'Plan checkpoints are docs/contract only.'
 require_text "$FINAL_ROADMAP" 'No hook-family migration starts unless'
@@ -109,6 +112,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'Planning Gate'
 require_text "$DEVELOPMENT_SEQUENCE" 'Only one source slice may be active at a time.'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_hook_routing_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_fault_hook_routing_device.sh'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.2-positive-trigger-plan.md'
+require_text "$DEVELOPMENT_SEQUENCE" 'file-backed RX plus shadow-PTE access-flag clear'
 require_text "$DEVELOPMENT_SEQUENCE" 'Do not pull these behaviors into F4 source checkpoints.'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
@@ -136,8 +141,10 @@ require_text "$F4_PLAN" 'target mm plus page VA lookup'
 require_text "$F4_PLAN" 'Current source-helper checkpoint:'
 require_text "$F4_PLAN" 'Current F4.1 abort-routing checkpoint:'
 require_text "$F4_PLAN" 'Active F4.2 fault-routing preflight:'
-require_text "$F4_PLAN" 'zero fault-hook hits and final `42/42` behavior'
+require_text "$F4_PLAN" 'docs/wxshadow-f4.2-positive-trigger-plan.md'
+require_text "$F4_PLAN" 'fault-hook hits and final `42/42` behavior'
 require_text "$F4_PLAN" 'reject RWX write as a trigger'
+require_text "$F4_PLAN" 'file-backed RX plus shadow-PTE access-flag clear'
 require_text "$F4_PLAN" 'r0lab_raw_page_find_by_mm_addr_locked'
 require_text "$F4_PLAN" 'r0lab_raw_page_find_by_fault_locked'
 require_text "$F4_PLAN" 'r0lab_raw_page_find_for_hook_locked'
@@ -157,6 +164,19 @@ require_text "$F4_PLAN" 'page_record_routed=1'
 require_text "$F4_PLAN" 'scripts/test_raw_hook_routing_device.sh'
 require_text "$F4_PLAN" 'arbitrary process, arbitrary `mm`, or arbitrary address support'
 require_text "$F4_PLAN" 'raw-XOM, permission-fault hidden-read experiments, or `PTE_USER` changes'
+require_text "$F42_POSITIVE_PLAN" 'wxshadow F4.2 Positive Trigger Plan'
+require_text "$F42_POSITIVE_PLAN" 'Status: plan-only gate before any new F4.2 source implementation.'
+require_text "$F42_POSITIVE_PLAN" 'PROT_NONE` raw-page read is blocked before `handle_mm_fault`'
+require_text "$F42_POSITIVE_PLAN" 'File-backed RX shadow PTE access-flag clear'
+require_text "$F42_POSITIVE_PLAN" 'First positive candidate.'
+require_text "$F42_POSITIVE_PLAN" 'raw_fault_hook_positive_preflight=pass'
+require_text "$F42_POSITIVE_PLAN" 'positive_route=1'
+require_text "$F42_POSITIVE_PLAN" 'op=33 result=0'
+require_text "$F42_POSITIVE_PLAN" 'handler_faults=0'
+require_text "$F42_POSITIVE_PLAN" 'normal=42/42`, `shadow=99/99`, and final cleanup returns `42/42`'
+require_text "$F42_POSITIVE_PLAN" 'RWX write trigger strings do not appear in the positive script or static'
+require_text "$F42_POSITIVE_PLAN" 'If file-backed executable mapping cannot be created safely in the Lab App'
+require_text "$F42_POSITIVE_PLAN" 'handle_mm_fault_positive_blocked'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_kind'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_route_flags'
 require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_ROUTE_MUTATING'
@@ -182,7 +202,8 @@ require_text "$VERIFICATION" 'current 29-phase ordered acceptance run passed'
 require_text "$FINAL_ROADMAP" 'Current status: F4.1 implemented and targeted gate-passed on Pixel 7'
 require_text "$FINAL_ROADMAP" 'F4.2 fault routing is in diagnostic/preflight after two'
 require_text "$FINAL_ROADMAP" 'syscall/prctl, and exit callbacks remain later F4 slices'
-require_text "$FINAL_ROADMAP" 'diagnostic gate, not a source expansion'
+require_text "$FINAL_ROADMAP" 'The next source checkpoint is F4.2a preflight, not callback migration.'
+require_text "$FINAL_ROADMAP" 'file-backed RX plus shadow-PTE access-flag clear'
 require_text "$VERIFICATION" 'F4 currently has the route-helper substrate and the first abort-routing slice.'
 require_text "$VERIFICATION" 'docs/wxshadow-f4-hook-routing-by-page-record-plan.md'
 require_text "$VERIFICATION" 'raw hook route status <token> <slot>'
@@ -758,4 +779,4 @@ require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records s
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' 'v1_contract=pass scripts=39 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=39 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
