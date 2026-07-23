@@ -40,6 +40,7 @@ REPLICA_PLAN=docs/wxshadow-replica-plan.md
 RAW_COMPAT=docs/pixel7-panther-raw-pte-compatibility.md
 S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
 FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
+F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -49,6 +50,7 @@ require_file "$REPLICA_PLAN"
 require_file "$RAW_COMPAT"
 require_file "$S4_PLAN"
 require_file "$FINAL_ROADMAP"
+require_file "$F2_PLAN"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -80,7 +82,11 @@ require_text "$FINAL_ROADMAP" 'Do not re-enable `shadow_xom`'
 require_text "$FINAL_ROADMAP" 'Do not add arbitrary process or arbitrary address support.'
 require_text "$FINAL_ROADMAP" 'raw_page_table_slots'
 require_text "$FINAL_ROADMAP" 'Slot 1 is intentionally inert until F2'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f2-two-page-lab-harness-plan.md'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_device.sh'
+require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
+require_text "$F2_PLAN" 'raw page table run <token>'
+require_text "$F2_PLAN" 'scripts/test_raw_page_table_device.sh'
 require_text "$VERIFICATION" 'raw_page_table_slots'
 require_text docs/kpm-compatibility-matrix.md 'Raw page-table skeleton'
 require_text "$CONTRACT" 'page_records'
@@ -88,6 +94,7 @@ require_text "$RAW_COMPAT" 'lab_two_pfn_pass'
 require_text "$RAW_COMPAT" 'kpm_locked_target_mm_writer=proven'
 require_text "$VERIFICATION" 'scripts/test_v1_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_device.sh'
+require_text "$VERIFICATION" 'scripts/test_raw_page_table_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_read_cycle_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_syscall_read_cycle_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_prctl_patch_records_device.sh'
@@ -135,6 +142,7 @@ scripts/test_s4_step_device.sh
 scripts/test_s4_raw_step_device.sh
 scripts/test_s4_raw_reg_device.sh
 scripts/test_raw_device.sh
+scripts/test_raw_page_table_device.sh
 scripts/test_raw_read_cycle_device.sh
 scripts/test_raw_syscall_read_cycle_device.sh
 scripts/test_raw_prctl_read_cycle_device.sh
@@ -183,6 +191,13 @@ require_text kpm/r0lab.c 'struct r0lab_raw_page_table'
 require_text kpm/r0lab.c 'r0lab_raw_page_slot_reset_locked'
 require_text kpm/r0lab.c 'r0lab_raw_selected_page_locked'
 require_text kpm/r0lab.c 'r0lab_raw_page_table_active_count_locked'
+require_text kpm/r0lab.c 'r0lab_raw_slot_arm'
+require_text kpm/r0lab.c 'raw slot arm '
+require_text kpm/r0lab.c 'raw_slot_ready slot=%u'
+require_text kpm/r0lab.c 'raw_slot_observed slot=%u'
+require_text kpm/r0lab.c 'raw_slot_inspect slot=%u'
+require_text kpm/r0lab.c 'raw_slot_patch_check_ok slot=%u'
+require_text kpm/r0lab.c 'r0lab_raw_abort_hook_users_locked'
 require_text kpm/r0lab.c 'raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u'
 require_text kpm/r0lab.c 'raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx'
 require_text kpm/r0lab.c 's4_abi ready=%s'
@@ -262,8 +277,8 @@ require_function_text kpm/r0lab.c r0lab_raw_release_patch_locked \
   'record->data = NULL;'
 require_function_text kpm/r0lab.c r0lab_raw_detach_one_patch_buffer_locked \
   'record->data = NULL;'
-require_function_text kpm/r0lab.c r0lab_raw_drain_patch_buffers \
-  'buffer = r0lab_raw_detach_one_patch_buffer_locked(&g_raw_page);'
+require_function_text kpm/r0lab.c r0lab_raw_drain_patch_buffers_page \
+  'buffer = r0lab_raw_detach_one_patch_buffer_locked(page);'
 require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
   '++g_raw_inflight;'
 require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
@@ -524,6 +539,7 @@ require_text scripts/test_raw_exit_hook_device.sh 'op=22 result=0'
 require_text scripts/test_v1_device.sh 'run_phase s4_step scripts/test_s4_step_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase s4_raw_step scripts/test_s4_raw_step_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase s4_raw_reg scripts/test_s4_raw_reg_device.sh'
+require_text scripts/test_v1_device.sh 'run_phase raw_page_table scripts/test_raw_page_table_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_read_cycle scripts/test_raw_read_cycle_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_syscall_read_cycle scripts/test_raw_syscall_read_cycle_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_prctl_read_cycle scripts/test_raw_prctl_read_cycle_device.sh'
@@ -546,6 +562,8 @@ require_text scripts/test_m4_device.sh 'record_backend=visible_clone record_stat
 require_text scripts/test_m4_device.sh 'source_perms=r-xp/r-xp/r-xp clone_perms=r-xp/r-xp/r-xp'
 require_text lab-app/src/main/cpp/labprobe.c 'm5 mode=s4-hold failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'm5 mode=s4-raw-step-hold failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table run ", 19)'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=exit-hook-hold failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw exit hook hold ", 19)'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "m5 s4-raw-step-hold ", 20)'
@@ -553,11 +571,15 @@ require_text kpm/r0lab.c 'r0lab_s4_monitor_worker'
 require_text kpm/r0lab.c 'r0lab_session_has_slots_locked'
 require_text kpm/r0lab.c 'r0lab_session_monitor_loop'
 require_text kpm/r0lab.c 'r0lab_raw_exit_mmap_before'
-require_text kpm/r0lab.c 'g_raw_page.clearing && !g_raw_page.target_exiting'
+require_text kpm/r0lab.c 'page->clearing && !page->target_exiting'
 require_text kpm/r0lab.c 'exit_hook=exit_mmap_observe'
 
 require_text scripts/test_raw_abort_read_cycle_device.sh 'raw mode=abort-read-cycle failures=0'
 require_text scripts/test_raw_abort_read_cycle_device.sh 'op=47 result=0'
 require_text scripts/test_v1_device.sh 'run_phase raw_abort_read_cycle scripts/test_raw_abort_read_cycle_device.sh'
+require_text scripts/test_raw_page_table_device.sh 'raw mode=page-table failures=0'
+require_text scripts/test_raw_page_table_device.sh 'slot0_activations=1 slot1_activations=1'
+require_text scripts/test_raw_page_table_device.sh 'patch_cross_page_rc=-22'
+require_text scripts/test_raw_page_table_device.sh 'raw_page_table_activations=2'
 
-printf '%s\n' 'v1_contract=pass scripts=35 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=36 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'

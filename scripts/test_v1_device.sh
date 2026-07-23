@@ -135,6 +135,7 @@ run_phase m5_exit_probe scripts/test_m5_exit_probe_device.sh
 run_phase m5_lifecycle scripts/test_m5_lifecycle_device.sh
 run_phase m5_faults scripts/test_m5_faults_device.sh
 run_phase raw_two_pfn scripts/test_raw_device.sh
+run_phase raw_page_table scripts/test_raw_page_table_device.sh
 run_phase raw_read_cycle scripts/test_raw_read_cycle_device.sh
 run_phase raw_syscall_read_cycle scripts/test_raw_syscall_read_cycle_device.sh
 run_phase raw_prctl_read_cycle scripts/test_raw_prctl_read_cycle_device.sh

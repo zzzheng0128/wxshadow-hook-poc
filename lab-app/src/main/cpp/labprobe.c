@@ -1185,6 +1185,385 @@ finish:
     return failures ? -1 : 0;
 }
 
+static long r0lab_raw_slot_wait_for(const char *verb, uint64_t token,
+                                    unsigned int slot, char *reply,
+                                    size_t reply_size)
+{
+    char command[96];
+    int attempt;
+
+    if (!reply || !reply_size) {
+        errno = EINVAL;
+        return -1;
+    }
+    snprintf(command, sizeof(command), "%s 0x%llx %u", verb,
+             (unsigned long long)token, slot);
+    for (attempt = 0; attempt < 1000; ++attempt) {
+        long rc;
+
+        memset(reply, 0, reply_size);
+        errno = 0;
+        rc = r0lab_control_raw(command, reply, reply_size);
+        if (rc >= 0)
+            return rc;
+        if (errno != EAGAIN)
+            return rc;
+        usleep(1000);
+    }
+    errno = EAGAIN;
+    return -1;
+}
+
+static void r0lab_raw_slot_clear(uint64_t token, unsigned int slot,
+                                 long *clear_rc, long *cleared_rc)
+{
+    char command[96];
+    char reply[128];
+
+    snprintf(command, sizeof(command), "raw slot clear 0x%llx %u",
+             (unsigned long long)token, slot);
+    memset(reply, 0, sizeof(reply));
+    errno = 0;
+    *clear_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (*clear_rc >= 0)
+        *cleared_rc = r0lab_raw_slot_wait_for("raw slot cleared", token,
+                                              slot, reply, sizeof(reply));
+}
+
+static int r0lab_raw_parse_slot_generation(const char *reply,
+                                           const char *prefix,
+                                           unsigned int expected_slot,
+                                           uint64_t *generation)
+{
+    char format[96];
+    unsigned int slot = 0;
+    unsigned long long page = 0;
+    unsigned long long parsed_generation = 0;
+
+    if (!reply || !prefix || !generation)
+        return -1;
+    snprintf(format, sizeof(format), "%s slot=%%u page=%%llx generation=%%llu",
+             prefix);
+    if (sscanf(reply, format, &slot, &page, &parsed_generation) != 3 ||
+        slot != expected_slot)
+        return -1;
+    *generation = parsed_generation;
+    return 0;
+}
+
+static int r0lab_raw_parse_slot_observed(const char *reply,
+                                         unsigned int expected_slot,
+                                         unsigned int *activations,
+                                         unsigned long *state)
+{
+    unsigned int slot = 0;
+
+    if (!reply || !activations || !state)
+        return -1;
+    if (sscanf(reply, "raw_slot_observed slot=%u activations=%u state=%lu",
+               &slot, activations, state) != 3 ||
+        slot != expected_slot)
+        return -1;
+    return 0;
+}
+
+static long r0lab_control_raw_errno_value(const char *command, char *reply,
+                                          size_t reply_size)
+{
+    long rc;
+    int saved_errno;
+
+    errno = 0;
+    rc = r0lab_control_raw(command, reply, reply_size);
+    saved_errno = errno;
+    if (rc < 0 && saved_errno)
+        return -saved_errno;
+    return rc;
+}
+
+static int r0lab_raw_page_table_run(const char *token_text, char *output,
+                                    size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint32_t *code0;
+    uint32_t *code1;
+    volatile uint32_t *readable0;
+    volatile uint32_t *readable1;
+    uint64_t token;
+    uint64_t generation0 = 0;
+    uint64_t generation1 = 0;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    size_t page_size;
+    char command[160];
+    char reply[512] = {0};
+    char ready0[256] = {0};
+    char ready1[256] = {0};
+    char observed0[256] = {0};
+    char observed1[256] = {0};
+    char inspect0[512] = {0};
+    char inspect1[512] = {0};
+    unsigned int slot0_activations = 0;
+    unsigned int slot1_activations = 0;
+    unsigned long slot0_state = 0;
+    unsigned long slot1_state = 0;
+    uint32_t word0_before = 0;
+    uint32_t word1_before = 0;
+    uint32_t word0_during = 0;
+    uint32_t word1_during = 0;
+    uint32_t word0_after_exec = 0;
+    uint32_t word1_after_exec = 0;
+    uint32_t word0_after_clear0 = 0;
+    uint32_t word1_after_clear0 = 0;
+    uint32_t word0_after_all = 0;
+    uint32_t word1_after_all = 0;
+    long arm0_rc = -1;
+    long arm1_rc = -1;
+    long ready0_rc = -1;
+    long ready1_rc = -1;
+    long observed0_rc = -1;
+    long observed1_rc = -1;
+    long inspect0_rc = -1;
+    long inspect1_rc = -1;
+    long clear0_rc = -1;
+    long cleared0_rc = -1;
+    long clear1_rc = -1;
+    long cleared1_rc = -1;
+    long patch0_rc = -1;
+    long patch1_rc = -1;
+    long patch_cross_page_rc = 0;
+    long stale_slot_rc = 0;
+    long stale_generation_rc = 0;
+    int normal0 = -1;
+    int normal1 = -1;
+    int shadow0 = -1;
+    int shadow1 = -1;
+    int after_clear0_slot0 = -1;
+    int after_clear0_slot1 = -1;
+    int after_clear_all_slot0 = -1;
+    int after_clear_all_slot1 = -1;
+    int handler_installed = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size, "rc=-22 error=invalid raw page-table token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    page0 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page1 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page0 == MAP_FAILED || page1 == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw page-table mmap errno=%d", errno);
+        if (page0 != MAP_FAILED)
+            munmap(page0, page_size);
+        if (page1 != MAP_FAILED)
+            munmap(page1, page_size);
+        return -1;
+    }
+    code0 = page0;
+    code1 = page1;
+    code0[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code0[1] = R0LAB_M3_CODE_RET;
+    code1[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code1[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page0, (char *)page0 + page_size);
+    __builtin___clear_cache((char *)page1, (char *)page1 + page_size);
+    if (mprotect(page0, page_size, PROT_READ | PROT_EXEC) ||
+        mprotect(page1, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw page-table mprotect errno=%d", errno);
+        munmap(page1, page_size);
+        munmap(page0, page_size);
+        return -1;
+    }
+
+    readable0 = (volatile uint32_t *)page0;
+    readable1 = (volatile uint32_t *)page1;
+    word0_before = readable0[0];
+    word1_before = readable1[0];
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0);
+    arm0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm0_rc < 0)
+        goto finish;
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page1);
+    arm1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm1_rc < 0)
+        goto clear_all;
+
+    ready0_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 0,
+                                        ready0, sizeof(ready0));
+    ready1_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 1,
+                                        ready1, sizeof(ready1));
+    if (ready0_rc < 0 || ready1_rc < 0 ||
+        r0lab_raw_parse_slot_generation(ready0, "raw_slot_ready", 0,
+                                        &generation0) ||
+        r0lab_raw_parse_slot_generation(ready1, "raw_slot_ready", 1,
+                                        &generation1))
+        goto clear_all;
+    word0_during = readable0[0];
+    word1_during = readable1[0];
+
+    snprintf(command, sizeof(command),
+             "raw slot patch check 0x%llx 0 0x%llx 0 4",
+             (unsigned long long)token,
+             (unsigned long long)generation0);
+    patch0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    snprintf(command, sizeof(command),
+             "raw slot patch check 0x%llx 1 0x%llx 0 4",
+             (unsigned long long)token,
+             (unsigned long long)generation1);
+    patch1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    snprintf(command, sizeof(command),
+             "raw slot patch check 0x%llx 0 0x%llx %u 8",
+             (unsigned long long)token,
+             (unsigned long long)generation0, R0LAB_M3_PAGE_SIZE - 4U);
+    patch_cross_page_rc =
+        r0lab_control_raw_errno_value(command, reply, sizeof(reply));
+    snprintf(command, sizeof(command),
+             "raw slot patch check 0x%llx 2 0x%llx 0 4",
+             (unsigned long long)token,
+             (unsigned long long)generation0);
+    stale_slot_rc = r0lab_control_raw_errno_value(command, reply,
+                                                  sizeof(reply));
+    snprintf(command, sizeof(command),
+             "raw slot patch check 0x%llx 0 0x%llx 0 4",
+             (unsigned long long)token,
+             (unsigned long long)(generation0 + 1ULL));
+    stale_generation_rc =
+        r0lab_control_raw_errno_value(command, reply, sizeof(reply));
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page_size = page_size;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear_all;
+    handler_installed = 1;
+
+    g_r0lab_raw_signal_page = page0;
+    shadow0 = ((int (*)(void))page0)();
+    word0_after_exec = readable0[0];
+    g_r0lab_raw_signal_page = page1;
+    shadow1 = ((int (*)(void))page1)();
+    word1_after_exec = readable1[0];
+
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 0",
+             (unsigned long long)token);
+    observed0_rc = r0lab_control_raw(command, observed0, sizeof(observed0));
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 1",
+             (unsigned long long)token);
+    observed1_rc = r0lab_control_raw(command, observed1, sizeof(observed1));
+    if (observed0_rc < 0 || observed1_rc < 0 ||
+        r0lab_raw_parse_slot_observed(observed0, 0, &slot0_activations,
+                                      &slot0_state) ||
+        r0lab_raw_parse_slot_observed(observed1, 1, &slot1_activations,
+                                      &slot1_state))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw slot inspect 0x%llx 0",
+             (unsigned long long)token);
+    inspect0_rc = r0lab_control_raw(command, inspect0, sizeof(inspect0));
+    snprintf(command, sizeof(command), "raw slot inspect 0x%llx 1",
+             (unsigned long long)token);
+    inspect1_rc = r0lab_control_raw(command, inspect1, sizeof(inspect1));
+    if (inspect0_rc < 0 || inspect1_rc < 0 ||
+        !strstr(inspect0, "active_kind=shadow_rx") ||
+        !strstr(inspect1, "active_kind=shadow_rx") ||
+        !strstr(inspect0, "record_state=shadow_active") ||
+        !strstr(inspect1, "record_state=shadow_active"))
+        ++failures;
+
+    r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+    if (cleared0_rc >= 0) {
+        g_r0lab_raw_signal_page = page0;
+        after_clear0_slot0 = ((int (*)(void))page0)();
+        word0_after_clear0 = readable0[0];
+        g_r0lab_raw_signal_page = page1;
+        after_clear0_slot1 = ((int (*)(void))page1)();
+        word1_after_clear0 = readable1[0];
+    }
+
+clear_all:
+    if (cleared0_rc < 0 && arm0_rc >= 0)
+        r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+    if (arm1_rc >= 0)
+        r0lab_raw_slot_clear(token, 1, &clear1_rc, &cleared1_rc);
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    if (cleared0_rc >= 0 && cleared1_rc >= 0) {
+        word0_after_all = readable0[0];
+        word1_after_all = readable1[0];
+        after_clear_all_slot0 = ((int (*)(void))page0)();
+        after_clear_all_slot1 = ((int (*)(void))page1)();
+    }
+
+finish:
+    if (normal0 != 42 || normal1 != 42 || shadow0 != 99 || shadow1 != 99 ||
+        after_clear0_slot0 != 42 || after_clear0_slot1 != 99 ||
+        after_clear_all_slot0 != 42 || after_clear_all_slot1 != 42 ||
+        word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word0_during != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_during != R0LAB_M3_CODE_MOV_W0_42 ||
+        word0_after_exec != R0LAB_M4_CODE_MOV_W0_99 ||
+        word1_after_exec != R0LAB_M4_CODE_MOV_W0_99 ||
+        word0_after_clear0 != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_after_clear0 != R0LAB_M4_CODE_MOV_W0_99 ||
+        word0_after_all != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_after_all != R0LAB_M3_CODE_MOV_W0_42 ||
+        arm0_rc < 0 || arm1_rc < 0 || ready0_rc < 0 || ready1_rc < 0 ||
+        observed0_rc < 0 || observed1_rc < 0 || inspect0_rc < 0 ||
+        inspect1_rc < 0 || clear0_rc < 0 || cleared0_rc < 0 ||
+        clear1_rc < 0 || cleared1_rc < 0 || patch0_rc < 0 ||
+        patch1_rc < 0 || patch_cross_page_rc != -EINVAL ||
+        stale_slot_rc != -EINVAL || stale_generation_rc != -EINVAL ||
+        slot0_activations != 1 || slot1_activations != 1 ||
+        slot0_state != 3 || slot1_state != 3 ||
+        g_r0lab_raw_handler_faults)
+        ++failures;
+
+    snprintf(output, output_size,
+             "raw mode=page-table failures=%d normal0=%d normal1=%d shadow0=%d shadow1=%d after_clear0_slot0=%d after_clear0_slot1=%d after_clear_all_slot0=%d after_clear_all_slot1=%d slot0_activations=%u slot1_activations=%u slot0_state=%lu slot1_state=%lu patch0_rc=%ld patch1_rc=%ld patch_cross_page_rc=%ld stale_slot_rc=%ld stale_generation_rc=%ld arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld clear_rc=%ld/%ld cleared_rc=%ld/%ld handler_faults=%d words0=%08x/%08x/%08x/%08x/%08x words1=%08x/%08x/%08x/%08x/%08x ready0=\"%s\" ready1=\"%s\" inspect0=\"%s\" inspect1=\"%s\"",
+             failures, normal0, normal1, shadow0, shadow1,
+             after_clear0_slot0, after_clear0_slot1, after_clear_all_slot0,
+             after_clear_all_slot1, slot0_activations, slot1_activations,
+             slot0_state, slot1_state, patch0_rc, patch1_rc,
+             patch_cross_page_rc, stale_slot_rc, stale_generation_rc,
+             arm0_rc, arm1_rc, ready0_rc, ready1_rc, observed0_rc,
+             observed1_rc, inspect0_rc, inspect1_rc, clear0_rc, clear1_rc,
+             cleared0_rc, cleared1_rc, (int)g_r0lab_raw_handler_faults,
+             word0_before, word0_during, word0_after_exec,
+             word0_after_clear0, word0_after_all, word1_before, word1_during,
+             word1_after_exec, word1_after_clear0, word1_after_all, ready0,
+             ready1, inspect0, inspect1);
+    munmap(page1, page_size);
+    munmap(page0, page_size);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_raw_gup_run(const char *token_text, char *output,
                              size_t output_size)
 {
@@ -6024,6 +6403,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw run ", 8)) {
         r0lab_raw_run(args + 8, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw page table run ", 19)) {
+        r0lab_raw_page_table_run(args + 19, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
