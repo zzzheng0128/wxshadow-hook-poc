@@ -92,7 +92,7 @@ require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
 require_text "$F2_PLAN" 'scripts/test_raw_page_table_device.sh'
 require_text "$F3_PLAN" 'wxshadow F3 Page-Local Patch Records Plan'
-require_text "$F3_PLAN" 'Status: planned'
+require_text "$F3_PLAN" 'Status: implemented'
 require_text "$F3_PLAN" 'plan-only checkpoint'
 require_text "$F3_PLAN" 'raw slot patch byte <token> <slot> <generation> <offset> <value>'
 require_text "$F3_PLAN" 'raw slot patch word <token> <slot> <generation> <offset> <word>'
@@ -105,6 +105,10 @@ require_text "$F3_PLAN" 'slot0_patch_record_slots=1024'
 require_text "$F3_PLAN" 'slot1_after_slot0_capacity_value=88'
 require_text "$F3_PLAN" 'scripts/test_raw_prctl_patch_records_device.sh'
 require_text "$F3_PLAN" 'scripts/test_raw_page_table_device.sh'
+require_text "$F3_PLAN" 'build/evidence/raw-page-table-patch-records-20260724-003931.log'
+require_text "$FINAL_ROADMAP" 'Current status: implemented and gate-passed on Pixel 7'
+require_text "$VERIFICATION" 'current 29-phase ordered acceptance run passed'
+require_text docs/kpm-compatibility-matrix.md 'Two-slot page-local patch records'
 require_text "$VERIFICATION" 'raw_page_table_slots'
 require_text docs/kpm-compatibility-matrix.md 'Raw page-table skeleton'
 require_text "$CONTRACT" 'page_records'
@@ -161,6 +165,7 @@ scripts/test_s4_raw_step_device.sh
 scripts/test_s4_raw_reg_device.sh
 scripts/test_raw_device.sh
 scripts/test_raw_page_table_device.sh
+scripts/test_raw_page_table_patch_records_device.sh
 scripts/test_raw_read_cycle_device.sh
 scripts/test_raw_syscall_read_cycle_device.sh
 scripts/test_raw_prctl_read_cycle_device.sh
@@ -283,8 +288,9 @@ require_text kpm/r0lab.c 'operation == R0LAB_PRCTL_OP_PATCH_WORD'
 require_text kpm/r0lab.c 'operation == R0LAB_PRCTL_OP_RELEASE_PATCH'
 require_text kpm/r0lab.c 'operation == R0LAB_PRCTL_OP_PATCH_RANGE'
 require_text kpm/r0lab.c 'operation == R0LAB_PRCTL_OP_RELEASE_RANGE'
+require_text kpm/r0lab.c 'uint16_t patch_rebuild_order[R0LAB_PATCH_RECORD_CAPACITY];'
 require_function_text kpm/r0lab.c r0lab_raw_rebuild_patch_range \
-  'uint16_t *order = g_raw_patch_rebuild_order;'
+  'order = page->patch_rebuild_order;'
 require_function_text kpm/r0lab.c r0lab_raw_rebuild_patch_range \
   'g_sync_icache_aliases((unsigned long)page->raw.shadow_kaddr + offset,'
 require_function_text kpm/r0lab.c r0lab_raw_rebuild_patch_range \
@@ -297,6 +303,21 @@ require_function_text kpm/r0lab.c r0lab_raw_detach_one_patch_buffer_locked \
   'record->data = NULL;'
 require_function_text kpm/r0lab.c r0lab_raw_drain_patch_buffers_page \
   'buffer = r0lab_raw_detach_one_patch_buffer_locked(page);'
+require_text kpm/r0lab.c 'raw slot patch byte '
+require_text kpm/r0lab.c 'raw slot patch word '
+require_text kpm/r0lab.c 'raw slot patch release '
+require_text kpm/r0lab.c 'raw slot patch status '
+require_function_text kpm/r0lab.c r0lab_raw_slot_patch_admit_locked \
+  'page->transitioning = true;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_patch_apply \
+  'r0lab_raw_upsert_patch_locked('
+require_function_text kpm/r0lab.c r0lab_raw_slot_patch_apply \
+  'r0lab_raw_rebuild_patch_range(page, range_offset,'
+require_function_text kpm/r0lab.c r0lab_raw_slot_patch_release \
+  'r0lab_raw_release_patch_locked('
+require_text kpm/r0lab.c 'raw_slot_patch_status slot=%u page=%llx generation=%llu state=%lu patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u patch_scope=page_slot_ranges'
+require_text kpm/r0lab.c 'raw_slot_patch_ok slot=%u generation=%llu offset=%llu length=%u address=%llx patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u patch_scope=page_slot_ranges'
+require_text kpm/r0lab.c 'raw_slot_patch_release_ok slot=%u generation=%llu offset=%llu address=%llx patch_record_slots=%u patch_active_count=%u patch_dirty_bytes=%u patch_version=%llu patch_capacity=%u patch_scope=page_slot_ranges'
 require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
   '++g_raw_inflight;'
 require_function_text kpm/r0lab.c r0lab_raw_prctl_before \
@@ -599,5 +620,17 @@ require_text scripts/test_raw_page_table_device.sh 'raw mode=page-table failures
 require_text scripts/test_raw_page_table_device.sh 'slot0_activations=1 slot1_activations=1'
 require_text scripts/test_raw_page_table_device.sh 'patch_cross_page_rc=-22'
 require_text scripts/test_raw_page_table_device.sh 'raw_page_table_activations=2'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'raw mode=page-table-patch-records failures=0'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'slot0_patch_value=77 slot1_patch_value=88'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'after_release0_slot0=99 after_release0_slot1=88'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'slot0_patch_record_slots=1024 slot0_patch_active_count=1024'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'slot0_capacity_overflow_errno=28'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'slot1_patch_record_slots=1 slot1_patch_active_count=1'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'slot1_after_slot0_capacity_value=88'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'final_original_slot0=42 final_original_slot1=42'
+require_text scripts/test_raw_page_table_patch_records_device.sh 'raw_page_table_patch_records=pass'
+require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records scripts/test_raw_page_table_patch_records_device.sh'
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' 'v1_contract=pass scripts=36 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness f3_plan=page_local_patch_records_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=37 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
