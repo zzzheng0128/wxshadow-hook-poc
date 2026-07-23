@@ -46,6 +46,7 @@ F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
 F42_POSITIVE_PLAN=docs/wxshadow-f4.2-positive-trigger-plan.md
 F43_GUP_PLAN=docs/wxshadow-f4.3-gup-hook-routing-plan.md
 F44_FORK_PLAN=docs/wxshadow-f4.4-fork-hook-routing-plan.md
+F45_SYSCALL_PRCTL_PLAN=docs/wxshadow-f4.5-syscall-prctl-routing-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -62,6 +63,7 @@ require_file "$F4_PLAN"
 require_file "$F42_POSITIVE_PLAN"
 require_file "$F43_GUP_PLAN"
 require_file "$F44_FORK_PLAN"
+require_file "$F45_SYSCALL_PRCTL_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
@@ -108,6 +110,7 @@ require_text "$FINAL_ROADMAP" 'scripts/test_raw_hook_routing_device.sh'
 require_text "$FINAL_ROADMAP" 'Completed F4.4 gate'
 require_text "$FINAL_ROADMAP" 'build/evidence/raw-fork-hook-routing-20260724-031442.log'
 require_text "$FINAL_ROADMAP" 'status_source=cross_clear'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.5-syscall-prctl-routing-plan.md'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_fork_hook_routing_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'wxshadow Planned Development Sequence'
 require_text "$DEVELOPMENT_SEQUENCE" 'This document turns the roadmap into a fixed development queue.'
@@ -126,6 +129,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_fault_hook_positive_prefl
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.2-positive-trigger-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.3-gup-hook-routing-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.4-fork-hook-routing-plan.md'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.5-syscall-prctl-routing-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.2a verification ladder'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_gup_hook_routing_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_fork_hook_device.sh'
@@ -138,6 +142,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'D1 source scaffold has static/build eviden
 require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-fork-hook-20260724-031422.log'
 require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-fork-hook-routing-20260724-031442.log'
 require_text "$DEVELOPMENT_SEQUENCE" 'The next source checkpoint is'
+require_text "$DEVELOPMENT_SEQUENCE" 'D0 plan gate is active.'
+require_text "$DEVELOPMENT_SEQUENCE" 'D1-D3 migrate syscall/getpid read-cycle'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
 require_text "$F2_PLAN" 'scripts/test_raw_page_table_device.sh'
@@ -254,6 +260,22 @@ require_text "$F44_FORK_PLAN" 'F4.4-D2 Regression Triage Plan'
 require_text "$F44_FORK_PLAN" 'raw slot fork hook status <token> 0'
 require_text "$F44_FORK_PLAN" 'Do not change `dup_mmap` callbacks for this case.'
 require_text "$F44_FORK_PLAN" 'Partial pause mismatch'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'wxshadow F4.5 Syscall And Prctl Routing Plan'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'Status: D0 plan gate. Source migration is not started.'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D0 plan lock'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D1 syscall source scaffold'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D2 syscall slot-0 regression'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D3 syscall two-slot routing'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D4 prctl source scaffold'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D5 prctl slot-0 regression'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D6 prctl two-slot routing'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'F4.5-D7 commit/tag'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'Legacy `raw syscall ... <token>` and `raw prctl ... <token>` commands remain'
+require_text "$F45_SYSCALL_PRCTL_PLAN" '<token> <slot> <generation>'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'Patch-record capacity remains `1024` per page record.'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_syscall_read_cycle_device.sh'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'scripts/test_raw_prctl_patch_records_device.sh'
+require_text "$F45_SYSCALL_PRCTL_PLAN" 'Stale generation accepted'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_kind'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_route_flags'
 require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_ROUTE_MUTATING'
@@ -276,10 +298,10 @@ require_text kpm/r0lab.c 'migration=callbacks_slot0_compat'
 require_text kpm/r0lab.c 'raw hook route status '
 require_text "$FINAL_ROADMAP" 'Current status: implemented and gate-passed on Pixel 7'
 require_text "$VERIFICATION" 'current 29-phase ordered acceptance run passed'
-require_text "$FINAL_ROADMAP" 'Current status: F4.1 abort routing and F4.3 GUP routing are implemented'
+require_text "$FINAL_ROADMAP" 'Current status: F4.1 abort routing, F4.3 GUP routing, and F4.4 fork routing are'
 require_text "$FINAL_ROADMAP" 'F4.2 fault routing is diagnostic/observe-only'
 require_text "$FINAL_ROADMAP" 'handle_mm_fault_positive_blocked'
-require_text "$FINAL_ROADMAP" 'Syscall/prctl and exit callbacks remain locked'
+require_text "$FINAL_ROADMAP" 'F4.5 syscall/prctl routing is the'
 require_text "$FINAL_ROADMAP" 'The active source checkpoint is F4.2a preflight, not callback migration.'
 require_text "$FINAL_ROADMAP" 'The checkpoint follows the D0-D4 ladder'
 require_text "$FINAL_ROADMAP" 'file-backed RX plus shadow-PTE access-flag clear'
