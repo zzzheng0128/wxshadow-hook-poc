@@ -49,6 +49,7 @@ F44_FORK_PLAN=docs/wxshadow-f4.4-fork-hook-routing-plan.md
 F45_SYSCALL_PRCTL_PLAN=docs/wxshadow-f4.5-syscall-prctl-routing-plan.md
 F45_PRCTL_CHECKPOINT=docs/wxshadow-f4.5-prctl-routing-source-checkpoint.md
 F46_EXIT_PLAN=docs/wxshadow-f4.6-exit-hook-routing-plan.md
+F46_PANIC_DIAGNOSIS=docs/wxshadow-f4.6-panic-diagnosis.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -68,6 +69,7 @@ require_file "$F44_FORK_PLAN"
 require_file "$F45_SYSCALL_PRCTL_PLAN"
 require_file "$F45_PRCTL_CHECKPOINT"
 require_file "$F46_EXIT_PLAN"
+require_file "$F46_PANIC_DIAGNOSIS"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
@@ -317,12 +319,19 @@ require_text "$F45_PRCTL_CHECKPOINT" 'raw_slot_prctl_hook_ready slot=%u generati
 require_text "$F45_PRCTL_CHECKPOINT" 'raw mode=prctl-routing failures=0 trigger=prctl_magic route=selected_slot,address page_record_routed=1'
 require_text "$F45_PRCTL_CHECKPOINT" 'scripts/test_raw_prctl_hook_routing_device.sh'
 require_text "$F46_EXIT_PLAN" 'wxshadow F4.6 Exit Hook Routing Plan'
-require_text "$F46_EXIT_PLAN" 'Status: plan checkpoint. Source implementation is not started.'
+require_text "$F46_EXIT_PLAN" 'Status: D2 recovered; D3 is next.'
+require_text "$F46_EXIT_PLAN" 'docs/wxshadow-f4.6-panic-diagnosis.md'
 require_text "$F46_EXIT_PLAN" 'hook callbacks may mark and record matching page records,'
 require_text "$F46_EXIT_PLAN" 'but they must not directly free page memory'
+require_text "$F46_EXIT_PLAN" 'D2 Recovery Record'
+require_text "$F46_EXIT_PLAN" 'build/evidence/raw-exit-hook-20260724-043815.log'
+require_text "$F46_EXIT_PLAN" 'Completed Recovery Plan'
+require_text "$F46_EXIT_PLAN" 'R1 source edit is an isolation slice'
+require_text "$F46_EXIT_PLAN" 'defer the new target-exiting marker'
 require_text "$F46_EXIT_PLAN" 'F4.6-D0 plan lock'
 require_text "$F46_EXIT_PLAN" 'F4.6-D1 KPM source scaffold'
 require_text "$F46_EXIT_PLAN" 'F4.6-D2 slot-0 regression'
+require_text "$F46_EXIT_PLAN" 'F4.6-R0/R1 blocker recovery'
 require_text "$F46_EXIT_PLAN" 'F4.6-D3 Lab two-slot hold source'
 require_text "$F46_EXIT_PLAN" 'F4.6-D4 two-slot owner-exit smoke'
 require_text "$F46_EXIT_PLAN" 'F4.6-D5 lifecycle regression'
@@ -335,6 +344,45 @@ require_text "$F46_EXIT_PLAN" 'scripts/test_raw_exit_hook_routing_device.sh'
 require_text "$F46_EXIT_PLAN" 'target_mm_scoped=1 page_record_routed=1 observe_only=0 cleanup=monitor'
 require_text "$F46_EXIT_PLAN" 'verify at least two `op=34 result=0` exit-mmap hit events'
 require_text "$F46_EXIT_PLAN" 'Singleton residue'
+require_text "$F46_PANIC_DIAGNOSIS" 'wxshadow F4.6 Panic Diagnosis'
+require_text "$F46_PANIC_DIAGNOSIS" 'Status: D2 recovery complete.'
+require_text "$F46_PANIC_DIAGNOSIS" 'D2 slot-0 compatibility blocker'
+require_text "$F46_PANIC_DIAGNOSIS" 'raw exit hook clear 0x729206'
+require_text "$F46_PANIC_DIAGNOSIS" 'raw clear 0x729206'
+require_text "$F46_PANIC_DIAGNOSIS" 'page_lock_anon_vma_read'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1 Planned Source Slice'
+require_text "$F46_PANIC_DIAGNOSIS" 'Candidate deltas to isolate'
+require_text "$F46_PANIC_DIAGNOSIS" 'direct slot-0 legacy wrappers'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1a Result'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1b Planned Source Slice'
+require_text "$F46_PANIC_DIAGNOSIS" 'full legacy slot-0 exit-hook parity'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1b Device Rerun Result'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1c Planned Harness Slice'
+require_text "$F46_PANIC_DIAGNOSIS" 'command_timeout command=<requested command>'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1c Device Rerun Result'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1d Planned Harness Slice'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1d Device Rerun Result'
+require_text "$F46_PANIC_DIAGNOSIS" 'warn_count` stayed `2 -> 2`'
+require_text "$F46_PANIC_DIAGNOSIS" 'LC_ALL=C grep'
+require_text "$F46_PANIC_DIAGNOSIS" 'R1 stop rule'
+require_text "$F46_PANIC_DIAGNOSIS" 'F4.6-R0'
+require_text "$F46_PANIC_DIAGNOSIS" 'F4.6-R1'
+require_text "$F46_PANIC_DIAGNOSIS" 'Do not run D4 before D3 exists and builds.'
+require_text "$DEVELOPMENT_SEQUENCE" 'Active Slice Board'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-R1 slot-0 compatibility isolation'
+require_text "$DEVELOPMENT_SEQUENCE" 'R1 is not a feature slice'
+require_text "$DEVELOPMENT_SEQUENCE" 'Planning-First Development Gate'
+require_text "$DEVELOPMENT_SEQUENCE" 'Finding missing behavior in source review is not enough to edit source'
+require_text "$DEVELOPMENT_SEQUENCE" 'If the first targeted smoke fails, update the diagnosis'
+require_text "$DEVELOPMENT_SEQUENCE" 'R1b was the only open KPM source slice'
+require_text "$DEVELOPMENT_SEQUENCE" 'The current source slice is'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D3 Lab-only two-slot hold source.'
+require_text "$DEVELOPMENT_SEQUENCE" 'Passed through R1d'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D3 Lab two-slot hold source | Current'
+require_text scripts/test_raw_exit_hook_device.sh 'command_timeout command=%s wait_ms=10000'
+require_text scripts/test_raw_exit_hook_device.sh '*"command=$command"*'
+require_text scripts/test_raw_exit_hook_device.sh 'LC_ALL=C grep -F -- "$needle"'
+require_text scripts/test_raw_exit_hook_device.sh 'LC_ALL=C grep -c'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_kind'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_route_flags'
 require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_ROUTE_MUTATING'

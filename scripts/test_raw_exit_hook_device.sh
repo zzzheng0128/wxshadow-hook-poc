@@ -32,15 +32,30 @@ supercmd() {
 }
 
 app_logs() {
-  adb_device logcat -d -v brief -s R0Lab:I '*:S' | tr -d '\r'
+  adb_device logcat -d -v brief -s R0Lab:I '*:S' | LC_ALL=C tr -d '\r'
 }
 
 run_app_command() {
   command=$1
+  output=''
+  attempt=0
   adb_device logcat -c >/dev/null
   adb_device shell "am start -W -n $ACTIVITY --es r0lab_command '$command'" >/dev/null
-  sleep 1
-  app_logs
+  while [ "$attempt" -lt 40 ]; do
+    sleep 0.25
+    output=$(app_logs || true)
+    case "$output" in
+      *"command=$command"*)
+        printf '%s\n' "$output"
+        return 0
+        ;;
+    esac
+    attempt=$((attempt + 1))
+  done
+  if [ -n "$output" ]; then
+    printf '%s\n' "$output"
+  fi
+  printf 'command_timeout command=%s wait_ms=10000\n' "$command"
 }
 
 prepare_worker_shutdown() {
@@ -70,7 +85,7 @@ fail() {
 require_contains() {
   haystack=$1
   needle=$2
-  printf '%s\n' "$haystack" | grep -F -- "$needle" >/dev/null ||
+  printf '%s\n' "$haystack" | LC_ALL=C grep -F -- "$needle" >/dev/null ||
     fail "expected output not found: $needle"
 }
 
@@ -199,11 +214,11 @@ require_contains "$STATUS_AFTER" 'page_records=0'
 
 EVENT_OUTPUT=$(run_app_command "events $TOKEN")
 printf '%s\n' "$EVENT_OUTPUT" >> "$EVIDENCE"
-EXIT_HOOK_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=34 result=0' || true)
-TARGET_EXIT_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=18 result=0' || true)
-RAW_CLEAR_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=22 result=0' || true)
-CLOSE_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=5 result=0' || true)
-SUMMARY_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=7 result=0' || true)
+EXIT_HOOK_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | LC_ALL=C grep -c 'op=34 result=0' || true)
+TARGET_EXIT_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | LC_ALL=C grep -c 'op=18 result=0' || true)
+RAW_CLEAR_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | LC_ALL=C grep -c 'op=22 result=0' || true)
+CLOSE_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | LC_ALL=C grep -c 'op=5 result=0' || true)
+SUMMARY_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | LC_ALL=C grep -c 'op=7 result=0' || true)
 [ "$EXIT_HOOK_COUNT" -ge 1 ] || fail "expected at least one exit_mmap hook event, got $EXIT_HOOK_COUNT"
 [ "$TARGET_EXIT_COUNT" -ge 1 ] || fail "expected target-exit event, got $TARGET_EXIT_COUNT"
 [ "$RAW_CLEAR_COUNT" -ge 1 ] || fail "expected raw-clear event, got $RAW_CLEAR_COUNT"
