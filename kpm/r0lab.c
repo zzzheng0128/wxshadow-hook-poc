@@ -7304,6 +7304,73 @@ static long r0lab_raw_fault_hook_status(uint64_t token, char __user *out_msg,
         token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
 }
 
+static long r0lab_raw_fault_af_clear(uint64_t token, uint16_t slot_id,
+                                     uint64_t generation,
+                                     char __user *out_msg, int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page = NULL;
+    struct mm_struct *current_mm = NULL;
+    unsigned long flags;
+    unsigned long address = 0;
+    unsigned long state = R0LAB_RAW_EMPTY;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
+    current_mm = g_get_task_mm ? g_get_task_mm(current) : NULL;
+    if (!current_mm) {
+        result = R0LAB_ESRCH;
+        goto record;
+    }
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || page->reserving || page->clearing ||
+        page->transitioning || page->generation != generation ||
+        page->raw.mm != current_mm ||
+        page->raw.state != R0LAB_RAW_SHADOW_RX ||
+        !page->raw.shadow_rx_pte || !page->raw.shadow_pfn ||
+        page->raw.gup_hide_active || page->raw.fork_hide_active ||
+        page->raw.read_cycle_active || !page->fault_hook_installed ||
+        g_session.owner_tgid != r0lab_current_tgid()) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    page->transitioning = true;
+    address = page->raw.address;
+    r0lab_unlock(flags);
+
+    result = r0lab_raw_clear_shadow_access_flag(&page->raw);
+
+    flags = r0lab_lock();
+    if (page->generation == generation) {
+        state = page->raw.state;
+        page->transitioning = false;
+    } else {
+        result = result ? result : R0LAB_EAGAIN;
+    }
+    r0lab_unlock(flags);
+
+record:
+    if (current_mm)
+        g_mmput(current_mm);
+    if (result) {
+        r0lab_record(R0LAB_EVENT_REJECT, result);
+        return result;
+    }
+    snprintf(reply, sizeof(reply),
+             "raw_slot_fault_af_cleared slot=%u generation=%llu page=%llx result=0 pte_af=cleared state=%lu target_mm_scoped=1 page_record_routed=1 pte_switch=0 source=file_backed_rx\n",
+             (unsigned int)slot_id, (unsigned long long)generation,
+             (uint64_t)address, state);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
 static const char *r0lab_raw_abort_probe_source_name(uint8_t source)
 {
     if (source == R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION)
@@ -9581,6 +9648,15 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             return R0LAB_EINVAL;
         return r0lab_raw_fault_hook_status_common(token, slot_id, out_msg,
                                                   outlen, false);
+    }
+    if (!strncmp(args, "raw slot fault af clear ", 24)) {
+        value = args + 24;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_fault_af_clear(token, slot_id, generation,
+                                        out_msg, outlen);
     }
     if (!strncmp(args, "raw slot fault hook clear ", 26)) {
         value = args + 26;

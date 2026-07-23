@@ -53,6 +53,7 @@ int r0lab_raw_shadow_pfn_from_kaddr(struct r0lab_raw_page *page);
 int r0lab_raw_arm_source_uxn(struct r0lab_raw_page *page);
 int r0lab_raw_arm_source_uxn_only(struct r0lab_raw_page *page);
 int r0lab_raw_activate_shadow(struct r0lab_raw_page *page);
+int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page);
 int r0lab_raw_begin_stepping(struct r0lab_raw_page *page);
 int r0lab_raw_finish_stepping(struct r0lab_raw_page *page);
 int r0lab_raw_begin_read_cycle(struct r0lab_raw_page *page);

@@ -311,6 +311,55 @@ out_unlock_mmap:
     return result;
 }
 
+int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page)
+{
+    struct mm_struct *mm;
+    struct vm_area_struct *vma;
+    pte_t *ptep;
+    spinlock_t *ptl;
+    pte_t current_pte;
+    pte_t shadow_old;
+    unsigned long old_value;
+    int result;
+
+    if (!page || !page->mm || !page->address ||
+        page->state != R0LAB_RAW_SHADOW_RX || !page->shadow_rx_pte ||
+        !page->shadow_pfn || page->gup_hide_active ||
+        page->fork_hide_active || page->read_cycle_active)
+        return R0LAB_RAW_EINVAL;
+
+    mm = (struct mm_struct *)page->mm;
+    mmap_read_lock(mm);
+    result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
+    if (result)
+        goto out_unlock_mmap;
+
+    current_pte = READ_ONCE(*ptep);
+    if (r0lab_raw_pte_value(current_pte) != page->shadow_rx_pte ||
+        pte_pfn(current_pte) != page->shadow_pfn) {
+        result = R0LAB_RAW_EAGAIN;
+        goto out_unlock_pte;
+    }
+
+    shadow_old = pte_mkold(current_pte);
+    old_value = r0lab_raw_pte_value(shadow_old);
+    if (old_value == page->shadow_rx_pte) {
+        result = R0LAB_RAW_EAGAIN;
+        goto out_unlock_pte;
+    }
+
+    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+                                      shadow_old);
+    if (!result)
+        page->active_pte = old_value;
+
+out_unlock_pte:
+    spin_unlock(ptl);
+out_unlock_mmap:
+    mmap_read_unlock(mm);
+    return result;
+}
+
 int r0lab_raw_begin_stepping(struct r0lab_raw_page *page)
 {
     struct mm_struct *mm;
@@ -752,6 +801,8 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
     pte_t current_pte;
     pte_t original;
     unsigned long current_value;
+    unsigned long shadow_old_value = 0;
+    bool current_is_shadow;
     int result;
 
     if (!page || !page->mm || !page->address || !page->original_pte)
@@ -776,8 +827,17 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
 
     current_pte = READ_ONCE(*ptep);
     current_value = r0lab_raw_pte_value(current_pte);
+    current_is_shadow = current_value == page->shadow_rx_pte;
+    if (!current_is_shadow && page->state == R0LAB_RAW_SHADOW_RX &&
+        page->shadow_rx_pte && page->shadow_pfn) {
+        pte_t shadow_rx = r0lab_raw_pte_from_value(page->shadow_rx_pte);
+
+        shadow_old_value = r0lab_raw_pte_value(pte_mkold(shadow_rx));
+        current_is_shadow = current_value == shadow_old_value &&
+                            pte_pfn(current_pte) == page->shadow_pfn;
+    }
     if (current_value != page->source_uxn_pte &&
-        current_value != page->shadow_rx_pte &&
+        !current_is_shadow &&
         current_value != page->original_pte) {
         result = R0LAB_RAW_EAGAIN;
         goto out_unlock_pte;
