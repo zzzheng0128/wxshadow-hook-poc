@@ -683,6 +683,7 @@ static bool r0lab_target_task_live(pid_t owner_tgid);
 static uint64_t r0lab_record_values(enum r0lab_event_op op, int result,
                                     uint64_t pc, uint64_t x0, uint64_t x30);
 static int r0lab_raw_wait_for_callbacks(void);
+static unsigned int r0lab_raw_syscall_hook_users_locked(void);
 static void r0lab_raw_unhook_except_exit(void);
 static void r0lab_raw_unhook(void);
 static void r0lab_raw_reset(struct mm_struct *mm);
@@ -4477,10 +4478,13 @@ static void r0lab_raw_fault_before(hook_fargs4_t *args, void *udata)
 static void r0lab_raw_syscall_before(hook_fargs1_t *args, void *udata)
 {
     struct mm_struct *current_mm;
+    struct r0lab_raw_hook_page_token route_token = {0};
+    struct r0lab_raw_shadow_page *page = NULL;
     unsigned long flags;
     unsigned long address = 0;
     unsigned long state = 0;
     uint64_t generation = 0;
+    uint16_t slot_id = R0LAB_RAW_PRIMARY_SLOT;
     uint32_t events = 0;
     uint32_t read_cycle_events = 0;
     bool hit = false;
@@ -4492,55 +4496,68 @@ static void r0lab_raw_syscall_before(hook_fargs1_t *args, void *udata)
     (void)udata;
     current_mm = g_get_task_mm ? g_get_task_mm(current) : NULL;
     flags = r0lab_lock();
-    if (!g_raw_page.syscall_hook_installed) {
+    if (!r0lab_raw_syscall_hook_users_locked()) {
         r0lab_unlock(flags);
         if (current_mm)
             g_mmput(current_mm);
         return;
     }
     ++g_raw_inflight;
-    if (g_session.active && g_raw_page.armed && !g_raw_page.clearing &&
-        !g_raw_page.transitioning &&
-        g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-        current_mm && g_raw_page.raw.mm == current_mm &&
-        g_session.owner_tgid == r0lab_current_tgid()) {
-        ++g_raw_page.syscall_hook_events;
-        events = g_raw_page.syscall_hook_events;
-        address = g_raw_page.raw.address;
-        state = g_raw_page.raw.state;
-        read_cycle_mode = g_raw_page.syscall_hook_read_cycle_mode;
-        if (read_cycle_mode) {
-            if (!g_raw_page.raw.gup_hide_active &&
-                !g_raw_page.raw.fork_hide_active &&
-                !g_raw_page.raw.read_cycle_active) {
-                g_raw_page.transitioning = true;
-                generation = g_raw_page.generation;
+    page = r0lab_raw_selected_page_locked();
+    if (g_session.active && page && page->syscall_hook_installed &&
+        current_mm && g_session.owner_tgid == r0lab_current_tgid()) {
+        unsigned int route_flags = R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX;
+        int route_result;
+
+        read_cycle_mode = page->syscall_hook_read_cycle_mode;
+        if (read_cycle_mode)
+            route_flags |= R0LAB_RAW_HOOK_ROUTE_MUTATING;
+        route_result = r0lab_raw_hook_page_token_acquire_locked(
+            R0LAB_RAW_HOOK_SYSCALL, current_mm, page->raw.address,
+            page->generation, route_flags, &route_token);
+        if (!route_result && route_token.page == page &&
+            page->raw.mm == current_mm && page->syscall_hook_installed) {
+            ++page->syscall_hook_events;
+            events = page->syscall_hook_events;
+            address = page->raw.address;
+            state = page->raw.state;
+            generation = route_token.generation;
+            slot_id = route_token.slot_id;
+            if (read_cycle_mode)
                 should_begin_read_cycle = true;
-            } else {
-                ++g_raw_page.syscall_hook_failures;
-                read_cycle_result = R0LAB_EAGAIN;
-            }
+            else
+                (void)r0lab_raw_hook_page_token_release_locked(
+                    &route_token, false);
+            hit = true;
+        } else {
+            if (!route_result)
+                (void)r0lab_raw_hook_page_token_release_locked(
+                    &route_token, read_cycle_mode);
+            if (page)
+                ++page->syscall_hook_failures;
+            read_cycle_result = route_result ? route_result : R0LAB_EAGAIN;
         }
-        hit = true;
     }
     r0lab_unlock(flags);
 
     if (should_begin_read_cycle)
-        read_cycle_result = r0lab_raw_begin_read_cycle(&g_raw_page.raw);
+        read_cycle_result = r0lab_raw_begin_read_cycle(&page->raw);
 
     if (should_begin_read_cycle) {
         flags = r0lab_lock();
-        if (g_raw_page.generation == generation) {
-            g_raw_page.transitioning = false;
+        page = r0lab_raw_page_slot_locked(slot_id);
+        if (page && page->generation == generation &&
+            page->syscall_hook_installed) {
+            page->transitioning = false;
             if (!read_cycle_result &&
-                g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_READ) {
-                g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
-                ++g_raw_page.syscall_hook_read_cycle_events;
+                page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
+                page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+                ++page->syscall_hook_read_cycle_events;
                 read_cycle_events =
-                    g_raw_page.syscall_hook_read_cycle_events;
-                state = g_raw_page.raw.state;
+                    page->syscall_hook_read_cycle_events;
+                state = page->raw.state;
             } else {
-                ++g_raw_page.syscall_hook_failures;
+                ++page->syscall_hook_failures;
             }
         } else {
             read_cycle_result = R0LAB_EAGAIN;
@@ -5499,14 +5516,55 @@ static void r0lab_raw_fault_unhook(void)
     r0lab_raw_fault_hook_release(&g_raw_page);
 }
 
+static unsigned int r0lab_raw_syscall_hook_users_locked(void)
+{
+    unsigned int index;
+    unsigned int count = 0;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (g_raw_page_table.slots[index].syscall_hook_installed)
+            ++count;
+    }
+    return count;
+}
+
+static void r0lab_raw_syscall_hook_release(
+    struct r0lab_raw_shadow_page *page)
+{
+    bool installed = false;
+    bool should_detach = false;
+    unsigned long flags;
+
+    if (!page)
+        return;
+    flags = r0lab_lock();
+    if (page->syscall_hook_installed) {
+        page->syscall_hook_installed = false;
+        page->syscall_hook_read_cycle_mode = false;
+        installed = true;
+        should_detach = r0lab_raw_syscall_hook_users_locked() == 0;
+    }
+    r0lab_unlock(flags);
+
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+    if (should_detach)
+        r0lab_hook_detach(g_sys_getpid, r0lab_raw_syscall_before, NULL);
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+}
+
 static void r0lab_raw_syscall_unhook(void)
 {
     bool installed;
+    unsigned int index;
     unsigned long flags = r0lab_lock();
 
-    installed = g_raw_page.syscall_hook_installed;
-    g_raw_page.syscall_hook_installed = false;
-    g_raw_page.syscall_hook_read_cycle_mode = false;
+    installed = r0lab_raw_syscall_hook_users_locked() != 0;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        g_raw_page_table.slots[index].syscall_hook_installed = false;
+        g_raw_page_table.slots[index].syscall_hook_read_cycle_mode = false;
+    }
     r0lab_unlock(flags);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
@@ -5714,6 +5772,7 @@ static void r0lab_raw_unhook_page(struct r0lab_raw_shadow_page *page,
     r0lab_raw_gup_hook_release(page);
     r0lab_raw_fault_hook_release(page);
     r0lab_raw_abort_hook_release(page);
+    r0lab_raw_syscall_hook_release(page);
 }
 
 static void r0lab_raw_unhook(void)
@@ -8540,13 +8599,18 @@ static long r0lab_raw_fault_hook_clear(uint64_t token, char __user *out_msg,
 }
 
 static long r0lab_raw_syscall_hook_arm_common(uint64_t token,
+                                              uint16_t slot_id,
+                                              uint64_t generation,
                                               char __user *out_msg,
                                               int outlen,
-                                              bool read_cycle_mode)
+                                              bool read_cycle_mode,
+                                              bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
+    bool should_install;
     bool existing_read_cycle_mode;
     int result = r0lab_validate_owner(token);
 
@@ -8556,18 +8620,26 @@ static long r0lab_raw_syscall_hook_arm_common(uint64_t token,
         result = R0LAB_ENOSYS;
         goto record;
     }
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
 
     flags = r0lab_lock();
-    if (!g_raw_page.armed || g_raw_page.clearing ||
-        g_raw_page.transitioning ||
-        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || page->clearing ||
+        page->transitioning || page->raw.state != R0LAB_RAW_SHADOW_RX ||
+        page->raw.gup_hide_active || page->raw.fork_hide_active ||
+        page->raw.read_cycle_active ||
+        (!legacy_reply && page->generation != generation) ||
         g_session.owner_tgid != r0lab_current_tgid()) {
         r0lab_unlock(flags);
         result = R0LAB_EAGAIN;
         goto record;
     }
-    installed = g_raw_page.syscall_hook_installed;
-    existing_read_cycle_mode = g_raw_page.syscall_hook_read_cycle_mode;
+    installed = page->syscall_hook_installed;
+    should_install = !installed && r0lab_raw_syscall_hook_users_locked() == 0;
+    existing_read_cycle_mode = page->syscall_hook_read_cycle_mode;
     if (g_raw_page.prctl_hook_installed) {
         r0lab_unlock(flags);
         result = R0LAB_EBUSY;
@@ -8578,39 +8650,58 @@ static long r0lab_raw_syscall_hook_arm_common(uint64_t token,
         result = R0LAB_EBUSY;
         goto record;
     }
+    generation = page->generation;
     if (!installed) {
-        g_raw_page.syscall_hook_events = 0;
-        g_raw_page.syscall_hook_read_cycle_events = 0;
-        g_raw_page.syscall_hook_failures = 0;
+        page->syscall_hook_events = 0;
+        page->syscall_hook_read_cycle_events = 0;
+        page->syscall_hook_failures = 0;
     }
     r0lab_unlock(flags);
 
-    if (!installed) {
+    if (should_install) {
         result = hook_wrap1(g_sys_getpid, r0lab_raw_syscall_before,
                             NULL, NULL);
         if (result)
             goto record;
+    }
+    if (!installed) {
         flags = r0lab_lock();
-        if (g_raw_page.armed && !g_raw_page.clearing &&
-            g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
-            g_raw_page.syscall_hook_installed = true;
-            g_raw_page.syscall_hook_read_cycle_mode = read_cycle_mode;
+        page = r0lab_raw_page_slot_locked(slot_id);
+        if (page && page->armed && !page->clearing &&
+            page->generation == generation &&
+            page->raw.state == R0LAB_RAW_SHADOW_RX) {
+            page->syscall_hook_installed = true;
+            page->syscall_hook_read_cycle_mode = read_cycle_mode;
+            g_raw_page_table.selected_slot = slot_id;
         } else {
             result = R0LAB_EAGAIN;
         }
         r0lab_unlock(flags);
-        if (result) {
+        if (result && should_install) {
             r0lab_hook_detach(g_sys_getpid, r0lab_raw_syscall_before, NULL);
             goto record;
         }
+    } else {
+        flags = r0lab_lock();
+        if (page && page->generation == generation)
+            g_raw_page_table.selected_slot = slot_id;
+        r0lab_unlock(flags);
     }
 
-    if (read_cycle_mode)
+    if (read_cycle_mode && legacy_reply)
         snprintf(reply, sizeof(reply),
                  "raw_syscall_read_cycle_hook_ready symbol=getpid installed=1 target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending\n");
-    else
+    else if (read_cycle_mode)
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_syscall_read_cycle_hook_ready slot=%u generation=%llu symbol=getpid installed=1 selected=1 target_mm_scoped=1 page_record_routed=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation);
+    else if (legacy_reply)
         snprintf(reply, sizeof(reply),
                  "raw_syscall_hook_ready symbol=getpid installed=1 target_mm_scoped=1 trigger=syscall_getpid observe_only=1 pte_switch=0\n");
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_syscall_hook_ready slot=%u generation=%llu symbol=getpid installed=1 selected=1 target_mm_scoped=1 page_record_routed=1 trigger=syscall_getpid observe_only=1 pte_switch=0 route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation);
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -8621,23 +8712,153 @@ record:
 static long r0lab_raw_syscall_hook_arm(uint64_t token, char __user *out_msg,
                                        int outlen)
 {
-    return r0lab_raw_syscall_hook_arm_common(token, out_msg, outlen, false);
+    return r0lab_raw_syscall_hook_arm_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, 0, out_msg, outlen, false, true);
 }
 
 static long r0lab_raw_syscall_read_cycle_hook_arm(uint64_t token,
                                                   char __user *out_msg,
                                                   int outlen)
 {
-    return r0lab_raw_syscall_hook_arm_common(token, out_msg, outlen, true);
+    return r0lab_raw_syscall_hook_arm_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, 0, out_msg, outlen, true, true);
+}
+
+static long r0lab_raw_syscall_hook_select(uint64_t token, uint16_t slot_id,
+                                          uint64_t generation,
+                                          char __user *out_msg, int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    unsigned long flags;
+    bool read_cycle_mode;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->syscall_hook_installed ||
+        page->generation != generation || !page->armed ||
+        page->clearing || page->raw.state != R0LAB_RAW_SHADOW_RX) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    read_cycle_mode = page->syscall_hook_read_cycle_mode;
+    g_raw_page_table.selected_slot = slot_id;
+    r0lab_unlock(flags);
+
+    if (read_cycle_mode)
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_syscall_read_cycle_hook_selected slot=%u generation=%llu symbol=getpid selected=1 target_mm_scoped=1 page_record_routed=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_syscall_hook_selected slot=%u generation=%llu symbol=getpid selected=1 target_mm_scoped=1 page_record_routed=1 trigger=syscall_getpid route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+
+record:
+    r0lab_record(R0LAB_EVENT_REJECT, result);
+    return result;
+}
+
+static long r0lab_raw_syscall_hook_status_common(uint64_t token,
+                                                 uint16_t slot_id,
+                                                 char __user *out_msg,
+                                                 int outlen,
+                                                 bool legacy_reply)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    unsigned long flags;
+    bool installed;
+    bool read_cycle_mode;
+    bool selected;
+    uint64_t generation;
+    uint32_t hit_events;
+    uint32_t read_cycle_events;
+    unsigned long read_cycle_finish_events;
+    uint32_t failures;
+    uint32_t route_hits;
+    uint32_t route_rejects;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->syscall_hook_installed;
+    read_cycle_mode = page->syscall_hook_read_cycle_mode;
+    selected = g_raw_page_table.selected_slot == slot_id;
+    generation = page->generation;
+    hit_events = page->syscall_hook_events;
+    read_cycle_events = page->syscall_hook_read_cycle_events;
+    read_cycle_finish_events = page->raw.read_cycle_finish_events;
+    failures = page->syscall_hook_failures;
+    route_hits = page->hook_route_stats.route_hits;
+    route_rejects = page->hook_route_stats.route_rejects;
+    r0lab_unlock(flags);
+
+    if (read_cycle_mode && legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_syscall_hook_status symbol=%s installed=%u hit_events=%u read_cycle_events=%u failures=%u target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s\n",
+                 g_sys_getpid ? "getpid" : "absent", installed ? 1 : 0,
+                 hit_events, read_cycle_events, failures,
+                 read_cycle_finish_events ? "proven" :
+                 (read_cycle_events ? "pending" : "absent"));
+    else if (read_cycle_mode)
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_syscall_hook_status slot=%u generation=%llu symbol=%s installed=%u selected=%u hit_events=%u read_cycle_events=%u failures=%u target_mm_scoped=1 page_record_routed=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s route_hits=%u route_rejects=%u route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_sys_getpid ? "getpid" : "absent", installed ? 1 : 0,
+                 selected ? 1 : 0, hit_events, read_cycle_events, failures,
+                 read_cycle_finish_events ? "proven" :
+                 (read_cycle_events ? "pending" : "absent"), route_hits,
+                 route_rejects);
+    else if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_syscall_hook_status symbol=%s installed=%u hit_events=%u failures=%u target_mm_scoped=1 trigger=syscall_getpid observe_only=1 pte_switch=0\n",
+                 g_sys_getpid ? "getpid" : "absent", installed ? 1 : 0,
+                 hit_events, failures);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_syscall_hook_status slot=%u generation=%llu symbol=%s installed=%u selected=%u hit_events=%u failures=%u target_mm_scoped=1 page_record_routed=1 trigger=syscall_getpid observe_only=1 pte_switch=0 route_hits=%u route_rejects=%u route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_sys_getpid ? "getpid" : "absent", installed ? 1 : 0,
+                 selected ? 1 : 0, hit_events, failures, route_hits,
+                 route_rejects);
+    return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
 static long r0lab_raw_syscall_hook_status(uint64_t token,
                                           char __user *out_msg, int outlen)
 {
+    return r0lab_raw_syscall_hook_status_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_syscall_hook_clear_common(uint64_t token,
+                                                uint16_t slot_id,
+                                                uint64_t generation,
+                                                char __user *out_msg,
+                                                int outlen,
+                                                bool legacy_reply)
+{
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
-    bool installed;
-    bool read_cycle_mode;
     uint32_t hit_events;
     uint32_t read_cycle_events;
     unsigned long read_cycle_finish_events;
@@ -8646,53 +8867,52 @@ static long r0lab_raw_syscall_hook_status(uint64_t token,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    installed = g_raw_page.syscall_hook_installed;
-    read_cycle_mode = g_raw_page.syscall_hook_read_cycle_mode;
-    hit_events = g_raw_page.syscall_hook_events;
-    read_cycle_events = g_raw_page.syscall_hook_read_cycle_events;
-    read_cycle_finish_events = g_raw_page.raw.read_cycle_finish_events;
-    failures = g_raw_page.syscall_hook_failures;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || (!legacy_reply && page->generation != generation)) {
+        r0lab_unlock(flags);
+        return R0LAB_EAGAIN;
+    }
     r0lab_unlock(flags);
 
-    if (read_cycle_mode)
+    if (legacy_reply)
+        r0lab_raw_syscall_unhook();
+    else
+        r0lab_raw_syscall_hook_release(page);
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    generation = page->generation;
+    hit_events = page->syscall_hook_events;
+    read_cycle_events = page->syscall_hook_read_cycle_events;
+    read_cycle_finish_events = page->raw.read_cycle_finish_events;
+    failures = page->syscall_hook_failures;
+    r0lab_unlock(flags);
+    if (legacy_reply)
         snprintf(reply, sizeof(reply),
-                 "raw_syscall_hook_status symbol=%s installed=%u hit_events=%u read_cycle_events=%u failures=%u target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s\n",
-                 g_sys_getpid ? "getpid" : "absent", installed ? 1 : 0,
-                 hit_events, read_cycle_events, failures,
-                 read_cycle_finish_events ? "proven" :
-                 (read_cycle_events ? "pending" : "absent"));
+                 "raw_syscall_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u failures=%u\n",
+                 g_sys_getpid ? "getpid" : "absent", hit_events,
+                 read_cycle_events, failures);
     else
         snprintf(reply, sizeof(reply),
-                 "raw_syscall_hook_status symbol=%s installed=%u hit_events=%u failures=%u target_mm_scoped=1 trigger=syscall_getpid observe_only=1 pte_switch=0\n",
-                 g_sys_getpid ? "getpid" : "absent", installed ? 1 : 0,
-                 hit_events, failures);
+                 "raw_slot_syscall_hook_cleared slot=%u generation=%llu symbol=%s installed=0 hit_events=%u read_cycle_events=%u read_cycle_finish_events=%lu failures=%u page_record_routed=1 trigger=syscall_getpid route=selected_slot\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_sys_getpid ? "getpid" : "absent", hit_events,
+                 read_cycle_events, read_cycle_finish_events, failures);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
 static long r0lab_raw_syscall_hook_clear(uint64_t token, char __user *out_msg,
                                          int outlen)
 {
-    char reply[R0LAB_OUTPUT_CAPACITY];
-    unsigned long flags;
-    uint32_t hit_events;
-    uint32_t read_cycle_events;
-    uint32_t failures;
-    int result = r0lab_validate_owner(token);
-
-    if (result)
-        return result;
-    r0lab_raw_syscall_unhook();
-    flags = r0lab_lock();
-    hit_events = g_raw_page.syscall_hook_events;
-    read_cycle_events = g_raw_page.syscall_hook_read_cycle_events;
-    failures = g_raw_page.syscall_hook_failures;
-    r0lab_unlock(flags);
-    snprintf(reply, sizeof(reply),
-             "raw_syscall_hook_cleared symbol=%s installed=0 hit_events=%u read_cycle_events=%u failures=%u\n",
-             g_sys_getpid ? "getpid" : "absent", hit_events,
-             read_cycle_events, failures);
-    return r0lab_copy_reply(out_msg, outlen, reply);
+    return r0lab_raw_syscall_hook_clear_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, 0, out_msg, outlen, true);
 }
 
 static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
@@ -8719,7 +8939,7 @@ static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
         result = R0LAB_EAGAIN;
         goto record;
     }
-    if (g_raw_page.syscall_hook_installed) {
+    if (r0lab_raw_syscall_hook_users_locked()) {
         r0lab_unlock(flags);
         result = R0LAB_EBUSY;
         goto record;
@@ -8742,7 +8962,7 @@ static long r0lab_raw_prctl_hook_arm(uint64_t token, char __user *out_msg,
         flags = r0lab_lock();
         if (g_raw_page.armed && !g_raw_page.clearing &&
             g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-            !g_raw_page.syscall_hook_installed) {
+            !r0lab_raw_syscall_hook_users_locked()) {
             g_raw_page.prctl_hook_installed = true;
         } else {
             result = R0LAB_EAGAIN;
@@ -10361,6 +10581,76 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_abort_probe_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot syscall hook arm ", 26)) {
+        value = args + 26;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_arm_common(
+            token, slot_id, generation, out_msg, outlen, false, false);
+    }
+    if (!strncmp(args, "raw slot syscall hook status ", 29)) {
+        value = args + 29;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot syscall hook select ", 29)) {
+        value = args + 29;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_select(token, slot_id, generation,
+                                             out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot syscall hook clear ", 28)) {
+        value = args + 28;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_clear_common(
+            token, slot_id, generation, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot syscall read cycle hook arm ", 37)) {
+        value = args + 37;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_arm_common(
+            token, slot_id, generation, out_msg, outlen, true, false);
+    }
+    if (!strncmp(args, "raw slot syscall read cycle hook status ", 40)) {
+        value = args + 40;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_status_common(
+            token, slot_id, out_msg, outlen, false);
+    }
+    if (!strncmp(args, "raw slot syscall read cycle hook select ", 40)) {
+        value = args + 40;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_select(token, slot_id, generation,
+                                             out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot syscall read cycle hook clear ", 39)) {
+        value = args + 39;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &generation) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_syscall_hook_clear_common(
+            token, slot_id, generation, out_msg, outlen, false);
     }
     if (!strncmp(args, "raw syscall hook arm ", 21)) {
         value = args + 21;
