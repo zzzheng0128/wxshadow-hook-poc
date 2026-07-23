@@ -41,6 +41,7 @@ RAW_COMPAT=docs/pixel7-panther-raw-pte-compatibility.md
 S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
 FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
+F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -51,6 +52,7 @@ require_file "$RAW_COMPAT"
 require_file "$S4_PLAN"
 require_file "$FINAL_ROADMAP"
 require_file "$F2_PLAN"
+require_file "$F3_PLAN"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -83,10 +85,26 @@ require_text "$FINAL_ROADMAP" 'Do not add arbitrary process or arbitrary address
 require_text "$FINAL_ROADMAP" 'raw_page_table_slots'
 require_text "$FINAL_ROADMAP" 'Slot 1 is intentionally inert until F2'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f2-two-page-lab-harness-plan.md'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f3-page-local-patch-records-plan.md'
+require_text "$FINAL_ROADMAP" 'Plan checkpoints are docs/contract only.'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_device.sh'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
 require_text "$F2_PLAN" 'scripts/test_raw_page_table_device.sh'
+require_text "$F3_PLAN" 'wxshadow F3 Page-Local Patch Records Plan'
+require_text "$F3_PLAN" 'Status: planned'
+require_text "$F3_PLAN" 'plan-only checkpoint'
+require_text "$F3_PLAN" 'raw slot patch byte <token> <slot> <generation> <offset> <value>'
+require_text "$F3_PLAN" 'raw slot patch word <token> <slot> <generation> <offset> <word>'
+require_text "$F3_PLAN" 'raw slot patch release <token> <slot> <generation> <offset>'
+require_text "$F3_PLAN" 'raw slot patch status <token> <slot>'
+require_text "$F3_PLAN" 'patch_capacity=1024'
+require_text "$F3_PLAN" 'raw page table patch records run <token>'
+require_text "$F3_PLAN" 'scripts/test_raw_page_table_patch_records_device.sh'
+require_text "$F3_PLAN" 'slot0_patch_record_slots=1024'
+require_text "$F3_PLAN" 'slot1_after_slot0_capacity_value=88'
+require_text "$F3_PLAN" 'scripts/test_raw_prctl_patch_records_device.sh'
+require_text "$F3_PLAN" 'scripts/test_raw_page_table_device.sh'
 require_text "$VERIFICATION" 'raw_page_table_slots'
 require_text docs/kpm-compatibility-matrix.md 'Raw page-table skeleton'
 require_text "$CONTRACT" 'page_records'
@@ -582,4 +600,4 @@ require_text scripts/test_raw_page_table_device.sh 'slot0_activations=1 slot1_ac
 require_text scripts/test_raw_page_table_device.sh 'patch_cross_page_rc=-22'
 require_text scripts/test_raw_page_table_device.sh 'raw_page_table_activations=2'
 
-printf '%s\n' 'v1_contract=pass scripts=36 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=36 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness f3_plan=page_local_patch_records_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
