@@ -114,6 +114,41 @@ require_contains() {
     fail "expected output not found: $needle"
 }
 
+classify_status_after_raw_hold() {
+  output=$1
+
+  printf 'phase=d4_r3c_status_after_raw_hold evidence=begin\n' >> "$EVIDENCE"
+  printf '%s\n' "$output" >> "$EVIDENCE"
+
+  case "$output" in
+    *"command_timeout command=status"*)
+      printf 'phase=d4_r3c_status_after_raw_hold result=fail classification=D4-R3c-status-logcat-timeout\n' \
+        >> "$EVIDENCE"
+      fail "D4-R3c-status-logcat-timeout: held status command timed out"
+      ;;
+  esac
+
+  case "$output" in
+    *"active=1"*"raw_slots=2"*"page_records=2"*)
+      printf 'phase=d4_r3c_status_after_raw_hold result=pass classification=D4-R3c-status-healthy-boot-id-pending\n' \
+        >> "$EVIDENCE"
+      return 0
+      ;;
+  esac
+
+  case "$output" in
+    *"active=0"*|*"raw_slots=0"*|*"page_records=0"*)
+      printf 'phase=d4_r3c_status_after_raw_hold result=fail classification=D4-R3c-status-empty-or-reset-state\n' \
+        >> "$EVIDENCE"
+      fail "D4-R3c-status-empty-or-reset-state: held status reported reset or empty raw state"
+      ;;
+  esac
+
+  printf 'phase=d4_r3c_status_after_raw_hold result=fail classification=D4-R3c-status-malformed-output\n' \
+    >> "$EVIDENCE"
+  fail "D4-R3c-status-malformed-output: held status did not contain expected state fields"
+}
+
 require_boot_stable_after_reader() {
   phase=$1
   before=$2
@@ -310,17 +345,15 @@ printf 'phase=d4_r3b_raw_hold_established result=pass exit_mmap_armed=0 raw_slot
   "$GEN0" "$GEN1" >> "$EVIDENCE"
 
 STATUS_HELD=$(run_app_command status)
-require_contains "$STATUS_HELD" 'active=1'
-require_contains "$STATUS_HELD" 'raw_slots=2'
-require_contains "$STATUS_HELD" 'page_records=2'
-printf '%s\n' "$STATUS_HELD" >> "$EVIDENCE"
+classify_status_after_raw_hold "$STATUS_HELD"
 
 sleep 2
 STATUS_HELD_QUIET=$(run_app_command status)
+printf 'phase=d4_r3b_hold_quiet_status evidence=begin\n' >> "$EVIDENCE"
+printf '%s\n' "$STATUS_HELD_QUIET" >> "$EVIDENCE"
 require_contains "$STATUS_HELD_QUIET" 'active=1'
 require_contains "$STATUS_HELD_QUIET" 'raw_slots=2'
 require_contains "$STATUS_HELD_QUIET" 'page_records=2'
-printf '%s\n' "$STATUS_HELD_QUIET" >> "$EVIDENCE"
 printf 'phase=d4_r3b_hold_quiet_no_boot_reader result=pass boot_id_reader=not_used\n' >> "$EVIDENCE"
 
 probe_adb_shell_true
