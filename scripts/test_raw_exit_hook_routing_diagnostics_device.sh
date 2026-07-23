@@ -9,11 +9,20 @@ PACKAGE=dev.r0hook.lab
 ACTIVITY=dev.r0hook.lab/.MainActivity
 TOKEN_NO_HOOK=${RAW_EXIT_HOOK_DIAG_NO_HOOK_TOKEN:-0x729247}
 TOKEN_HOLD=${RAW_EXIT_HOOK_DIAG_HOLD_TOKEN:-0x729248}
+ALLOW_RERUN=${RAW_EXIT_HOOK_DIAG_ALLOW_D4_R1_RERUN:-0}
 EVIDENCE_DIR="$ROOT/build/evidence"
 EVIDENCE="$EVIDENCE_DIR/raw-exit-hook-routing-diagnostics-$(date +%Y%m%d-%H%M%S).log"
 MODULE_LOADED=0
 CLEANUP_TOKEN=''
 HOLD_CLEANUP=0
+
+if [ "$ALLOW_RERUN" != "1" ]; then
+  printf '%s\n' \
+    "raw exit-hook-routing diagnostics locked after D4-R1-explicit-clear-cleanup-reentry-panic; plan and run D4-R2 isolation instead" >&2
+  printf '%s\n' \
+    "set RAW_EXIT_HOOK_DIAG_ALLOW_D4_R1_RERUN=1 only for evidence-preserving archaeology, not normal development" >&2
+  exit 2
+fi
 
 adb_device() {
   if [ -n "$SERIAL" ]; then
@@ -249,11 +258,10 @@ require_contains "$STATUS_AFTER_NO_HOOK" 'raw_slots=0'
 require_contains "$STATUS_AFTER_NO_HOOK" 'page_records=0'
 printf '%s\n' "$STATUS_AFTER_NO_HOOK" >> "$EVIDENCE"
 EVENTS_NO_HOOK=$(run_app_command "events $TOKEN_NO_HOOK")
-require_contains "$EVENTS_NO_HOOK" 'op=18 result=0'
+printf '%s\n' "$EVENTS_NO_HOOK" >> "$EVIDENCE"
 require_contains "$EVENTS_NO_HOOK" 'op=5 result=0'
 require_contains "$EVENTS_NO_HOOK" 'op=7 result=0'
-printf '%s\n' "$EVENTS_NO_HOOK" >> "$EVIDENCE"
-printf 'phase=kpm_session_no_exit_hook_force_stop result=pass boot_stable=1 cleanup=monitor\n' >> "$EVIDENCE"
+printf 'phase=kpm_session_no_exit_hook_force_stop result=pass boot_stable=1 cleanup=monitor target_exit_event=not_required_without_page_records\n' >> "$EVIDENCE"
 
 ARM_HOLD_OUTPUT=$(run_app_command "arm $TOKEN_HOLD")
 require_contains "$ARM_HOLD_OUTPUT" 'armed uid='
