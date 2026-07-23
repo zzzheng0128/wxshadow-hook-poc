@@ -2351,7 +2351,6 @@ static int r0lab_raw_gup_hook_run(const char *token_text, char *output,
     char command[96];
     char reply[256] = {0};
     char hook_reply[512] = {0};
-    char hook_status[512] = {0};
     char hook_clear_reply[512] = {0};
     char inspect_reply[2048] = {0};
     unsigned int activations = 0;
@@ -2367,7 +2366,6 @@ static int r0lab_raw_gup_hook_run(const char *token_text, char *output,
     long ready_rc = -1;
     long observed_rc = -1;
     long hook_arm_rc = -1;
-    long hook_status_rc = -1;
     long hook_clear_rc = -1;
     long inspect_rc = -1;
     long clear_rc = -1;
@@ -2521,40 +2519,33 @@ static int r0lab_raw_gup_hook_run(const char *token_text, char *output,
         shadow_after_gup_value = ((int (*)(void))page)();
     }
 
-    snprintf(command, sizeof(command), "raw gup hook status 0x%llx",
-             (unsigned long long)token);
-    hook_status_rc = r0lab_control_raw(command, hook_status,
-                                       sizeof(hook_status));
-
     snprintf(command, sizeof(command), "raw inspect 0x%llx",
              (unsigned long long)token);
     inspect_rc = r0lab_control_raw(command, inspect_reply,
                                    sizeof(inspect_reply));
-    if (hook_arm_rc < 0 ||
-        gup_read_rc != (ssize_t)sizeof(gup_read_word) ||
-        result_read != (ssize_t)sizeof(reader_result) ||
-        waited != child || child_exit != 0 ||
-        hook_status_rc < 0 || inspect_rc < 0 ||
-        !strstr(hook_reply, "raw_gup_hook_ready") ||
-        !strstr(hook_reply, "installed=1") ||
-        !strstr(hook_reply, "target_mm_scoped=1") ||
-        !strstr(hook_reply, "external_reader=1") ||
-        !strstr(hook_status, "hook_begin_events=1") ||
-        !strstr(hook_status, "hook_finish_events=1") ||
-        !strstr(hook_status, "hook_failures=0") ||
-        !strstr(hook_status, "target_mm_scoped=1") ||
-        !strstr(hook_status, "external_reader=1") ||
-        !strstr(hook_status, "primitive_begin_events=1") ||
-        !strstr(hook_status, "primitive_finish_events=1") ||
-        !strstr(inspect_reply, "gup_hook_begin_events=1") ||
-        !strstr(inspect_reply, "gup_hook_finish_events=1") ||
-        !strstr(inspect_reply, "gup_hook_failures=0"))
-        ++failures;
 
     snprintf(command, sizeof(command), "raw gup hook clear 0x%llx",
              (unsigned long long)token);
     hook_clear_rc = r0lab_control_raw(command, hook_clear_reply,
                                       sizeof(hook_clear_reply));
+    if (hook_arm_rc < 0 ||
+        gup_read_rc != (ssize_t)sizeof(gup_read_word) ||
+        result_read != (ssize_t)sizeof(reader_result) ||
+        waited != child || child_exit != 0 ||
+        inspect_rc < 0 || hook_clear_rc < 0 ||
+        !strstr(hook_reply, "raw_gup_hook_ready") ||
+        !strstr(hook_reply, "installed=1") ||
+        !strstr(hook_reply, "target_mm_scoped=1") ||
+        !strstr(hook_reply, "external_reader=1") ||
+        !strstr(hook_clear_reply, "hook_begin_events=1") ||
+        !strstr(hook_clear_reply, "hook_finish_events=1") ||
+        !strstr(hook_clear_reply, "hook_failures=0") ||
+        !strstr(inspect_reply, "gup_hook_begin_events=1") ||
+        !strstr(inspect_reply, "gup_hook_finish_events=1") ||
+        !strstr(inspect_reply, "gup_hook_failures=0") ||
+        !strstr(inspect_reply, "gup_begin_events=1") ||
+        !strstr(inspect_reply, "gup_finish_events=1"))
+        ++failures;
 
 clear:
     if (pipe_fds[0] >= 0)
@@ -2580,22 +2571,472 @@ finish:
         word_after_gup != R0LAB_M4_CODE_MOV_W0_99 ||
         word_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
         arm_rc < 0 || ready_rc < 0 || observed_rc < 0 ||
-        hook_arm_rc < 0 || hook_status_rc < 0 || hook_clear_rc < 0 ||
-        inspect_rc < 0 || clear_rc < 0 || cleared_rc < 0 ||
+        hook_arm_rc < 0 || hook_clear_rc < 0 || inspect_rc < 0 ||
+        clear_rc < 0 || cleared_rc < 0 ||
         activations != 1 || state != 3 || g_r0lab_raw_handler_faults)
         ++failures;
     snprintf(output, output_size,
-             "raw mode=gup-hook failures=%d reader=external normal_value=%d shadow_value=%d gup_read_word=%08x shadow_after_gup=%08x shadow_after_gup_value=%d restored_value=%d words=%08x/%08x/%08x gup_read_rc=%zd result_read=%zd reader_errno=%d child_pid=%d waited_pid=%d child_status=%d child_exit=%d activations=%u state=%lu arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_status_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d hook=\"%s\" status=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
+             "raw mode=gup-hook failures=%d reader=external normal_value=%d shadow_value=%d gup_read_word=%08x shadow_after_gup=%08x shadow_after_gup_value=%d restored_value=%d words=%08x/%08x/%08x gup_read_rc=%zd result_read=%zd reader_errno=%d child_pid=%d waited_pid=%d child_status=%d child_exit=%d activations=%u state=%lu arm_rc=%ld ready_rc=%ld observed_rc=%ld hook_arm_rc=%ld hook_clear_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d status_source=inspect_clear hook=\"%s\" hook_clear=\"%s\" inspect=\"%s\"",
              failures, normal_value, shadow_value, gup_read_word,
              word_after_gup, shadow_after_gup_value, restored_value,
              word_before, word_shadow, word_after_clear, gup_read_rc,
              result_read, reader_result.err, (int)child, (int)waited,
              child_status, child_exit, activations, state, arm_rc, ready_rc,
-             observed_rc, hook_arm_rc, hook_status_rc, hook_clear_rc,
-             inspect_rc, clear_rc, cleared_rc,
-             (int)g_r0lab_raw_handler_faults, hook_reply, hook_status,
-             hook_clear_reply, inspect_reply);
+             observed_rc, hook_arm_rc, hook_clear_rc, inspect_rc, clear_rc,
+             cleared_rc, (int)g_r0lab_raw_handler_faults,
+             hook_reply, hook_clear_reply, inspect_reply);
     munmap(page, page_size);
+    return failures ? -1 : 0;
+}
+
+static void r0lab_raw_external_gup_read_word(
+    void *page, struct r0lab_gup_reader_result *reader_result,
+    ssize_t *result_read, pid_t *child, pid_t *waited, int *child_status,
+    int *child_exit)
+{
+    int pipe_fds[2] = {-1, -1};
+
+    if (!reader_result || !result_read || !child || !waited ||
+        !child_status || !child_exit)
+        return;
+    reader_result->rc = -1;
+    reader_result->err = 0;
+    reader_result->word = 0;
+    *result_read = -1;
+    *child = -1;
+    *waited = -1;
+    *child_status = -1;
+    *child_exit = -1;
+
+    errno = 0;
+    if (pipe(pipe_fds)) {
+        reader_result->err = errno;
+        return;
+    }
+
+    *child = fork();
+    if (*child == 0) {
+        struct r0lab_gup_reader_result child_result = {
+            .rc = -1,
+            .err = 0,
+            .word = 0,
+        };
+        pid_t parent_pid = getppid();
+
+        close(pipe_fds[0]);
+#ifdef __NR_process_vm_readv
+        struct iovec local_iov = {
+            &child_result.word,
+            sizeof(child_result.word),
+        };
+        struct iovec remote_iov = {
+            page,
+            sizeof(child_result.word),
+        };
+
+        errno = 0;
+        child_result.rc = (int32_t)syscall(__NR_process_vm_readv, parent_pid,
+                                           &local_iov, 1, &remote_iov, 1, 0);
+        child_result.err = errno;
+#else
+        child_result.err = ENOSYS;
+#endif
+        (void)write(pipe_fds[1], &child_result, sizeof(child_result));
+        close(pipe_fds[1]);
+        _exit(child_result.rc == (int32_t)sizeof(child_result.word) ? 0 : 64);
+    }
+
+    close(pipe_fds[1]);
+    pipe_fds[1] = -1;
+    if (*child > 0) {
+        *result_read = read(pipe_fds[0], reader_result,
+                            sizeof(*reader_result));
+        close(pipe_fds[0]);
+        pipe_fds[0] = -1;
+        *waited = waitpid(*child, child_status, 0);
+        if (*waited == *child && WIFEXITED(*child_status))
+            *child_exit = WEXITSTATUS(*child_status);
+    } else {
+        reader_result->err = errno;
+        close(pipe_fds[0]);
+        pipe_fds[0] = -1;
+    }
+}
+
+static int r0lab_raw_gup_hook_routing_run(const char *token_text, char *output,
+                                          size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint64_t token;
+    uint64_t generation0 = 0;
+    uint64_t generation1 = 0;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    uint32_t *code0;
+    uint32_t *code1;
+    volatile uint32_t *readable0;
+    volatile uint32_t *readable1;
+    size_t page_size;
+    char command[160];
+    char reply[512] = {0};
+    char ready0[256] = {0};
+    char ready1[256] = {0};
+    char observed0[256] = {0};
+    char observed1[256] = {0};
+    char hook0_reply[512] = {0};
+    char hook1_reply[512] = {0};
+    char status0_after_slot0[768] = {0};
+    char status1_after_slot0[768] = {0};
+    char status1_after_slot1[768] = {0};
+    char status0_after_slot1[768] = {0};
+    char hook0_clear_reply[512] = {0};
+    char hook1_clear_reply[512] = {0};
+    struct r0lab_gup_reader_result reader0 = {
+        .rc = -1,
+        .err = 0,
+        .word = 0,
+    };
+    struct r0lab_gup_reader_result reader1 = {
+        .rc = -1,
+        .err = 0,
+        .word = 0,
+    };
+    ssize_t result0_read = -1;
+    ssize_t result1_read = -1;
+    pid_t child0 = -1;
+    pid_t child1 = -1;
+    pid_t waited0 = -1;
+    pid_t waited1 = -1;
+    int child0_status = -1;
+    int child1_status = -1;
+    int child0_exit = -1;
+    int child1_exit = -1;
+    unsigned int slot0_activations = 0;
+    unsigned int slot1_activations = 0;
+    unsigned long slot0_state = 0;
+    unsigned long slot1_state = 0;
+    uint32_t word0_before = 0;
+    uint32_t word1_before = 0;
+    uint32_t word0_shadow = 0;
+    uint32_t word1_shadow = 0;
+    uint32_t word0_after_gup = 0;
+    uint32_t word1_after_gup = 0;
+    uint32_t word0_after_clear = 0;
+    uint32_t word1_after_clear = 0;
+    int normal0 = -1;
+    int normal1 = -1;
+    int shadow0 = -1;
+    int shadow1 = -1;
+    int shadow0_after_gup = -1;
+    int shadow1_after_gup = -1;
+    int final0 = -1;
+    int final1 = -1;
+    long arm0_rc = -1;
+    long arm1_rc = -1;
+    long ready0_rc = -1;
+    long ready1_rc = -1;
+    long observed0_rc = -1;
+    long observed1_rc = -1;
+    long hook0_arm_rc = -1;
+    long hook1_arm_rc = -1;
+    long status0_after_slot0_rc = -1;
+    long status1_after_slot0_rc = -1;
+    long status1_after_slot1_rc = -1;
+    long status0_after_slot1_rc = -1;
+    long hook0_clear_rc = -1;
+    long hook1_clear_rc = -1;
+    long clear0_rc = -1;
+    long clear1_rc = -1;
+    long cleared0_rc = -1;
+    long cleared1_rc = -1;
+    int handler_installed = 0;
+    int route_ok = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw gup hook routing token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+
+    page0 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page1 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page0 == MAP_FAILED || page1 == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw gup hook routing page allocation errno=%d",
+                 errno);
+        goto finish;
+    }
+    code0 = page0;
+    code1 = page1;
+    code0[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code0[1] = R0LAB_M3_CODE_RET;
+    code1[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code1[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page0, (char *)page0 + page_size);
+    __builtin___clear_cache((char *)page1, (char *)page1 + page_size);
+    if (mprotect(page0, page_size, PROT_READ | PROT_EXEC) ||
+        mprotect(page1, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw gup hook routing mprotect errno=%d", errno);
+        goto finish;
+    }
+
+    readable0 = (volatile uint32_t *)page0;
+    readable1 = (volatile uint32_t *)page1;
+    word0_before = readable0[0];
+    word1_before = readable1[0];
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0);
+    arm0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm0_rc < 0)
+        goto clear_all;
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page1);
+    arm1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm1_rc < 0)
+        goto clear_all;
+
+    ready0_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 0,
+                                        ready0, sizeof(ready0));
+    ready1_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 1,
+                                        ready1, sizeof(ready1));
+    if (ready0_rc < 0 || ready1_rc < 0 ||
+        r0lab_raw_parse_slot_generation(ready0, "raw_slot_ready", 0,
+                                        &generation0) ||
+        r0lab_raw_parse_slot_generation(ready1, "raw_slot_ready", 1,
+                                        &generation1))
+        goto clear_all;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page_size = page_size;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear_all;
+    handler_installed = 1;
+
+    g_r0lab_raw_signal_page = page0;
+    shadow0 = ((int (*)(void))page0)();
+    word0_shadow = readable0[0];
+    g_r0lab_raw_signal_page = page1;
+    shadow1 = ((int (*)(void))page1)();
+    word1_shadow = readable1[0];
+
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 0",
+             (unsigned long long)token);
+    observed0_rc = r0lab_control_raw(command, observed0, sizeof(observed0));
+    snprintf(command, sizeof(command), "raw slot observed 0x%llx 1",
+             (unsigned long long)token);
+    observed1_rc = r0lab_control_raw(command, observed1, sizeof(observed1));
+    if (observed0_rc < 0 || observed1_rc < 0 ||
+        r0lab_raw_parse_slot_observed(observed0, 0, &slot0_activations,
+                                      &slot0_state) ||
+        r0lab_raw_parse_slot_observed(observed1, 1, &slot1_activations,
+                                      &slot1_state))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw slot gup hook arm 0x%llx 0",
+             (unsigned long long)token);
+    hook0_arm_rc = r0lab_control_raw(command, hook0_reply,
+                                     sizeof(hook0_reply));
+    snprintf(command, sizeof(command), "raw slot gup hook arm 0x%llx 1",
+             (unsigned long long)token);
+    hook1_arm_rc = r0lab_control_raw(command, hook1_reply,
+                                     sizeof(hook1_reply));
+
+    if (hook0_arm_rc >= 0 && hook1_arm_rc >= 0) {
+        r0lab_raw_external_gup_read_word(page0, &reader0, &result0_read,
+                                         &child0, &waited0, &child0_status,
+                                         &child0_exit);
+        word0_after_gup = readable0[0];
+        g_r0lab_raw_signal_page = page0;
+        shadow0_after_gup = ((int (*)(void))page0)();
+
+        snprintf(command, sizeof(command),
+                 "raw slot inspect 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_slot0_rc =
+            r0lab_control_raw(command, status0_after_slot0,
+                              sizeof(status0_after_slot0));
+        snprintf(command, sizeof(command),
+                 "raw slot inspect 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_slot0_rc =
+            r0lab_control_raw(command, status1_after_slot0,
+                              sizeof(status1_after_slot0));
+
+        r0lab_raw_external_gup_read_word(page1, &reader1, &result1_read,
+                                         &child1, &waited1, &child1_status,
+                                         &child1_exit);
+        word1_after_gup = readable1[0];
+        g_r0lab_raw_signal_page = page1;
+        shadow1_after_gup = ((int (*)(void))page1)();
+
+        snprintf(command, sizeof(command),
+                 "raw slot inspect 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_slot1_rc =
+            r0lab_control_raw(command, status1_after_slot1,
+                              sizeof(status1_after_slot1));
+        snprintf(command, sizeof(command),
+                 "raw slot inspect 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_slot1_rc =
+            r0lab_control_raw(command, status0_after_slot1,
+                              sizeof(status0_after_slot1));
+    }
+
+    snprintf(command, sizeof(command), "raw slot gup hook clear 0x%llx 0",
+             (unsigned long long)token);
+    hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                       sizeof(hook0_clear_reply));
+    snprintf(command, sizeof(command), "raw slot gup hook clear 0x%llx 1",
+             (unsigned long long)token);
+    hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                       sizeof(hook1_clear_reply));
+
+    route_ok =
+        reader0.rc == (int32_t)sizeof(reader0.word) &&
+        reader1.rc == (int32_t)sizeof(reader1.word) &&
+        result0_read == (ssize_t)sizeof(reader0) &&
+        result1_read == (ssize_t)sizeof(reader1) &&
+        waited0 == child0 && waited1 == child1 &&
+        child0_exit == 0 && child1_exit == 0 &&
+        reader0.word == R0LAB_M3_CODE_MOV_W0_42 &&
+        reader1.word == R0LAB_M3_CODE_MOV_W0_42 &&
+        strstr(status1_after_slot0, "raw_slot_inspect slot=1") &&
+        strstr(status1_after_slot0, "gup_hook_begin_events=0") &&
+        strstr(status1_after_slot0, "gup_hook_finish_events=0") &&
+        strstr(status1_after_slot0, "gup_hook_failures=0") &&
+        strstr(status1_after_slot0, "gup_begin_events=0") &&
+        strstr(status1_after_slot0, "gup_finish_events=0") &&
+        strstr(status0_after_slot1, "raw_slot_inspect slot=0") &&
+        strstr(status0_after_slot1, "gup_hook_begin_events=1") &&
+        strstr(status0_after_slot1, "gup_hook_finish_events=1") &&
+        strstr(status0_after_slot1, "gup_hook_failures=0") &&
+        strstr(status0_after_slot1, "gup_begin_events=1") &&
+        strstr(status0_after_slot1, "gup_finish_events=1") &&
+        strstr(hook0_clear_reply, "raw_slot_gup_hook_cleared slot=0") &&
+        strstr(hook0_clear_reply, "hook_begin_events=1") &&
+        strstr(hook0_clear_reply, "hook_finish_events=1") &&
+        strstr(hook0_clear_reply, "hook_failures=0") &&
+        strstr(hook0_clear_reply, "primitive_begin_events=1") &&
+        strstr(hook0_clear_reply, "primitive_finish_events=1") &&
+        strstr(hook1_clear_reply, "raw_slot_gup_hook_cleared slot=1") &&
+        strstr(hook1_clear_reply, "hook_begin_events=1") &&
+        strstr(hook1_clear_reply, "hook_finish_events=1") &&
+        strstr(hook1_clear_reply, "hook_failures=0") &&
+        strstr(hook1_clear_reply, "primitive_begin_events=1") &&
+        strstr(hook1_clear_reply, "primitive_finish_events=1");
+
+    if (hook0_arm_rc < 0 || hook1_arm_rc < 0 ||
+        status1_after_slot0_rc < 0 || status0_after_slot1_rc < 0 ||
+        hook0_clear_rc < 0 || hook1_clear_rc < 0 ||
+        !strstr(hook0_reply, "raw_slot_gup_hook_ready slot=0") ||
+        !strstr(hook1_reply, "raw_slot_gup_hook_ready slot=1") ||
+        !strstr(hook0_reply, "page_record_routed=1") ||
+        !strstr(hook1_reply, "page_record_routed=1") ||
+        !route_ok)
+        ++failures;
+
+clear_all:
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    if (hook0_arm_rc >= 0 && hook0_clear_rc < 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot gup hook clear 0x%llx 0",
+                 (unsigned long long)token);
+        hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                           sizeof(hook0_clear_reply));
+    }
+    if (hook1_arm_rc >= 0 && hook1_clear_rc < 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot gup hook clear 0x%llx 1",
+                 (unsigned long long)token);
+        hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                           sizeof(hook1_clear_reply));
+    }
+    if (arm0_rc >= 0)
+        r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+    if (arm1_rc >= 0)
+        r0lab_raw_slot_clear(token, 1, &clear1_rc, &cleared1_rc);
+    if (cleared0_rc >= 0 && cleared1_rc >= 0) {
+        word0_after_clear = readable0[0];
+        word1_after_clear = readable1[0];
+        final0 = ((int (*)(void))page0)();
+        final1 = ((int (*)(void))page1)();
+    }
+
+finish:
+    if (page0 != MAP_FAILED && page1 != MAP_FAILED &&
+        (normal0 != 42 || normal1 != 42 || shadow0 != 99 || shadow1 != 99 ||
+         shadow0_after_gup != 99 || shadow1_after_gup != 99 ||
+         final0 != 42 || final1 != 42 ||
+         word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
+         word1_before != R0LAB_M3_CODE_MOV_W0_42 ||
+         word0_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+         word1_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+         word0_after_gup != R0LAB_M4_CODE_MOV_W0_99 ||
+         word1_after_gup != R0LAB_M4_CODE_MOV_W0_99 ||
+         word0_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+         word1_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+         arm0_rc < 0 || arm1_rc < 0 || ready0_rc < 0 || ready1_rc < 0 ||
+         observed0_rc < 0 || observed1_rc < 0 ||
+         hook0_arm_rc < 0 || hook1_arm_rc < 0 ||
+         hook0_clear_rc < 0 || hook1_clear_rc < 0 ||
+         clear0_rc < 0 || cleared0_rc < 0 || clear1_rc < 0 ||
+         cleared1_rc < 0 || slot0_activations != 1 ||
+         slot1_activations != 1 || slot0_state != 3 || slot1_state != 3 ||
+         !route_ok || g_r0lab_raw_handler_faults))
+        ++failures;
+
+    if (output[0] == '\0') {
+        snprintf(output, output_size,
+                 "raw mode=gup-hook-routing failures=%d reader=external target_mm_scoped=1 page_record_routed=%d status_source=cross_inspect_clear normal=%d/%d shadow=%d/%d gup_read_words=%08x/%08x after_gup_shadow=%08x/%08x after_gup_shadow_values=%d/%d final=%d/%d route_slot0_events=%d route_slot1_events=%d cross_slot1_after_slot0=0 cross_slot0_after_slot1=0 child_exit=%d/%d result_read=%zd/%zd reader_errno=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld hook_arm_rc=%ld/%ld status_rc=%ld/%ld/%ld/%ld hook_clear_rc=%ld/%ld clear_rc=%ld/%ld cleared_rc=%ld/%ld generation=%llu/%llu handler_faults=%d hook0=\"%s\" hook1=\"%s\" status0_after_slot0=\"%s\" status1_after_slot0=\"%s\" status1_after_slot1=\"%s\" status0_after_slot1=\"%s\" hook0_clear=\"%s\" hook1_clear=\"%s\"",
+                 failures, route_ok ? 1 : 0, normal0, normal1, shadow0,
+                 shadow1, reader0.word, reader1.word, word0_after_gup,
+                 word1_after_gup, shadow0_after_gup, shadow1_after_gup,
+                 final0, final1, route_ok ? 1 : 0, route_ok ? 1 : 0,
+                 child0_exit, child1_exit, result0_read, result1_read,
+                 reader0.err, reader1.err, arm0_rc, arm1_rc, ready0_rc,
+                 ready1_rc, observed0_rc, observed1_rc, hook0_arm_rc,
+                 hook1_arm_rc, status0_after_slot0_rc,
+                 status1_after_slot0_rc, status1_after_slot1_rc,
+                 status0_after_slot1_rc, hook0_clear_rc, hook1_clear_rc,
+                 clear0_rc, clear1_rc, cleared0_rc, cleared1_rc,
+                 (unsigned long long)generation0,
+                 (unsigned long long)generation1,
+                 (int)g_r0lab_raw_handler_faults, hook0_reply, hook1_reply,
+                 status0_after_slot0, status1_after_slot0,
+                 status1_after_slot1, status0_after_slot1,
+                 hook0_clear_reply, hook1_clear_reply);
+    }
+    if (page1 != MAP_FAILED)
+        munmap(page1, page_size);
+    if (page0 != MAP_FAILED)
+        munmap(page0, page_size);
     return failures ? -1 : 0;
 }
 
@@ -7874,6 +8315,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw gup hook run ", 17)) {
         r0lab_raw_gup_hook_run(args + 17, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw gup hook routing run ", 25)) {
+        r0lab_raw_gup_hook_routing_run(args + 25, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

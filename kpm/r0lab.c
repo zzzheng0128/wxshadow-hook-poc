@@ -4275,40 +4275,58 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
 static void r0lab_raw_gup_before_common(void *vma, unsigned long address,
                                         hook_local_t *local)
 {
+    void *vma_mm = r0lab_raw_vma_mm(vma);
+    struct r0lab_raw_hook_page_token route_token;
+    struct r0lab_raw_shadow_page *page = NULL;
     uint64_t generation = 0;
+    uint16_t slot_id = R0LAB_RAW_PRIMARY_SLOT;
     unsigned long flags;
     bool should_hide = false;
     int result = R0LAB_EINVAL;
 
     local->data0 = 0;
     local->data1 = 0;
+    local->data2 = 0;
     local->data7 = 1;
 
     flags = r0lab_lock();
     ++g_raw_inflight;
-    if (g_session.active && g_raw_page.armed && g_raw_page.gup_hook_installed &&
-        !g_raw_page.clearing && !g_raw_page.transitioning &&
-        !g_raw_page.raw.gup_hide_active &&
-        g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-        r0lab_raw_vma_matches(&g_raw_page.raw, vma, address)) {
-        g_raw_page.transitioning = true;
-        generation = g_raw_page.generation;
-        should_hide = true;
+    page = r0lab_raw_page_find_by_mm_addr_locked(vma_mm, address);
+    if (g_session.active && page && page->gup_hook_installed) {
+        result = r0lab_raw_page_find_for_hook_locked(
+            R0LAB_RAW_HOOK_GUP, vma_mm, address, 0,
+            R0LAB_RAW_HOOK_ROUTE_MUTATING |
+                R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX,
+            &route_token);
+        if (!result && route_token.page &&
+            route_token.page->gup_hook_installed &&
+            r0lab_raw_vma_matches(&route_token.page->raw, vma, address)) {
+            page = route_token.page;
+            generation = route_token.generation;
+            slot_id = route_token.slot_id;
+            should_hide = true;
+        } else if (!result) {
+            (void)r0lab_raw_hook_page_token_release_locked(&route_token,
+                                                           true);
+            result = R0LAB_EAGAIN;
+        }
     }
     r0lab_unlock(flags);
 
     if (should_hide)
-        result = r0lab_raw_begin_gup_hide(&g_raw_page.raw);
+        result = r0lab_raw_begin_gup_hide(&page->raw);
 
     flags = r0lab_lock();
-    if (should_hide && g_raw_page.generation == generation) {
-        g_raw_page.transitioning = false;
+    if (should_hide && page->generation == generation &&
+        page->slot_id == slot_id) {
+        page->transitioning = false;
         if (!result) {
-            ++g_raw_page.gup_hook_begin_events;
+            ++page->gup_hook_begin_events;
             local->data0 = 1;
             local->data1 = generation;
+            local->data2 = slot_id;
         } else {
-            ++g_raw_page.gup_hook_failures;
+            ++page->gup_hook_failures;
         }
     }
     r0lab_unlock(flags);
@@ -4320,15 +4338,18 @@ static void r0lab_raw_gup_before_common(void *vma, unsigned long address,
 static void r0lab_raw_gup_after_common(hook_local_t *local)
 {
     uint64_t generation = local->data1;
+    uint16_t slot_id = (uint16_t)local->data2;
+    struct r0lab_raw_shadow_page *page = NULL;
     unsigned long flags;
     bool should_finish = local->data0 == 1;
     int result = R0LAB_EINVAL;
 
     if (should_finish) {
         flags = r0lab_lock();
-        if (g_raw_page.generation == generation &&
-            g_raw_page.raw.gup_hide_active && !g_raw_page.transitioning) {
-            g_raw_page.transitioning = true;
+        page = r0lab_raw_page_slot_locked(slot_id);
+        if (page && page->generation == generation &&
+            page->raw.gup_hide_active && !page->transitioning) {
+            page->transitioning = true;
         } else {
             should_finish = false;
         }
@@ -4336,15 +4357,16 @@ static void r0lab_raw_gup_after_common(hook_local_t *local)
     }
 
     if (should_finish)
-        result = r0lab_raw_finish_gup_hide(&g_raw_page.raw);
+        result = r0lab_raw_finish_gup_hide(&page->raw);
 
     flags = r0lab_lock();
-    if (should_finish && g_raw_page.generation == generation) {
-        g_raw_page.transitioning = false;
+    if (should_finish && page->generation == generation &&
+        page->slot_id == slot_id) {
+        page->transitioning = false;
         if (!result)
-            ++g_raw_page.gup_hook_finish_events;
+            ++page->gup_hook_finish_events;
         else
-            ++g_raw_page.gup_hook_failures;
+            ++page->gup_hook_failures;
     }
     if (local->data7 == 1)
         --g_raw_inflight;
@@ -5380,16 +5402,42 @@ static void r0lab_raw_exit_unhook(void)
         (void)r0lab_raw_wait_for_callbacks();
 }
 
+static unsigned int r0lab_raw_gup_hook_users_locked(void)
+{
+    unsigned int index;
+    unsigned int count = 0;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (g_raw_page_table.slots[index].gup_hook_installed)
+            ++count;
+    }
+    return count;
+}
+
+static bool r0lab_raw_gup_hook_uses_pte_locked(void)
+{
+    unsigned int index;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (g_raw_page_table.slots[index].gup_hook_installed)
+            return g_raw_page_table.slots[index].gup_hook_uses_pte;
+    }
+    return !!g_follow_page_pte;
+}
+
 static void r0lab_raw_gup_unhook(void)
 {
     bool installed;
     bool uses_pte;
+    unsigned int index;
     unsigned long flags = r0lab_lock();
 
-    installed = g_raw_page.gup_hook_installed;
-    uses_pte = g_raw_page.gup_hook_uses_pte;
-    g_raw_page.gup_hook_installed = false;
-    g_raw_page.gup_hook_uses_pte = false;
+    installed = r0lab_raw_gup_hook_users_locked() != 0;
+    uses_pte = r0lab_raw_gup_hook_uses_pte_locked();
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        g_raw_page_table.slots[index].gup_hook_installed = false;
+        g_raw_page_table.slots[index].gup_hook_uses_pte = false;
+    }
     r0lab_unlock(flags);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
@@ -6184,6 +6232,7 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
         return result;
     if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
         return R0LAB_EINVAL;
+    (void)r0lab_raw_wait_for_callbacks();
     flags = r0lab_lock();
     page = r0lab_raw_page_slot_locked(slot_id);
     if (!page) {
@@ -6273,6 +6322,12 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
     unsigned long shadow_pfn;
     uint64_t generation;
     uint32_t activation_events;
+    uint32_t gup_hook_begin_events;
+    uint32_t gup_hook_finish_events;
+    uint32_t gup_hook_failures;
+    unsigned long gup_begin_events;
+    unsigned long gup_finish_events;
+    bool gup_hook_installed;
     uint8_t record_backend;
     uint8_t record_state;
     const char *active_kind;
@@ -6302,6 +6357,12 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
     shadow_pfn = page->raw.shadow_pfn;
     generation = page->generation;
     activation_events = page->activation_events;
+    gup_hook_installed = page->gup_hook_installed;
+    gup_hook_begin_events = page->gup_hook_begin_events;
+    gup_hook_finish_events = page->gup_hook_finish_events;
+    gup_hook_failures = page->gup_hook_failures;
+    gup_begin_events = page->raw.gup_begin_events;
+    gup_finish_events = page->raw.gup_finish_events;
     record_backend = page->record.backend;
     record_state = page->record.state;
     r0lab_unlock(flags);
@@ -6309,10 +6370,13 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
     active_kind = r0lab_raw_active_kind(state, active_pte, original_pte,
                                         source_uxn_pte, shadow_rx_pte);
     snprintf(reply, sizeof(reply),
-             "raw_slot_inspect slot=%u page=%llx generation=%llu state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx record_backend=%s record_state=%s read_cycle=absent original_view_after_shadow=absent\n",
+             "raw_slot_inspect slot=%u page=%llx generation=%llu state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx gup_hook_installed=%u gup_hook_begin_events=%u gup_hook_finish_events=%u gup_hook_failures=%u gup_begin_events=%lu gup_finish_events=%lu record_backend=%s record_state=%s read_cycle=absent original_view_after_shadow=absent\n",
              (unsigned int)slot_id, (uint64_t)address,
              (unsigned long long)generation, state, activation_events,
              active_kind, source_pfn & 0xffffUL, shadow_pfn & 0xffffUL,
+             gup_hook_installed ? 1 : 0, gup_hook_begin_events,
+             gup_hook_finish_events, gup_hook_failures, gup_begin_events,
+             gup_finish_events,
              r0lab_page_record_backend_name(record_backend),
              r0lab_page_record_state_name(record_state));
     return r0lab_copy_reply(out_msg, outlen, reply);
@@ -7080,19 +7144,27 @@ static long r0lab_raw_read_cycle_status(uint64_t token, char __user *out_msg,
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
-                                   int outlen)
+static long r0lab_raw_gup_hook_arm_common(uint64_t token, uint16_t slot_id,
+                                          char __user *out_msg, int outlen,
+                                          bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
     const char *hook_name;
     void *hook_target;
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
+    bool should_install;
     bool uses_pte;
+    uint64_t generation;
     int result = r0lab_validate_owner(token);
 
     if (result)
         goto record;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
     hook_target = g_follow_page_pte ? g_follow_page_pte : g_follow_page_mask;
     hook_name = g_follow_page_pte ? "follow_page_pte" : "follow_page_mask";
     uses_pte = !!g_follow_page_pte;
@@ -7102,23 +7174,25 @@ static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
     }
 
     flags = r0lab_lock();
-    if (!g_raw_page.armed || g_raw_page.clearing ||
-        g_raw_page.transitioning ||
-        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || page->clearing ||
+        page->transitioning || page->raw.state != R0LAB_RAW_SHADOW_RX ||
         g_session.owner_tgid != r0lab_current_tgid()) {
         r0lab_unlock(flags);
         result = R0LAB_EAGAIN;
         goto record;
     }
-    installed = g_raw_page.gup_hook_installed;
+    installed = page->gup_hook_installed;
+    should_install = !installed && r0lab_raw_gup_hook_users_locked() == 0;
+    generation = page->generation;
     if (!installed) {
-        g_raw_page.gup_hook_begin_events = 0;
-        g_raw_page.gup_hook_finish_events = 0;
-        g_raw_page.gup_hook_failures = 0;
+        page->gup_hook_begin_events = 0;
+        page->gup_hook_finish_events = 0;
+        page->gup_hook_failures = 0;
     }
     r0lab_unlock(flags);
 
-    if (!installed) {
+    if (should_install) {
         if (uses_pte)
             result = hook_wrap5(hook_target, r0lab_raw_gup_pte_before,
                                 r0lab_raw_gup_pte_after, NULL);
@@ -7127,16 +7201,20 @@ static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
                                 r0lab_raw_gup_mask_after, NULL);
         if (result)
             goto record;
+    }
+    if (!installed) {
         flags = r0lab_lock();
-        if (g_raw_page.armed && !g_raw_page.clearing &&
-            g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX) {
-            g_raw_page.gup_hook_installed = true;
-            g_raw_page.gup_hook_uses_pte = uses_pte;
+        page = r0lab_raw_page_slot_locked(slot_id);
+        if (page && page->armed && !page->clearing &&
+            page->generation == generation &&
+            page->raw.state == R0LAB_RAW_SHADOW_RX) {
+            page->gup_hook_installed = true;
+            page->gup_hook_uses_pte = uses_pte;
         } else {
             result = R0LAB_EAGAIN;
         }
         r0lab_unlock(flags);
-        if (result) {
+        if (result && should_install) {
             if (uses_pte)
                 r0lab_hook_detach(hook_target, r0lab_raw_gup_pte_before,
                                   r0lab_raw_gup_pte_after);
@@ -7147,15 +7225,29 @@ static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
         }
     }
 
-    snprintf(reply, sizeof(reply),
-             "raw_gup_hook_ready symbol=%s follow_page_pte=%s follow_page_mask=%s installed=1 mode=%s target_mm_scoped=1 external_reader=1\n",
-             hook_name, g_follow_page_pte ? "present" : "absent",
-             g_follow_page_mask ? "present" : "absent", hook_name);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_gup_hook_ready symbol=%s follow_page_pte=%s follow_page_mask=%s installed=1 mode=%s target_mm_scoped=1 external_reader=1\n",
+                 hook_name, g_follow_page_pte ? "present" : "absent",
+                 g_follow_page_mask ? "present" : "absent", hook_name);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_gup_hook_ready slot=%u generation=%llu symbol=%s follow_page_pte=%s follow_page_mask=%s installed=1 mode=%s target_mm_scoped=1 page_record_routed=1 external_reader=1\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 hook_name, g_follow_page_pte ? "present" : "absent",
+                 g_follow_page_mask ? "present" : "absent", hook_name);
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
     r0lab_record(R0LAB_EVENT_REJECT, result);
     return result;
+}
+
+static long r0lab_raw_gup_hook_arm(uint64_t token, char __user *out_msg,
+                                   int outlen)
+{
+    return r0lab_raw_gup_hook_arm_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
 }
 
 static long r0lab_raw_fault_hook_arm_common(uint64_t token, uint16_t slot_id,
@@ -8716,13 +8808,16 @@ static long r0lab_raw_exit_hook_clear(uint64_t token, char __user *out_msg,
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_gup_hook_status(uint64_t token, char __user *out_msg,
-                                      int outlen)
+static long r0lab_raw_gup_hook_status_common(uint64_t token, uint16_t slot_id,
+                                             char __user *out_msg, int outlen,
+                                             bool legacy_reply)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
     unsigned long flags;
     bool installed;
     bool uses_pte;
+    uint64_t generation;
     uint32_t hook_begin_events;
     uint32_t hook_finish_events;
     uint32_t hook_failures;
@@ -8732,52 +8827,145 @@ static long r0lab_raw_gup_hook_status(uint64_t token, char __user *out_msg,
 
     if (result)
         return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
     flags = r0lab_lock();
-    installed = g_raw_page.gup_hook_installed;
-    uses_pte = g_raw_page.gup_hook_uses_pte;
-    hook_begin_events = g_raw_page.gup_hook_begin_events;
-    hook_finish_events = g_raw_page.gup_hook_finish_events;
-    hook_failures = g_raw_page.gup_hook_failures;
-    primitive_begin_events = g_raw_page.raw.gup_begin_events;
-    primitive_finish_events = g_raw_page.raw.gup_finish_events;
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->gup_hook_installed;
+    uses_pte = page->gup_hook_uses_pte;
+    generation = page->generation;
+    hook_begin_events = page->gup_hook_begin_events;
+    hook_finish_events = page->gup_hook_finish_events;
+    hook_failures = page->gup_hook_failures;
+    primitive_begin_events = page->raw.gup_begin_events;
+    primitive_finish_events = page->raw.gup_finish_events;
     r0lab_unlock(flags);
 
-    snprintf(reply, sizeof(reply),
-             "raw_gup_hook_status symbol=%s follow_page_pte=%s follow_page_mask=%s installed=%u hook_begin_events=%u hook_finish_events=%u hook_failures=%u primitive_begin_events=%lu primitive_finish_events=%lu target_mm_scoped=1 external_reader=1\n",
-             installed ? (uses_pte ? "follow_page_pte" : "follow_page_mask") :
-                         (g_follow_page_pte ? "follow_page_pte" :
-                          (g_follow_page_mask ? "follow_page_mask" : "absent")),
-             g_follow_page_pte ? "present" : "absent",
-             g_follow_page_mask ? "present" : "absent", installed ? 1 : 0,
-             hook_begin_events, hook_finish_events, hook_failures,
-             primitive_begin_events, primitive_finish_events);
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_gup_hook_status symbol=%s follow_page_pte=%s follow_page_mask=%s installed=%u hook_begin_events=%u hook_finish_events=%u hook_failures=%u primitive_begin_events=%lu primitive_finish_events=%lu target_mm_scoped=1 external_reader=1\n",
+                 installed ? (uses_pte ? "follow_page_pte" :
+                              "follow_page_mask") :
+                             (g_follow_page_pte ? "follow_page_pte" :
+                              (g_follow_page_mask ? "follow_page_mask" :
+                               "absent")),
+                 g_follow_page_pte ? "present" : "absent",
+                 g_follow_page_mask ? "present" : "absent",
+                 installed ? 1 : 0, hook_begin_events,
+                 hook_finish_events, hook_failures, primitive_begin_events,
+                 primitive_finish_events);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_gup_hook_status slot=%u generation=%llu symbol=%s follow_page_pte=%s follow_page_mask=%s installed=%u hook_begin_events=%u hook_finish_events=%u hook_failures=%u primitive_begin_events=%lu primitive_finish_events=%lu target_mm_scoped=1 page_record_routed=1 external_reader=1\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 installed ? (uses_pte ? "follow_page_pte" :
+                              "follow_page_mask") :
+                             (g_follow_page_pte ? "follow_page_pte" :
+                              (g_follow_page_mask ? "follow_page_mask" :
+                               "absent")),
+                 g_follow_page_pte ? "present" : "absent",
+                 g_follow_page_mask ? "present" : "absent",
+                 installed ? 1 : 0, hook_begin_events,
+                 hook_finish_events, hook_failures, primitive_begin_events,
+                 primitive_finish_events);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_gup_hook_status(uint64_t token, char __user *out_msg,
+                                      int outlen)
+{
+    return r0lab_raw_gup_hook_status_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
+}
+
+static long r0lab_raw_gup_hook_clear_common(uint64_t token, uint16_t slot_id,
+                                            char __user *out_msg, int outlen,
+                                            bool legacy_reply)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    unsigned long flags;
+    bool installed;
+    bool uses_pte;
+    bool should_detach;
+    uint64_t generation;
+    uint32_t hook_begin_events;
+    uint32_t hook_finish_events;
+    uint32_t hook_failures;
+    unsigned long primitive_begin_events;
+    unsigned long primitive_finish_events;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    installed = page->gup_hook_installed;
+    uses_pte = page->gup_hook_uses_pte;
+    page->gup_hook_installed = false;
+    page->gup_hook_uses_pte = false;
+    should_detach = installed && r0lab_raw_gup_hook_users_locked() == 0;
+    r0lab_unlock(flags);
+
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+    if (should_detach && uses_pte)
+        r0lab_hook_detach(g_follow_page_pte, r0lab_raw_gup_pte_before,
+                          r0lab_raw_gup_pte_after);
+    else if (should_detach)
+        r0lab_hook_detach(g_follow_page_mask, r0lab_raw_gup_mask_before,
+                          r0lab_raw_gup_mask_after);
+    if (installed)
+        (void)r0lab_raw_wait_for_callbacks();
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page) {
+        r0lab_unlock(flags);
+        return R0LAB_EINVAL;
+    }
+    generation = page->generation;
+    hook_begin_events = page->gup_hook_begin_events;
+    hook_finish_events = page->gup_hook_finish_events;
+    hook_failures = page->gup_hook_failures;
+    primitive_begin_events = page->raw.gup_begin_events;
+    primitive_finish_events = page->raw.gup_finish_events;
+    r0lab_unlock(flags);
+
+    if (legacy_reply)
+        snprintf(reply, sizeof(reply),
+                 "raw_gup_hook_cleared follow_page_pte=%s follow_page_mask=%s installed=0 hook_begin_events=%u hook_finish_events=%u hook_failures=%u primitive_begin_events=%lu primitive_finish_events=%lu\n",
+                 g_follow_page_pte ? "present" : "absent",
+                 g_follow_page_mask ? "present" : "absent",
+                 hook_begin_events, hook_finish_events, hook_failures,
+                 primitive_begin_events, primitive_finish_events);
+    else
+        snprintf(reply, sizeof(reply),
+                 "raw_slot_gup_hook_cleared slot=%u generation=%llu follow_page_pte=%s follow_page_mask=%s installed=0 hook_begin_events=%u hook_finish_events=%u hook_failures=%u primitive_begin_events=%lu primitive_finish_events=%lu page_record_routed=1\n",
+                 (unsigned int)slot_id, (unsigned long long)generation,
+                 g_follow_page_pte ? "present" : "absent",
+                 g_follow_page_mask ? "present" : "absent",
+                 hook_begin_events, hook_finish_events, hook_failures,
+                 primitive_begin_events, primitive_finish_events);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
 static long r0lab_raw_gup_hook_clear(uint64_t token, char __user *out_msg,
                                      int outlen)
 {
-    char reply[R0LAB_OUTPUT_CAPACITY];
-    unsigned long flags;
-    uint32_t hook_begin_events;
-    uint32_t hook_finish_events;
-    uint32_t hook_failures;
-    int result = r0lab_validate_owner(token);
-
-    if (result)
-        return result;
-    r0lab_raw_gup_unhook();
-    flags = r0lab_lock();
-    hook_begin_events = g_raw_page.gup_hook_begin_events;
-    hook_finish_events = g_raw_page.gup_hook_finish_events;
-    hook_failures = g_raw_page.gup_hook_failures;
-    r0lab_unlock(flags);
-    snprintf(reply, sizeof(reply),
-             "raw_gup_hook_cleared follow_page_pte=%s follow_page_mask=%s installed=0 hook_begin_events=%u hook_finish_events=%u hook_failures=%u\n",
-             g_follow_page_pte ? "present" : "absent",
-             g_follow_page_mask ? "present" : "absent", hook_begin_events,
-             hook_finish_events, hook_failures);
-    return r0lab_copy_reply(out_msg, outlen, reply);
+    return r0lab_raw_gup_hook_clear_common(
+        token, R0LAB_RAW_PRIMARY_SLOT, out_msg, outlen, true);
 }
 
 static long r0lab_raw_fork_hook_arm(uint64_t token, char __user *out_msg,
@@ -10003,6 +10191,30 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_gup_hook_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot gup hook arm ", 22)) {
+        value = args + 22;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_gup_hook_arm_common(token, slot_id, out_msg,
+                                             outlen, false);
+    }
+    if (!strncmp(args, "raw slot gup hook status ", 25)) {
+        value = args + 25;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_gup_hook_status_common(token, slot_id, out_msg,
+                                                outlen, false);
+    }
+    if (!strncmp(args, "raw slot gup hook clear ", 24)) {
+        value = args + 24;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_gup_hook_clear_common(token, slot_id, out_msg,
+                                               outlen, false);
     }
     if (!strncmp(args, "raw fork hook arm ", 18)) {
         value = args + 18;

@@ -7,9 +7,9 @@ MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-m1.kpm
 PACKAGE=dev.r0hook.lab
 ACTIVITY=dev.r0hook.lab/.MainActivity
-TOKEN=${RAW_GUP_HOOK_TOKEN:-0x729201}
+TOKEN=${RAW_GUP_HOOK_ROUTING_TOKEN:-0x729221}
 EVIDENCE_DIR="$ROOT/build/evidence"
-EVIDENCE="$EVIDENCE_DIR/raw-gup-hook-$(date +%Y%m%d-%H%M%S).log"
+EVIDENCE="$EVIDENCE_DIR/raw-gup-hook-routing-$(date +%Y%m%d-%H%M%S).log"
 MODULE_LOADED=0
 SESSION_OPEN=0
 
@@ -62,7 +62,7 @@ prepare_worker_shutdown() {
 }
 
 fail() {
-  printf '%s\n' "raw gup-hook failure: $*" >&2
+  printf '%s\n' "raw gup-hook-routing failure: $*" >&2
   exit 1
 }
 
@@ -78,13 +78,15 @@ cleanup() {
   cleanup_ok=1
   trap - EXIT INT TERM
   if [ "$SESSION_OPEN" -eq 1 ]; then
-    run_app_command "raw gup hook clear $TOKEN" >/dev/null 2>&1 || true
-    run_app_command "raw clear $TOKEN" >/dev/null 2>&1 || true
+    run_app_command "raw slot gup hook clear $TOKEN 0" >/dev/null 2>&1 || true
+    run_app_command "raw slot gup hook clear $TOKEN 1" >/dev/null 2>&1 || true
+    run_app_command "raw slot clear $TOKEN 0" >/dev/null 2>&1 || true
+    run_app_command "raw slot clear $TOKEN 1" >/dev/null 2>&1 || true
     CLEANUP_STATUS=$(run_app_command status 2>&1 || true)
     case "$CLEANUP_STATUS" in
       *"raw_slots=0"*) ;;
       *)
-        printf '%s\n' "raw gup-hook cleanup did not confirm an empty raw slot; preserving module" >&2
+        printf '%s\n' "raw gup-hook-routing cleanup did not confirm empty raw slots; preserving module" >&2
         cleanup_ok=0
         ;;
     esac
@@ -96,10 +98,10 @@ cleanup() {
     if prepare_worker_shutdown >/dev/null 2>&1; then
       supercmd module unload "$MODULE" >/dev/null 2>&1 || true
     else
-      printf '%s\n' "raw gup-hook cleanup could not stop workers; preserving module" >&2
+      printf '%s\n' "raw gup-hook-routing cleanup could not stop workers; preserving module" >&2
     fi
   elif [ "$MODULE_LOADED" -eq 1 ]; then
-    printf '%s\n' "raw gup-hook cleanup incomplete; module intentionally left resident" >&2
+    printf '%s\n' "raw gup-hook-routing cleanup incomplete; module intentionally left resident" >&2
   fi
   exit "$status"
 }
@@ -133,6 +135,7 @@ printf 'module_load=%s\n' "$LOAD_OUTPUT" | tee -a "$EVIDENCE"
 STATUS_INITIAL=$(run_app_command status)
 require_contains "$STATUS_INITIAL" 'version=5'
 require_contains "$STATUS_INITIAL" 'raw_slots=0'
+require_contains "$STATUS_INITIAL" 'raw_page_table_slots=2'
 printf '%s\n' "$STATUS_INITIAL" >> "$EVIDENCE"
 
 ARM_OUTPUT=$(run_app_command "arm $TOKEN")
@@ -140,42 +143,53 @@ require_contains "$ARM_OUTPUT" 'armed uid='
 SESSION_OPEN=1
 printf '%s\n' "$ARM_OUTPUT" >> "$EVIDENCE"
 
-RAW_OUTPUT=$(run_app_command "raw gup hook run $TOKEN")
+RAW_OUTPUT=$(run_app_command "raw gup hook routing run $TOKEN")
 printf '%s\n' "$RAW_OUTPUT" >> "$EVIDENCE"
-require_contains "$RAW_OUTPUT" 'raw mode=gup-hook failures=0'
+require_contains "$RAW_OUTPUT" 'raw mode=gup-hook-routing failures=0'
 require_contains "$RAW_OUTPUT" 'reader=external'
-require_contains "$RAW_OUTPUT" 'normal_value=42'
-require_contains "$RAW_OUTPUT" 'shadow_value=99'
-require_contains "$RAW_OUTPUT" 'gup_read_word=52800540'
-require_contains "$RAW_OUTPUT" 'shadow_after_gup=52800c60'
-require_contains "$RAW_OUTPUT" 'shadow_after_gup_value=99'
-require_contains "$RAW_OUTPUT" 'restored_value=42'
-require_contains "$RAW_OUTPUT" 'result_read=12'
-require_contains "$RAW_OUTPUT" 'reader_errno=0'
-require_contains "$RAW_OUTPUT" 'child_exit=0'
-require_contains "$RAW_OUTPUT" 'raw_gup_hook_ready'
 require_contains "$RAW_OUTPUT" 'target_mm_scoped=1'
-require_contains "$RAW_OUTPUT" 'external_reader=1'
-require_contains "$RAW_OUTPUT" 'status_source=inspect_clear'
+require_contains "$RAW_OUTPUT" 'page_record_routed=1'
+require_contains "$RAW_OUTPUT" 'status_source=cross_inspect_clear'
+require_contains "$RAW_OUTPUT" 'normal=42/42 shadow=99/99'
+require_contains "$RAW_OUTPUT" 'gup_read_words=52800540/52800540'
+require_contains "$RAW_OUTPUT" 'after_gup_shadow=52800c60/52800c60'
+require_contains "$RAW_OUTPUT" 'after_gup_shadow_values=99/99'
+require_contains "$RAW_OUTPUT" 'final=42/42'
+require_contains "$RAW_OUTPUT" 'route_slot0_events=1 route_slot1_events=1'
+require_contains "$RAW_OUTPUT" 'cross_slot1_after_slot0=0 cross_slot0_after_slot1=0'
+require_contains "$RAW_OUTPUT" 'child_exit=0/0'
+require_contains "$RAW_OUTPUT" 'reader_errno=0/0'
+require_contains "$RAW_OUTPUT" 'handler_faults=0'
+require_contains "$RAW_OUTPUT" 'raw_slot_gup_hook_ready slot=0'
+require_contains "$RAW_OUTPUT" 'raw_slot_gup_hook_ready slot=1'
+require_contains "$RAW_OUTPUT" 'status1_after_slot0="raw_slot_inspect slot=1'
+require_contains "$RAW_OUTPUT" 'status0_after_slot1="raw_slot_inspect slot=0'
+require_contains "$RAW_OUTPUT" 'hook0_clear="raw_slot_gup_hook_cleared slot=0'
+require_contains "$RAW_OUTPUT" 'hook1_clear="raw_slot_gup_hook_cleared slot=1'
+require_contains "$RAW_OUTPUT" 'gup_hook_begin_events=1'
+require_contains "$RAW_OUTPUT" 'gup_hook_finish_events=1'
+require_contains "$RAW_OUTPUT" 'gup_hook_failures=0'
+require_contains "$RAW_OUTPUT" 'gup_begin_events=1'
+require_contains "$RAW_OUTPUT" 'gup_finish_events=1'
 require_contains "$RAW_OUTPUT" 'hook_begin_events=1'
 require_contains "$RAW_OUTPUT" 'hook_finish_events=1'
 require_contains "$RAW_OUTPUT" 'hook_failures=0'
-require_contains "$RAW_OUTPUT" 'gup_begin_events=1'
-require_contains "$RAW_OUTPUT" 'gup_finish_events=1'
-require_contains "$RAW_OUTPUT" 'handler_faults=0'
+require_contains "$RAW_OUTPUT" 'primitive_begin_events=1'
+require_contains "$RAW_OUTPUT" 'primitive_finish_events=1'
 
 EVENT_OUTPUT=$(run_app_command "events $TOKEN")
 ACTIVATE_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=21 result=0' || true)
 GUP_HOOK_BEGIN_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=29 result=0' || true)
 GUP_HOOK_FINISH_COUNT=$(printf '%s\n' "$EVENT_OUTPUT" | grep -c 'op=30 result=0' || true)
-[ "$ACTIVATE_COUNT" -eq 1 ] || fail "expected one raw activation event, got $ACTIVATE_COUNT"
-[ "$GUP_HOOK_BEGIN_COUNT" -eq 1 ] || fail "expected one raw gup hook begin event, got $GUP_HOOK_BEGIN_COUNT"
-[ "$GUP_HOOK_FINISH_COUNT" -eq 1 ] || fail "expected one raw gup hook finish event, got $GUP_HOOK_FINISH_COUNT"
+[ "$ACTIVATE_COUNT" -eq 2 ] || fail "expected two raw activation events, got $ACTIVATE_COUNT"
+[ "$GUP_HOOK_BEGIN_COUNT" -eq 2 ] || fail "expected two raw gup hook begin events, got $GUP_HOOK_BEGIN_COUNT"
+[ "$GUP_HOOK_FINISH_COUNT" -eq 2 ] || fail "expected two raw gup hook finish events, got $GUP_HOOK_FINISH_COUNT"
 printf '%s\n' "$EVENT_OUTPUT" >> "$EVIDENCE"
 
 STATUS_ACTIVE=$(run_app_command status)
 require_contains "$STATUS_ACTIVE" 'active=1'
 require_contains "$STATUS_ACTIVE" 'raw_slots=0'
+require_contains "$STATUS_ACTIVE" 'raw_page_table_active=0'
 printf '%s\n' "$STATUS_ACTIVE" >> "$EVIDENCE"
 
 CLOSE_OUTPUT=$(run_app_command "close $TOKEN")
@@ -197,6 +211,6 @@ FINAL_MODULES=$(supercmd module list 2>&1) || fail "final list failed: $FINAL_MO
 WARN_AFTER=$(adb_device shell su -c cat /sys/kernel/warn_count | tr -d '\r')
 [ "$WARN_BEFORE" = "$WARN_AFTER" ] ||
   fail "warn_count changed: $WARN_BEFORE -> $WARN_AFTER"
-printf 'raw_gup_hook=pass warn_after=%s final_modules=empty result=pass\n' \
+printf 'raw_gup_hook_routing=pass route=gup page_record_routed=1 warn_after=%s final_modules=empty result=pass\n' \
   "$WARN_AFTER" | tee -a "$EVIDENCE"
 printf '%s\n' "$EVIDENCE"
