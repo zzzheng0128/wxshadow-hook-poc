@@ -137,6 +137,7 @@ run_phase raw_fork_hook scripts/test_raw_fork_hook_device.sh
 run_phase raw_fault_hook scripts/test_raw_fault_hook_device.sh
 run_phase raw_fault_data_probe scripts/test_raw_fault_data_probe_device.sh
 run_phase raw_abort_probe scripts/test_raw_abort_probe_device.sh
+run_phase raw_abort_write_probe scripts/test_raw_abort_write_probe_device.sh
 
 WARN_AFTER=$(read_warn_count) || fail 'final: could not read warn_count'
 assert_clean_device final

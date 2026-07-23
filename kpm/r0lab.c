@@ -46,6 +46,9 @@
 #define R0LAB_FAULT_KIND_READ 1U
 #define R0LAB_FAULT_KIND_WRITE 2U
 #define R0LAB_FAULT_KIND_EXEC 3U
+#define R0LAB_ABORT_PROBE_SOURCE_NONE 0U
+#define R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION 1U
+#define R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION 2U
 
 #define R0LAB_EINVAL (-22)
 #define R0LAB_EPERM (-1)
@@ -320,6 +323,7 @@ struct r0lab_raw_shadow_page {
     uint32_t abort_probe_failures;
     uint32_t abort_probe_last_esr;
     unsigned long abort_probe_last_far;
+    uint8_t abort_probe_source;
 };
 
 struct r0lab_s4_breakpoint {
@@ -5180,8 +5184,18 @@ static long r0lab_raw_fault_hook_status(uint64_t token, char __user *out_msg,
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
-static long r0lab_raw_abort_probe_arm(uint64_t token, char __user *out_msg,
-                                      int outlen)
+static const char *r0lab_raw_abort_probe_source_name(uint8_t source)
+{
+    if (source == R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION)
+        return "raw_va_prot_none";
+    if (source == R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION)
+        return "raw_va_rx_write";
+    return "none";
+}
+
+static long r0lab_raw_abort_probe_arm_common(uint64_t token,
+                                             char __user *out_msg,
+                                             int outlen, uint8_t source)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
     unsigned long flags;
@@ -5189,6 +5203,11 @@ static long r0lab_raw_abort_probe_arm(uint64_t token, char __user *out_msg,
 
     if (result)
         goto record;
+    if (source != R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION &&
+        source != R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
 
     flags = r0lab_lock();
     if (!g_raw_page.armed || !g_raw_page.hook_installed ||
@@ -5207,15 +5226,31 @@ static long r0lab_raw_abort_probe_arm(uint64_t token, char __user *out_msg,
     g_raw_page.abort_probe_failures = 0;
     g_raw_page.abort_probe_last_esr = 0;
     g_raw_page.abort_probe_last_far = 0;
+    g_raw_page.abort_probe_source = source;
     r0lab_unlock(flags);
 
     snprintf(reply, sizeof(reply),
-             "raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=raw_va_prot_none observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n");
+             "raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+             r0lab_raw_abort_probe_source_name(source));
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
     r0lab_record(R0LAB_EVENT_REJECT, result);
     return result;
+}
+
+static long r0lab_raw_abort_probe_arm(uint64_t token, char __user *out_msg,
+                                      int outlen)
+{
+    return r0lab_raw_abort_probe_arm_common(
+        token, out_msg, outlen, R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION);
+}
+
+static long r0lab_raw_abort_write_probe_arm(uint64_t token,
+                                            char __user *out_msg, int outlen)
+{
+    return r0lab_raw_abort_probe_arm_common(
+        token, out_msg, outlen, R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION);
 }
 
 static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
@@ -5236,6 +5271,7 @@ static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
     uint32_t last_wnr;
     uint32_t permission_fault;
     uint32_t translation_fault;
+    uint8_t source;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -5249,6 +5285,7 @@ static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
     failures = g_raw_page.abort_probe_failures;
     last_esr = g_raw_page.abort_probe_last_esr;
     last_far = g_raw_page.abort_probe_last_far;
+    source = g_raw_page.abort_probe_source;
     r0lab_unlock(flags);
 
     last_ec = last_esr >> R0LAB_M3_ESR_EC_SHIFT;
@@ -5257,12 +5294,13 @@ static long r0lab_raw_abort_probe_status(uint64_t token, char __user *out_msg,
     permission_fault = last_fsc_type == R0LAB_M3_ESR_FSC_PERM ? 1 : 0;
     translation_fault = last_fsc_type == 0x04U ? 1 : 0;
     snprintf(reply, sizeof(reply),
-             "raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=raw_va_prot_none observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+             "raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
              g_do_mem_abort ? "do_mem_abort" : "absent",
              installed ? 1 : 0, armed ? 1 : 0, read_events, write_events,
              exec_events, read_events + write_events + exec_events, failures,
              (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
-             last_wnr, permission_fault, translation_fault);
+             last_wnr, permission_fault, translation_fault,
+             r0lab_raw_abort_probe_source_name(source));
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -5278,6 +5316,7 @@ static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
     uint32_t failures;
     uint32_t last_esr;
     unsigned long last_far;
+    uint8_t source;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -5291,6 +5330,8 @@ static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
     failures = g_raw_page.abort_probe_failures;
     last_esr = g_raw_page.abort_probe_last_esr;
     last_far = g_raw_page.abort_probe_last_far;
+    source = g_raw_page.abort_probe_source;
+    g_raw_page.abort_probe_source = R0LAB_ABORT_PROBE_SOURCE_NONE;
     r0lab_unlock(flags);
 
     if (armed) {
@@ -5299,10 +5340,11 @@ static long r0lab_raw_abort_probe_clear(uint64_t token, char __user *out_msg,
             goto record;
     }
     snprintf(reply, sizeof(reply),
-             "raw_abort_probe_cleared armed=0 read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x\n",
+             "raw_abort_probe_cleared armed=0 read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x source=%s\n",
              read_events, write_events, exec_events,
              read_events + write_events + exec_events, failures,
-             (uint64_t)last_far, last_esr);
+             (uint64_t)last_far, last_esr,
+             r0lab_raw_abort_probe_source_name(source));
     return r0lab_copy_reply(out_msg, outlen, reply);
 
 record:
@@ -6553,6 +6595,27 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_raw_fault_hook_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw abort write probe arm ", 26)) {
+        value = args + 26;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_write_probe_arm(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw abort write probe status ", 29)) {
+        value = args + 29;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_status(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw abort write probe clear ", 28)) {
+        value = args + 28;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_clear(token, out_msg, outlen);
     }
     if (!strncmp(args, "raw abort probe arm ", 20)) {
         value = args + 20;
