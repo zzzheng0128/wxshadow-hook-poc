@@ -39,6 +39,7 @@ RAW_PLAN=docs/wxshadow-raw-pte-implementation-plan.md
 REPLICA_PLAN=docs/wxshadow-replica-plan.md
 RAW_COMPAT=docs/pixel7-panther-raw-pte-compatibility.md
 S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
+FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -47,6 +48,7 @@ require_file "$RAW_PLAN"
 require_file "$REPLICA_PLAN"
 require_file "$RAW_COMPAT"
 require_file "$S4_PLAN"
+require_file "$FINAL_ROADMAP"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -65,8 +67,17 @@ require_text "$RAW_PLAN" 'same VA, two PFNs'
 require_text "$RAW_PLAN" 'record_backend=raw_two_pfn'
 require_text "$REPLICA_PLAN" 'wxshadow Replica Plan For r0lab'
 require_text "$REPLICA_PLAN" 'no `shadow_xom` symbols in KPM source'
+require_text "$REPLICA_PLAN" 'Future work must'
 require_text "$REPLICA_PLAN" 'struct r0lab_page_record'
 require_text "$REPLICA_PLAN" 'record_backend=visible_clone'
+require_text "$FINAL_ROADMAP" 'wxshadow Final Experiment Roadmap'
+require_text "$FINAL_ROADMAP" 'Raw Page Table Skeleton'
+require_text "$FINAL_ROADMAP" 'Two-Page Lab Harness'
+require_text "$FINAL_ROADMAP" 'Page-Local Patch Records'
+require_text "$FINAL_ROADMAP" 'Hook Routing By Page Record'
+require_text "$FINAL_ROADMAP" 'Controlled Hidden-Read Decision Gate'
+require_text "$FINAL_ROADMAP" 'Do not re-enable `shadow_xom`'
+require_text "$FINAL_ROADMAP" 'Do not add arbitrary process or arbitrary address support.'
 require_text "$CONTRACT" 'page_records'
 require_text "$RAW_COMPAT" 'lab_two_pfn_pass'
 require_text "$RAW_COMPAT" 'kpm_locked_target_mm_writer=proven'
