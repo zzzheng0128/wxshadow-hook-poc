@@ -2945,6 +2945,336 @@ finish:
     return failures ? -1 : 0;
 }
 
+static int r0lab_raw_fault_hook_routing_run(const char *token_text,
+                                            char *output, size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint32_t *code0;
+    uint32_t *code1;
+    volatile uint32_t *readable0;
+    volatile uint32_t *readable1;
+    uint64_t token;
+    uint64_t generation0 = 0;
+    uint64_t generation1 = 0;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    size_t page_size;
+    char command[160];
+    char reply[512] = {0};
+    char ready0[256] = {0};
+    char ready1[256] = {0};
+    char hook0_reply[512] = {0};
+    char hook1_reply[512] = {0};
+    char status0_after_fault[768] = {0};
+    char status1_after_slot0[768] = {0};
+    char status1_after_fault[768] = {0};
+    char status0_after_slot1[768] = {0};
+    char hook0_clear_reply[512] = {0};
+    char hook1_clear_reply[512] = {0};
+    uint32_t word0_before = 0;
+    uint32_t word1_before = 0;
+    uint32_t word0_shadow = 0;
+    uint32_t word1_shadow = 0;
+    uint32_t fault0_read_word = 0;
+    uint32_t fault1_read_word = 0;
+    uint32_t word0_after_clear = 0;
+    uint32_t word1_after_clear = 0;
+    long arm0_rc = -1;
+    long arm1_rc = -1;
+    long ready0_rc = -1;
+    long ready1_rc = -1;
+    long hook0_arm_rc = -1;
+    long hook1_arm_rc = -1;
+    long mprotect0_none_rc = -1;
+    long mprotect1_none_rc = -1;
+    long status0_after_fault_rc = -1;
+    long status1_after_slot0_rc = -1;
+    long status1_after_fault_rc = -1;
+    long status0_after_slot1_rc = -1;
+    long hook0_clear_rc = -1;
+    long hook1_clear_rc = -1;
+    long clear0_rc = -1;
+    long cleared0_rc = -1;
+    long clear1_rc = -1;
+    long cleared1_rc = -1;
+    int mprotect0_none_errno = 0;
+    int mprotect1_none_errno = 0;
+    int normal0 = -1;
+    int normal1 = -1;
+    int shadow0 = -1;
+    int shadow1 = -1;
+    int final0 = -1;
+    int final1 = -1;
+    int fault0_completed = 0;
+    int fault1_completed = 0;
+    int handler_installed = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw fault hook routing token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    page0 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page1 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page0 == MAP_FAILED || page1 == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw fault hook routing mmap errno=%d", errno);
+        if (page0 != MAP_FAILED)
+            munmap(page0, page_size);
+        if (page1 != MAP_FAILED)
+            munmap(page1, page_size);
+        return -1;
+    }
+    code0 = page0;
+    code1 = page1;
+    code0[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code0[1] = R0LAB_M3_CODE_RET;
+    code1[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code1[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page0, (char *)page0 + page_size);
+    __builtin___clear_cache((char *)page1, (char *)page1 + page_size);
+    if (mprotect(page0, page_size, PROT_READ | PROT_EXEC) ||
+        mprotect(page1, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=raw fault hook routing mprotect errno=%d",
+                 errno);
+        munmap(page1, page_size);
+        munmap(page0, page_size);
+        return -1;
+    }
+
+    readable0 = (volatile uint32_t *)page0;
+    readable1 = (volatile uint32_t *)page1;
+    word0_before = readable0[0];
+    word1_before = readable1[0];
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 0 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0);
+    arm0_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm0_rc < 0)
+        goto finish;
+    snprintf(command, sizeof(command), "raw slot arm 0x%llx 1 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page1);
+    arm1_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm1_rc < 0)
+        goto clear_all;
+
+    ready0_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 0,
+                                        ready0, sizeof(ready0));
+    ready1_rc = r0lab_raw_slot_wait_for("raw slot ready", token, 1,
+                                        ready1, sizeof(ready1));
+    if (ready0_rc < 0 || ready1_rc < 0 ||
+        r0lab_raw_parse_slot_generation(ready0, "raw_slot_ready", 0,
+                                        &generation0) ||
+        r0lab_raw_parse_slot_generation(ready1, "raw_slot_ready", 1,
+                                        &generation1))
+        goto clear_all;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page_size = page_size;
+    g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear_all;
+    handler_installed = 1;
+
+    g_r0lab_raw_signal_page = page0;
+    shadow0 = ((int (*)(void))page0)();
+    word0_shadow = readable0[0];
+    g_r0lab_raw_signal_page = page1;
+    shadow1 = ((int (*)(void))page1)();
+    word1_shadow = readable1[0];
+
+    snprintf(command, sizeof(command), "raw slot fault hook arm 0x%llx 0",
+             (unsigned long long)token);
+    hook0_arm_rc = r0lab_control_raw(command, hook0_reply,
+                                     sizeof(hook0_reply));
+    snprintf(command, sizeof(command), "raw slot fault hook arm 0x%llx 1",
+             (unsigned long long)token);
+    hook1_arm_rc = r0lab_control_raw(command, hook1_reply,
+                                     sizeof(hook1_reply));
+
+    if (hook0_arm_rc >= 0 && hook1_arm_rc >= 0) {
+        g_r0lab_raw_signal_page = page0;
+        g_r0lab_raw_signal_jump_on_fault = 0;
+        errno = 0;
+        mprotect0_none_rc = mprotect(page0, page_size, PROT_NONE);
+        mprotect0_none_errno = errno;
+        if (!mprotect0_none_rc) {
+            fault0_read_word = readable0[0];
+            fault0_completed = 1;
+        }
+        snprintf(command, sizeof(command),
+                 "raw slot fault hook status 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_fault_rc =
+            r0lab_control_raw(command, status0_after_fault,
+                              sizeof(status0_after_fault));
+        snprintf(command, sizeof(command),
+                 "raw slot fault hook status 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_slot0_rc =
+            r0lab_control_raw(command, status1_after_slot0,
+                              sizeof(status1_after_slot0));
+
+        g_r0lab_raw_signal_page = page1;
+        g_r0lab_raw_signal_jump_on_fault = 0;
+        errno = 0;
+        mprotect1_none_rc = mprotect(page1, page_size, PROT_NONE);
+        mprotect1_none_errno = errno;
+        if (!mprotect1_none_rc) {
+            fault1_read_word = readable1[0];
+            fault1_completed = 1;
+        }
+        snprintf(command, sizeof(command),
+                 "raw slot fault hook status 0x%llx 1",
+                 (unsigned long long)token);
+        status1_after_fault_rc =
+            r0lab_control_raw(command, status1_after_fault,
+                              sizeof(status1_after_fault));
+        snprintf(command, sizeof(command),
+                 "raw slot fault hook status 0x%llx 0",
+                 (unsigned long long)token);
+        status0_after_slot1_rc =
+            r0lab_control_raw(command, status0_after_slot1,
+                              sizeof(status0_after_slot1));
+    }
+
+    if (hook0_arm_rc < 0 || hook1_arm_rc < 0 ||
+        mprotect0_none_rc < 0 || mprotect1_none_rc < 0 ||
+        status0_after_fault_rc < 0 || status1_after_slot0_rc < 0 ||
+        status1_after_fault_rc < 0 || status0_after_slot1_rc < 0 ||
+        !strstr(hook0_reply, "raw_slot_fault_hook_ready slot=0") ||
+        !strstr(hook1_reply, "raw_slot_fault_hook_ready slot=1") ||
+        !strstr(hook0_reply, "page_record_routed=1") ||
+        !strstr(hook1_reply, "page_record_routed=1") ||
+        !strstr(hook0_reply, "observe_only=1") ||
+        !strstr(hook1_reply, "observe_only=1") ||
+        !strstr(hook0_reply, "pte_switch=0") ||
+        !strstr(hook1_reply, "pte_switch=0") ||
+        !strstr(status0_after_fault, "slot=0") ||
+        !strstr(status0_after_fault, "read_events=0") ||
+        !strstr(status0_after_fault, "write_events=0") ||
+        !strstr(status0_after_fault, "exec_events=0") ||
+        !strstr(status0_after_fault, "hit_events=0") ||
+        !strstr(status0_after_fault, "page_record_routed=1") ||
+        !strstr(status1_after_slot0, "slot=1") ||
+        !strstr(status1_after_slot0, "read_events=0") ||
+        !strstr(status1_after_slot0, "write_events=0") ||
+        !strstr(status1_after_slot0, "hit_events=0") ||
+        !strstr(status1_after_fault, "slot=1") ||
+        !strstr(status1_after_fault, "read_events=0") ||
+        !strstr(status1_after_fault, "write_events=0") ||
+        !strstr(status1_after_fault, "exec_events=0") ||
+        !strstr(status1_after_fault, "hit_events=0") ||
+        !strstr(status0_after_slot1, "slot=0") ||
+        !strstr(status0_after_slot1, "read_events=0") ||
+        !strstr(status0_after_slot1, "write_events=0") ||
+        !strstr(status0_after_slot1, "hit_events=0"))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw slot fault hook clear 0x%llx 0",
+             (unsigned long long)token);
+    hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                       sizeof(hook0_clear_reply));
+    snprintf(command, sizeof(command), "raw slot fault hook clear 0x%llx 1",
+             (unsigned long long)token);
+    hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                       sizeof(hook1_clear_reply));
+
+clear_all:
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+    if (hook0_arm_rc >= 0 && hook0_clear_rc < 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot fault hook clear 0x%llx 0",
+                 (unsigned long long)token);
+        hook0_clear_rc = r0lab_control_raw(command, hook0_clear_reply,
+                                           sizeof(hook0_clear_reply));
+    }
+    if (hook1_arm_rc >= 0 && hook1_clear_rc < 0) {
+        snprintf(command, sizeof(command),
+                 "raw slot fault hook clear 0x%llx 1",
+                 (unsigned long long)token);
+        hook1_clear_rc = r0lab_control_raw(command, hook1_clear_reply,
+                                           sizeof(hook1_clear_reply));
+    }
+    if (arm0_rc >= 0)
+        r0lab_raw_slot_clear(token, 0, &clear0_rc, &cleared0_rc);
+    if (arm1_rc >= 0)
+        r0lab_raw_slot_clear(token, 1, &clear1_rc, &cleared1_rc);
+    if (cleared0_rc >= 0 && cleared1_rc >= 0) {
+        (void)mprotect(page0, page_size, PROT_READ | PROT_EXEC);
+        (void)mprotect(page1, page_size, PROT_READ | PROT_EXEC);
+        word0_after_clear = readable0[0];
+        word1_after_clear = readable1[0];
+        final0 = ((int (*)(void))page0)();
+        final1 = ((int (*)(void))page1)();
+    }
+
+finish:
+    if (normal0 != 42 || normal1 != 42 || shadow0 != 99 || shadow1 != 99 ||
+        final0 != 42 || final1 != 42 ||
+        word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word0_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        word1_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        fault0_read_word != R0LAB_M4_CODE_MOV_W0_99 ||
+        fault1_read_word != R0LAB_M4_CODE_MOV_W0_99 ||
+        word0_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+        word1_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+        arm0_rc < 0 || arm1_rc < 0 || ready0_rc < 0 || ready1_rc < 0 ||
+        hook0_arm_rc < 0 || hook1_arm_rc < 0 ||
+        hook0_clear_rc < 0 || hook1_clear_rc < 0 ||
+        clear0_rc < 0 || cleared0_rc < 0 || clear1_rc < 0 ||
+        cleared1_rc < 0 || !fault0_completed || !fault1_completed ||
+        g_r0lab_raw_handler_faults != 2)
+        ++failures;
+
+    snprintf(output, output_size,
+             "raw mode=fault-hook-routing fault_route=handle_mm_fault failures=%d route_blocked=prot_none_badaccess_before_handle_mm_fault positive_route=0 page_record_routed=0 target_mm_scoped=1 observe_only=1 pte_switch=0 data_fault_source=raw_va_prot_none normal=%d/%d shadow=%d/%d fault_reads=%08x/%08x final=%d/%d route_slot0_events=0 route_slot1_events=0 cross_slot1_after_slot0=0 cross_slot0_after_slot1=0 arm_rc=%ld/%ld ready_rc=%ld/%ld hook_arm_rc=%ld/%ld mprotect_none_rc=%ld/%ld mprotect_none_errno=%d/%d status_rc=%ld/%ld/%ld/%ld hook_clear_rc=%ld/%ld clear_rc=%ld/%ld cleared_rc=%ld/%ld handler_faults=%d generation=%llu/%llu ready0=\"%s\" ready1=\"%s\" hook0=\"%s\" hook1=\"%s\" status0_after_fault=\"%s\" status1_after_slot0=\"%s\" status1_after_fault=\"%s\" status0_after_slot1=\"%s\" hook0_clear=\"%s\" hook1_clear=\"%s\"",
+             failures, normal0, normal1, shadow0, shadow1,
+             fault0_read_word, fault1_read_word, final0, final1, arm0_rc,
+             arm1_rc, ready0_rc, ready1_rc, hook0_arm_rc, hook1_arm_rc,
+             mprotect0_none_rc, mprotect1_none_rc, mprotect0_none_errno,
+             mprotect1_none_errno, status0_after_fault_rc,
+             status1_after_slot0_rc, status1_after_fault_rc,
+             status0_after_slot1_rc, hook0_clear_rc, hook1_clear_rc,
+             clear0_rc, clear1_rc, cleared0_rc, cleared1_rc,
+             (int)g_r0lab_raw_handler_faults,
+             (unsigned long long)generation0,
+             (unsigned long long)generation1, ready0, ready1, hook0_reply,
+             hook1_reply, status0_after_fault, status1_after_slot0,
+             status1_after_fault, status0_after_slot1, hook0_clear_reply,
+             hook1_clear_reply);
+    if (page1 != MAP_FAILED)
+        munmap(page1, page_size);
+    if (page0 != MAP_FAILED)
+        munmap(page0, page_size);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_raw_hook_routing_run(const char *token_text, char *output,
                                       size_t output_size)
 {
@@ -7110,6 +7440,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw hook routing run ", 21)) {
         r0lab_raw_hook_routing_run(args + 21, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw fault hook routing run ", 27)) {
+        r0lab_raw_fault_hook_routing_run(args + 27, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

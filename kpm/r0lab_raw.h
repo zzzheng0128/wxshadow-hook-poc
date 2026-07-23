@@ -60,6 +60,7 @@ int r0lab_raw_begin_fault_read_cycle(struct r0lab_raw_page *page);
 int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page);
 int r0lab_raw_vma_matches(const struct r0lab_raw_page *page, void *vma,
                           unsigned long address);
+void *r0lab_raw_vma_mm(void *vma);
 int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page);
 int r0lab_raw_finish_gup_hide(struct r0lab_raw_page *page);
 int r0lab_raw_begin_fork_hide(struct r0lab_raw_page *page, void *oldmm);

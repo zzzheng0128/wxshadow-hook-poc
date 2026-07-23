@@ -555,6 +555,13 @@ int r0lab_raw_vma_matches(const struct r0lab_raw_page *page, void *vma_ptr,
            page_address + PAGE_SIZE <= vma->vm_end;
 }
 
+void *r0lab_raw_vma_mm(void *vma_ptr)
+{
+    struct vm_area_struct *vma = (struct vm_area_struct *)vma_ptr;
+
+    return vma ? vma->vm_mm : NULL;
+}
+
 int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page)
 {
     struct mm_struct *mm;
