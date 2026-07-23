@@ -62,6 +62,7 @@ require_text "$VERIFICATION" 'scripts/test_v1_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_read_cycle_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_syscall_read_cycle_device.sh'
+require_text "$VERIFICATION" 'scripts/test_raw_abort_probe_device.sh'
 require_text "$VERIFICATION" 'scripts/test_raw_exit_hook_device.sh'
 require_text "$VERIFICATION" 'scripts/probe_s4_abi_device.sh'
 require_text "$VERIFICATION" 'M0_LOOPS=100'
@@ -107,6 +108,7 @@ scripts/test_raw_gup_hook_device.sh
 scripts/test_raw_fork_hook_device.sh
 scripts/test_raw_fault_hook_device.sh
 scripts/test_raw_fault_data_probe_device.sh
+scripts/test_raw_abort_probe_device.sh
 scripts/test_raw_exit_hook_device.sh
 scripts/test_v1_device.sh
 '
@@ -174,10 +176,13 @@ require_text kpm/r0lab.c 'raw_gup_%s result=%d state=%lu active_kind=%s gup_hide
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_READ_CYCLE_BEGIN'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_READ_CYCLE_FINISH'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_SYSCALL_READ_CYCLE_BEGIN'
+require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_ABORT_PROBE_HIT'
 require_text kpm/r0lab.c 'raw_read_cycle_begin result=%d state=%lu active_kind=%s read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu read_cycle=uxn_original_exec_resume trigger=supercall pte_switch=1 data_fault=absent exec_resume=pending'
 require_text kpm/r0lab.c 'raw_read_cycle_status state=%lu active_kind=%s read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu read_cycle=uxn_original_exec_resume trigger=supercall pte_switch=%u data_fault=absent exec_resume=%s'
 require_text kpm/r0lab.c 'raw_syscall_read_cycle_hook_ready symbol=getpid installed=1 target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=pending'
 require_text kpm/r0lab.c 'raw_syscall_hook_status symbol=%s installed=%u hit_events=%u read_cycle_events=%u failures=%u target_mm_scoped=1 trigger=syscall_getpid read_cycle=uxn_original_exec_resume observe_only=0 pte_switch=1 data_fault=absent exec_resume=%s'
+require_text kpm/r0lab.c 'raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=raw_va_prot_none observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
+require_text kpm/r0lab.c 'raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=raw_va_prot_none observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_GUP_HOOK_BEGIN'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_GUP_HOOK_FINISH'
 require_text kpm/r0lab.c 'g_follow_page_pte = r0lab_lookup_first("follow_page_pte.cfi_jt"'
@@ -220,6 +225,7 @@ require_text lab-app/src/main/cpp/labprobe.c 'raw mode=gup-hook failures=%d read
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=fork-hook failures=%d parent_pause=1 child_original_inherit=1'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=fault-hook failures=%d observe_only=1 target_mm_scoped=1 pte_switch=0'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=fault-data-probe failures=%d observe_only=1 target_mm_scoped=1 remote_only=1 pte_switch=0 data_fault_source=normal_anon_remote_gup'
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=abort-probe failures=%d observe_only=1 target_mm_scoped=1 pte_switch=0 data_fault_source=raw_va_prot_none data_fault=sync_el0_dabt read_cycle=absent'
 require_text lab-app/src/main/cpp/labprobe.c 'strcmp(source_permissions, "r-xp")'
 require_text lab-app/src/main/cpp/labprobe.c 'strcmp(during_permissions, "r-xp")'
 require_text lab-app/src/main/cpp/labprobe.c '__NR_process_vm_readv'
@@ -289,6 +295,13 @@ require_text scripts/test_raw_fault_data_probe_device.sh 'target_mm_scoped=1'
 require_text scripts/test_raw_fault_data_probe_device.sh 'remote_only=1'
 require_text scripts/test_raw_fault_data_probe_device.sh 'fault_probe_read_events=1'
 require_text scripts/test_raw_fault_data_probe_device.sh 'op=33 result=0'
+require_text scripts/test_raw_abort_probe_device.sh 'raw mode=abort-probe failures=0'
+require_text scripts/test_raw_abort_probe_device.sh 'data_fault_source=raw_va_prot_none'
+require_text scripts/test_raw_abort_probe_device.sh 'data_fault=sync_el0_dabt'
+require_text scripts/test_raw_abort_probe_device.sh 'handler_faults=1'
+require_text scripts/test_raw_abort_probe_device.sh 'permission_fault=0'
+require_text scripts/test_raw_abort_probe_device.sh 'translation_fault=1'
+require_text scripts/test_raw_abort_probe_device.sh 'op=39 result=0'
 require_text scripts/test_raw_exit_hook_device.sh 'raw mode=exit-hook-hold failures=0'
 require_text scripts/test_raw_exit_hook_device.sh 'symbol=exit_mmap'
 require_text scripts/test_raw_exit_hook_device.sh 'exit_hook_installed=1'
@@ -301,6 +314,7 @@ require_text scripts/test_v1_device.sh 'run_phase raw_gup_hook scripts/test_raw_
 require_text scripts/test_v1_device.sh 'run_phase raw_fork_hook scripts/test_raw_fork_hook_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_fault_hook scripts/test_raw_fault_hook_device.sh'
 require_text scripts/test_v1_device.sh 'run_phase raw_fault_data_probe scripts/test_raw_fault_data_probe_device.sh'
+require_text scripts/test_v1_device.sh 'run_phase raw_abort_probe scripts/test_raw_abort_probe_device.sh'
 require_text scripts/test_m5_lifecycle_device.sh 'm5_target_exit_phases=m3,m4,raw,s4'
 require_text scripts/test_m5_lifecycle_device.sh "run_phase raw \"\$RAW_TOKEN\" 'm5 raw-hold' 'raw-hold' 'raw_slots' 22"
 require_text scripts/test_m5_lifecycle_device.sh "run_phase s4 \"\$S4_TOKEN\" 'm5 s4-hold' 's4-hold' 's4_slots' 26"
@@ -320,4 +334,4 @@ require_text kpm/r0lab.c 'r0lab_raw_exit_mmap_before'
 require_text kpm/r0lab.c 'g_raw_page.clearing && !g_raw_page.target_exiting'
 require_text kpm/r0lab.c 'exit_hook=exit_mmap_observe'
 
-printf '%s\n' 'v1_contract=pass scripts=28 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=29 raw_pte_kpm=lab_two_pfn s4_brk=brk_only s4_step=raw_pte_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_exit_hook=exit_mmap_observe result=pass'

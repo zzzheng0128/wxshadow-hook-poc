@@ -2164,6 +2164,195 @@ finish:
     return failures ? -1 : 0;
 }
 
+static int r0lab_raw_abort_probe_run(const char *token_text, char *output,
+                                     size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    uint32_t *code;
+    volatile uint32_t *readable_code;
+    uint64_t token;
+    void *page = MAP_FAILED;
+    size_t page_size;
+    char command[96];
+    char reply[256] = {0};
+    char probe_reply[512] = {0};
+    char probe_status[512] = {0};
+    char probe_clear_reply[512] = {0};
+    unsigned int activations = 0;
+    unsigned long state = 0;
+    uint32_t word_before = 0;
+    uint32_t word_shadow = 0;
+    uint32_t probe_read_word = 0;
+    uint32_t word_after_clear = 0;
+    long arm_rc = -1;
+    long ready_rc = -1;
+    long observed_rc = -1;
+    long probe_arm_rc = -1;
+    long mprotect_none_rc = -1;
+    long probe_status_rc = -1;
+    long probe_clear_rc = -1;
+    long clear_rc = -1;
+    long cleared_rc = -1;
+    int mprotect_none_errno = 0;
+    int normal_value = -1;
+    int shadow_value = -1;
+    int post_probe_exec_value = -1;
+    int restored_value = -1;
+    int handler_installed = 0;
+    int probe_read_completed = 0;
+    int failures = 0;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw abort probe token");
+        return -1;
+    }
+    page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-38 error=unsupported page size=%zu", page_size);
+        return -1;
+    }
+    page = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        snprintf(output, output_size,
+                 "rc=-12 error=raw abort probe page allocation errno=%d",
+                 errno);
+        return -1;
+    }
+    code = page;
+    code[0] = R0LAB_M3_CODE_MOV_W0_42;
+    code[1] = R0LAB_M3_CODE_RET;
+    __builtin___clear_cache((char *)page, (char *)page + page_size);
+    if (mprotect(page, page_size, PROT_READ | PROT_EXEC)) {
+        snprintf(output, output_size,
+                 "rc=-1 error=initial raw abort probe mprotect errno=%d",
+                 errno);
+        munmap(page, page_size);
+        return -1;
+    }
+
+    readable_code = (volatile uint32_t *)page;
+    word_before = readable_code[0];
+    normal_value = ((int (*)(void))page)();
+
+    snprintf(command, sizeof(command), "raw arm 0x%llx 0x%llx",
+             (unsigned long long)token, (unsigned long long)(uintptr_t)page);
+    arm_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (arm_rc < 0)
+        goto finish;
+    ready_rc = r0lab_m3_wait_for("raw ready", token);
+    if (ready_rc < 0)
+        goto clear;
+
+    g_r0lab_raw_handler_faults = 0;
+    g_r0lab_raw_signal_page = page;
+    g_r0lab_raw_signal_page_size = page_size;
+    action.sa_sigaction = r0lab_raw_signal_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &action, &previous_action))
+        goto clear;
+    handler_installed = 1;
+
+    shadow_value = ((int (*)(void))page)();
+    word_shadow = readable_code[0];
+
+    snprintf(command, sizeof(command), "raw observed 0x%llx",
+             (unsigned long long)token);
+    observed_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (observed_rc < 0 ||
+        sscanf(reply, "raw_observed activations=%u state=%lu",
+               &activations, &state) != 2)
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw abort probe arm 0x%llx",
+             (unsigned long long)token);
+    probe_arm_rc = r0lab_control_raw(command, probe_reply,
+                                     sizeof(probe_reply));
+    if (probe_arm_rc >= 0) {
+        errno = 0;
+        mprotect_none_rc = mprotect(page, page_size, PROT_NONE);
+        mprotect_none_errno = errno;
+        if (!mprotect_none_rc) {
+            probe_read_word = readable_code[0];
+            probe_read_completed = 1;
+            post_probe_exec_value = ((int (*)(void))page)();
+        }
+    }
+
+    snprintf(command, sizeof(command), "raw abort probe status 0x%llx",
+             (unsigned long long)token);
+    probe_status_rc = r0lab_control_raw(command, probe_status,
+                                        sizeof(probe_status));
+    if (probe_arm_rc < 0 || mprotect_none_rc < 0 || probe_status_rc < 0 ||
+        !strstr(probe_reply, "raw_abort_probe_ready") ||
+        !strstr(probe_reply, "symbol=do_mem_abort") ||
+        !strstr(probe_reply, "source=raw_va_prot_none") ||
+        !strstr(probe_reply, "observe_only=1") ||
+        !strstr(probe_reply, "pte_switch=0") ||
+        !strstr(probe_reply, "read_cycle=absent") ||
+        !strstr(probe_status, "installed=1") ||
+        !strstr(probe_status, "armed=1") ||
+        !strstr(probe_status, "read_events=1") ||
+        !strstr(probe_status, "write_events=0") ||
+        !strstr(probe_status, "exec_events=0") ||
+        !strstr(probe_status, "hit_events=1") ||
+        !strstr(probe_status, "failures=0") ||
+        !strstr(probe_status, "last_ec=36") ||
+        !strstr(probe_status, "last_wnr=0") ||
+        !strstr(probe_status, "last_fsc_type=4") ||
+        !strstr(probe_status, "permission_fault=0") ||
+        !strstr(probe_status, "translation_fault=1") ||
+        !strstr(probe_status, "data_fault=sync_el0_dabt") ||
+        !strstr(probe_status, "read_cycle=absent"))
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw abort probe clear 0x%llx",
+             (unsigned long long)token);
+    probe_clear_rc = r0lab_control_raw(command, probe_clear_reply,
+                                       sizeof(probe_clear_reply));
+
+clear:
+    r0lab_raw_clear(token, &clear_rc, &cleared_rc);
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    if (cleared_rc >= 0) {
+        word_after_clear = readable_code[0];
+        restored_value = ((int (*)(void))page)();
+    }
+
+finish:
+    if (normal_value != 42 || shadow_value != 99 ||
+        post_probe_exec_value != 99 || restored_value != 42 ||
+        word_before != R0LAB_M3_CODE_MOV_W0_42 ||
+        word_shadow != R0LAB_M4_CODE_MOV_W0_99 ||
+        probe_read_word != R0LAB_M4_CODE_MOV_W0_99 ||
+        word_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
+        arm_rc < 0 || ready_rc < 0 || observed_rc < 0 ||
+        probe_arm_rc < 0 || mprotect_none_rc < 0 ||
+        probe_status_rc < 0 || probe_clear_rc < 0 ||
+        clear_rc < 0 || cleared_rc < 0 || activations != 1 ||
+        state != 3 || !probe_read_completed ||
+        g_r0lab_raw_handler_faults != 1)
+        ++failures;
+    snprintf(output, output_size,
+             "raw mode=abort-probe failures=%d observe_only=1 target_mm_scoped=1 pte_switch=0 data_fault_source=raw_va_prot_none data_fault=sync_el0_dabt read_cycle=absent normal_value=%d shadow_value=%d probe_read_word=%08x post_probe_exec_value=%d restored_value=%d words=%08x/%08x/%08x activations=%u state=%lu probe_read_completed=%d mprotect_none_rc=%ld mprotect_none_errno=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld probe_arm_rc=%ld probe_status_rc=%ld probe_clear_rc=%ld clear_rc=%ld cleared_rc=%ld handler_faults=%d probe=\"%s\" status=\"%s\" probe_clear=\"%s\"",
+             failures, normal_value, shadow_value, probe_read_word,
+             post_probe_exec_value, restored_value, word_before, word_shadow,
+             word_after_clear, activations, state, probe_read_completed,
+             mprotect_none_rc, mprotect_none_errno, arm_rc, ready_rc,
+             observed_rc, probe_arm_rc, probe_status_rc, probe_clear_rc,
+             clear_rc, cleared_rc, (int)g_r0lab_raw_handler_faults,
+             probe_reply, probe_status, probe_clear_reply);
+    munmap(page, page_size);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_raw_syscall_hook_run(const char *token_text, char *output,
                                       size_t output_size)
 {
@@ -4353,6 +4542,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw fault hook run ", 19)) {
         r0lab_raw_fault_hook_run(args + 19, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw abort probe run ", 20)) {
+        r0lab_raw_abort_probe_run(args + 20, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }
