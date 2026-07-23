@@ -42,6 +42,7 @@ S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
 FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
+F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -53,6 +54,7 @@ require_file "$S4_PLAN"
 require_file "$FINAL_ROADMAP"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
+require_file "$F4_PLAN"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -86,8 +88,10 @@ require_text "$FINAL_ROADMAP" 'raw_page_table_slots'
 require_text "$FINAL_ROADMAP" 'Slot 1 is intentionally inert until F2'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f2-two-page-lab-harness-plan.md'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f3-page-local-patch-records-plan.md'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4-hook-routing-by-page-record-plan.md'
 require_text "$FINAL_ROADMAP" 'Plan checkpoints are docs/contract only.'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_device.sh'
+require_text "$FINAL_ROADMAP" 'scripts/test_raw_hook_routing_device.sh'
 require_text "$F2_PLAN" 'raw slot arm <token> <slot> <page>'
 require_text "$F2_PLAN" 'raw page table run <token>'
 require_text "$F2_PLAN" 'scripts/test_raw_page_table_device.sh'
@@ -106,8 +110,33 @@ require_text "$F3_PLAN" 'slot1_after_slot0_capacity_value=88'
 require_text "$F3_PLAN" 'scripts/test_raw_prctl_patch_records_device.sh'
 require_text "$F3_PLAN" 'scripts/test_raw_page_table_device.sh'
 require_text "$F3_PLAN" 'build/evidence/raw-page-table-patch-records-20260724-003931.log'
+require_text "$F4_PLAN" 'wxshadow F4 Hook Routing By Page Record Plan'
+require_text "$F4_PLAN" 'Status: plan-only checkpoint'
+require_text "$F4_PLAN" 'allowed files: this document'
+require_text "$F4_PLAN" 'disallowed files: `kpm/r0lab.c`, `kpm/r0lab_raw_compat.c`'
+require_text "$F4_PLAN" 'target mm plus page VA lookup'
+require_text "$F4_PLAN" 'r0lab_raw_page_find_by_mm_addr_locked'
+require_text "$F4_PLAN" 'r0lab_raw_page_find_by_fault_locked'
+require_text "$F4_PLAN" 'r0lab_raw_page_find_for_hook_locked'
+require_text "$F4_PLAN" 'struct r0lab_raw_hook_page_token'
+require_text "$F4_PLAN" 'hook callbacks must not free page memory'
+require_text "$F4_PLAN" 'do_mem_abort'
+require_text "$F4_PLAN" 'handle_mm_fault'
+require_text "$F4_PLAN" 'follow_page_pte'
+require_text "$F4_PLAN" 'follow_page_mask'
+require_text "$F4_PLAN" 'dup_mmap'
+require_text "$F4_PLAN" 'exit_mmap'
+require_text "$F4_PLAN" '__arm64_sys_getpid'
+require_text "$F4_PLAN" '__arm64_sys_prctl'
+require_text "$F4_PLAN" 'raw_hook_route_status slot=<slot>'
+require_text "$F4_PLAN" 'page_record_routed=1'
+require_text "$F4_PLAN" 'scripts/test_raw_hook_routing_device.sh'
+require_text "$F4_PLAN" 'arbitrary process, arbitrary `mm`, or arbitrary address support'
+require_text "$F4_PLAN" 'raw-XOM, permission-fault hidden-read experiments, or `PTE_USER` changes'
 require_text "$FINAL_ROADMAP" 'Current status: implemented and gate-passed on Pixel 7'
 require_text "$VERIFICATION" 'current 29-phase ordered acceptance run passed'
+require_text "$VERIFICATION" 'F4 is currently a planned route-helper migration'
+require_text "$VERIFICATION" 'docs/wxshadow-f4-hook-routing-by-page-record-plan.md'
 require_text docs/kpm-compatibility-matrix.md 'Two-slot page-local patch records'
 require_text "$VERIFICATION" 'raw_page_table_slots'
 require_text docs/kpm-compatibility-matrix.md 'Raw page-table skeleton'
@@ -633,4 +662,4 @@ require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records s
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' 'v1_contract=pass scripts=37 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=37 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
