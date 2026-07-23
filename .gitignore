@@ -1,0 +1,25 @@
+# Generated build output and device evidence.
+/build/
+/kpm/build/
+
+# External reference checkouts. KernelPatch and rustFrida remain local
+# dependencies/references; do not vendor nested Git repositories here.
+/references/
+
+# Local workflow/runtime state.
+/.omx/
+
+# Generated Android debug signing material.
+/lab-app/debug.keystore
+
+# Toolchain products.
+*.apk
+*.idsig
+*.kpm
+*.o
+*.so
+*.class
+*.jar
+
+# Local OS noise.
+.DS_Store
