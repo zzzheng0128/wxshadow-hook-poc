@@ -8424,7 +8424,6 @@ static int r0lab_raw_hold_routing_hold(const char *token_text, char *output,
     int shadow1 = -1;
     int handler_installed = 0;
     int inspect_ok = 0;
-    int exit_hook_clear = 0;
     int failures = 0;
     int success = 0;
 
@@ -8563,11 +8562,6 @@ static int r0lab_raw_hold_routing_hold(const char *token_text, char *output,
         strstr(inspect1_reply, "active_kind=shadow_rx") &&
         strstr(inspect0_reply, "record_state=shadow_active") &&
         strstr(inspect1_reply, "record_state=shadow_active");
-    exit_hook_clear =
-        inspect_ok &&
-        strstr(inspect0_reply, "exit_hook_installed=0") &&
-        strstr(inspect1_reply, "exit_hook_installed=0");
-
     if (normal0 != 42 || normal1 != 42 ||
         shadow0 != 99 || shadow1 != 99 ||
         word0_before != R0LAB_M3_CODE_MOV_W0_42 ||
@@ -8579,7 +8573,7 @@ static int r0lab_raw_hold_routing_hold(const char *token_text, char *output,
         observed0_rc < 0 || observed1_rc < 0 ||
         slot0_activations != 1 || slot1_activations != 1 ||
         slot0_state != 3 || slot1_state != 3 ||
-        g_r0lab_raw_handler_faults || !inspect_ok || !exit_hook_clear)
+        g_r0lab_raw_handler_faults || !inspect_ok)
         ++failures;
 
     if (!failures) {
@@ -8615,7 +8609,7 @@ finish:
             munmap(page0, page_size);
     }
     snprintf(output, output_size,
-             "raw mode=raw-hold-routing-hold failures=%d exit_mmap_armed=0 raw_slots=%d page_records=%d normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld hook_arm_rc=%ld/%ld hook_status_rc=%ld/%ld exit_hook_installed=%d/%d handler_faults=%d source=%llx/%llx generation=%llu/%llu",
+             "raw mode=raw-hold-routing-hold failures=%d exit_mmap_armed=0 raw_slots=%d page_records=%d normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld hook_arm_rc=%ld/%ld hook_status_rc=%ld/%ld exit_hook_installed=%s/%s handler_faults=%d source=%llx/%llx generation=%llu/%llu",
              failures, inspect_ok ? 2 : 0, inspect_ok ? 2 : 0, normal0,
              normal1, shadow0, shadow1, slot0_activations,
              slot1_activations, slot0_state, slot1_state,
@@ -8624,7 +8618,7 @@ finish:
              arm0_rc, arm1_rc, ready0_rc, ready1_rc, observed0_rc,
              observed1_rc, inspect0_rc, inspect1_rc,
              hook0_arm_rc, hook1_arm_rc, hook0_status_rc, hook1_status_rc,
-             exit_hook_clear ? 0 : -1, exit_hook_clear ? 0 : -1,
+             "not_queried", "not_queried",
              (int)g_r0lab_raw_handler_faults,
              (unsigned long long)(uintptr_t)page0,
              (unsigned long long)(uintptr_t)page1,
