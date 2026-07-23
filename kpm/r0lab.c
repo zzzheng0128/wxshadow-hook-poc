@@ -61,6 +61,8 @@
 #define R0LAB_PRCTL_OP_RELEASE_RANGE 5U
 #define R0LAB_PATCH_RECORD_CAPACITY 1024U
 #define R0LAB_PATCH_DIRTY_BITMAP_SIZE (R0LAB_RAW_PAGE_SIZE / 8U)
+#define R0LAB_RAW_PAGE_SLOT_CAPACITY 2U
+#define R0LAB_RAW_PRIMARY_SLOT 0U
 
 #define R0LAB_EINVAL (-22)
 #define R0LAB_EPERM (-1)
@@ -316,6 +318,7 @@ struct r0lab_raw_shadow_page {
     struct r0lab_raw_page raw;
     uint64_t generation;
     uint32_t activation_events;
+    uint16_t slot_id;
     bool reserving;
     bool armed;
     bool clearing;
@@ -387,6 +390,11 @@ struct r0lab_raw_shadow_page {
     uint32_t abort_read_cycle_last_esr;
     unsigned long abort_read_cycle_last_far;
     int abort_read_cycle_last_result;
+};
+
+struct r0lab_raw_page_table {
+    struct r0lab_raw_shadow_page slots[R0LAB_RAW_PAGE_SLOT_CAPACITY];
+    uint16_t selected_slot;
 };
 
 struct r0lab_s4_breakpoint {
@@ -473,7 +481,8 @@ static struct r0lab_session g_session;
 static struct r0lab_hwbp_slot g_hwbp_slots[R0LAB_HWBP_SLOT_CAPACITY];
 static struct r0lab_m3_page g_m3_page;
 static struct r0lab_m4_page g_m4_page;
-static struct r0lab_raw_shadow_page g_raw_page;
+static struct r0lab_raw_page_table g_raw_page_table;
+#define g_raw_page (g_raw_page_table.slots[R0LAB_RAW_PRIMARY_SLOT])
 static uint16_t g_raw_patch_rebuild_order[R0LAB_PATCH_RECORD_CAPACITY];
 static struct r0lab_s4_breakpoint g_s4_brk;
 static r0lab_clock_fn_t g_clock;
@@ -865,9 +874,59 @@ static unsigned int r0lab_m4_slot_count_locked(void)
     return g_m4_page.reserving || g_m4_page.armed || g_m4_page.clearing ? 1U : 0U;
 }
 
+static void r0lab_raw_page_slot_reset_locked(
+    struct r0lab_raw_shadow_page *page, uint16_t slot_id)
+{
+    if (!page)
+        return;
+    memset(page, 0, sizeof(*page));
+    page->slot_id = slot_id;
+}
+
+static void r0lab_raw_page_table_reset_locked(void)
+{
+    unsigned int index;
+
+    memset(&g_raw_page_table, 0, sizeof(g_raw_page_table));
+    g_raw_page_table.selected_slot = R0LAB_RAW_PRIMARY_SLOT;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index)
+        g_raw_page_table.slots[index].slot_id = (uint16_t)index;
+}
+
+static bool r0lab_raw_page_slot_owned_locked(
+    const struct r0lab_raw_shadow_page *page)
+{
+    return page && (page->reserving || page->armed || page->clearing);
+}
+
+static struct r0lab_raw_shadow_page *r0lab_raw_page_slot_locked(
+    uint16_t slot_id)
+{
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return NULL;
+    return &g_raw_page_table.slots[slot_id];
+}
+
+static struct r0lab_raw_shadow_page *r0lab_raw_selected_page_locked(void)
+{
+    return r0lab_raw_page_slot_locked(g_raw_page_table.selected_slot);
+}
+
+static unsigned int r0lab_raw_page_table_active_count_locked(void)
+{
+    unsigned int index;
+    unsigned int count = 0;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (r0lab_raw_page_slot_owned_locked(&g_raw_page_table.slots[index]))
+            ++count;
+    }
+    return count;
+}
+
 static unsigned int r0lab_raw_slot_count_locked(void)
 {
-    return g_raw_page.reserving || g_raw_page.armed || g_raw_page.clearing ? 1U : 0U;
+    return r0lab_raw_page_table_active_count_locked();
 }
 
 static unsigned int r0lab_s4_slot_count_locked(void)
@@ -936,12 +995,16 @@ static const char *r0lab_s4_state_name(uint8_t state)
 
 static unsigned int r0lab_page_record_count_locked(void)
 {
+    unsigned int index;
     unsigned int count = 0;
 
     if (g_m4_page.record.backend != R0LAB_PAGE_RECORD_NONE)
         ++count;
-    if (g_raw_page.record.backend != R0LAB_PAGE_RECORD_NONE)
-        ++count;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (g_raw_page_table.slots[index].record.backend !=
+            R0LAB_PAGE_RECORD_NONE)
+            ++count;
+    }
     return count;
 }
 
@@ -959,6 +1022,14 @@ static long r0lab_status(char __user *out_msg, int outlen)
     unsigned int raw_slots;
     unsigned int s4_slots;
     unsigned int page_records;
+    unsigned int raw_page_table_slots;
+    unsigned int raw_page_table_active;
+    uint16_t raw_selected_slot;
+    uint8_t raw_slot_backend;
+    uint8_t raw_slot_state;
+    uint64_t raw_slot_source;
+    uint64_t raw_slot_source_pfn;
+    uint64_t raw_slot_shadow_pfn;
     uint8_t page_backend;
     uint8_t page_state;
     uint32_t m3_fault_events;
@@ -972,6 +1043,7 @@ static long r0lab_status(char __user *out_msg, int outlen)
     unsigned int workers_live;
     bool workers_shutdown;
     int current_cpu;
+    struct r0lab_raw_shadow_page *raw_selected;
 
     flags = r0lab_lock();
     active = g_session.active;
@@ -984,9 +1056,28 @@ static long r0lab_status(char __user *out_msg, int outlen)
     raw_slots = r0lab_raw_slot_count_locked();
     s4_slots = r0lab_s4_slot_count_locked();
     page_records = r0lab_page_record_count_locked();
-    if (g_raw_page.record.backend != R0LAB_PAGE_RECORD_NONE) {
-        page_backend = g_raw_page.record.backend;
-        page_state = g_raw_page.record.state;
+    raw_page_table_slots = R0LAB_RAW_PAGE_SLOT_CAPACITY;
+    raw_page_table_active = r0lab_raw_page_table_active_count_locked();
+    raw_selected = r0lab_raw_selected_page_locked();
+    raw_selected_slot = raw_selected ? raw_selected->slot_id :
+                        R0LAB_RAW_PRIMARY_SLOT;
+    if (raw_selected &&
+        raw_selected->record.backend != R0LAB_PAGE_RECORD_NONE) {
+        raw_slot_backend = raw_selected->record.backend;
+        raw_slot_state = raw_selected->record.state;
+        raw_slot_source = raw_selected->raw.address;
+        raw_slot_source_pfn = raw_selected->raw.source_pfn;
+        raw_slot_shadow_pfn = raw_selected->raw.shadow_pfn;
+    } else {
+        raw_slot_backend = R0LAB_PAGE_RECORD_NONE;
+        raw_slot_state = R0LAB_PAGE_RECORD_EMPTY;
+        raw_slot_source = 0;
+        raw_slot_source_pfn = 0;
+        raw_slot_shadow_pfn = 0;
+    }
+    if (raw_slot_backend != R0LAB_PAGE_RECORD_NONE) {
+        page_backend = raw_slot_backend;
+        page_state = raw_slot_state;
     } else if (g_m4_page.record.backend != R0LAB_PAGE_RECORD_NONE) {
         page_backend = g_m4_page.record.backend;
         page_state = g_m4_page.record.state;
@@ -1008,14 +1099,18 @@ static long r0lab_status(char __user *out_msg, int outlen)
     current_cpu = (int)g_current_cpu();
 
     snprintf(reply, sizeof(reply),
-             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
+             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
              g_session.lab_uid, active, owner_tgid, next_seq, last_summary_seq,
              hwbp_slots, hwbp_entry_events, hwbp_return_events, m3_slots,
              m3_fault_events, m4_slots, m4_redirect_events, raw_slots,
              raw_activation_events, s4_slots, s4_brk_events, s4_step_events,
              r0lab_s4_state_name(s4_state), page_records,
              r0lab_page_record_backend_name(page_backend),
-             r0lab_page_record_state_name(page_state), workers_live,
+             r0lab_page_record_state_name(page_state), raw_page_table_slots,
+             raw_page_table_active, (unsigned int)raw_selected_slot,
+             r0lab_page_record_backend_name(raw_slot_backend),
+             r0lab_page_record_state_name(raw_slot_state), raw_slot_source,
+             raw_slot_source_pfn, raw_slot_shadow_pfn, workers_live,
              workers_shutdown, current_cpu);
     r0lab_record(R0LAB_EVENT_STATUS, 0);
     return r0lab_copy_reply(out_msg, outlen, reply);
@@ -1492,7 +1587,7 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
     }
     memset(&g_s4_brk, 0, sizeof(g_s4_brk));
     if (raw_step_mode) {
-        memset(&g_raw_page, 0, sizeof(g_raw_page));
+        r0lab_raw_page_slot_reset_locked(&g_raw_page, R0LAB_RAW_PRIMARY_SLOT);
         g_raw_page.raw.mm = raw_mm;
         g_raw_page.raw.address = (unsigned long)target_address;
         g_raw_page.generation = ++g_raw_generation;
@@ -5005,7 +5100,7 @@ static void r0lab_raw_reset(struct mm_struct *mm)
         uint64_t generation = g_raw_page.generation;
 
         shadow_kaddr = g_raw_page.raw.shadow_kaddr;
-        memset(&g_raw_page, 0, sizeof(g_raw_page));
+        r0lab_raw_page_slot_reset_locked(&g_raw_page, R0LAB_RAW_PRIMARY_SLOT);
         g_raw_page.generation = generation;
         g_raw_page.monitor_running = monitor_running;
     }
@@ -5040,7 +5135,8 @@ static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
         flags = r0lab_lock();
         if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
             shadow_kaddr = g_raw_page.raw.shadow_kaddr;
-            memset(&g_raw_page, 0, sizeof(g_raw_page));
+            r0lab_raw_page_slot_reset_locked(&g_raw_page,
+                                             R0LAB_RAW_PRIMARY_SLOT);
         }
         r0lab_unlock(flags);
         if (shadow_kaddr && g_vfree)
@@ -5068,7 +5164,8 @@ static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
         flags = r0lab_lock();
         if (g_raw_page.raw.mm == mm && g_raw_page.generation == generation) {
             shadow_kaddr = g_raw_page.raw.shadow_kaddr;
-            memset(&g_raw_page, 0, sizeof(g_raw_page));
+            r0lab_raw_page_slot_reset_locked(&g_raw_page,
+                                             R0LAB_RAW_PRIMARY_SLOT);
         }
         r0lab_unlock(flags);
         if (shadow_kaddr && g_vfree)
@@ -5228,7 +5325,8 @@ static int r0lab_raw_arm_worker(void *opaque)
         !g_session.active) {
         if (page == &g_raw_page && page->raw.mm) {
             mm = (struct mm_struct *)page->raw.mm;
-            memset(&g_raw_page, 0, sizeof(g_raw_page));
+            r0lab_raw_page_slot_reset_locked(&g_raw_page,
+                                             R0LAB_RAW_PRIMARY_SLOT);
         }
         r0lab_unlock(flags);
         if (mm)
@@ -5442,7 +5540,7 @@ static long r0lab_raw_arm(uint64_t token, uint64_t page_address,
         result = R0LAB_EBUSY;
         goto record;
     }
-    memset(&g_raw_page, 0, sizeof(g_raw_page));
+    r0lab_raw_page_slot_reset_locked(&g_raw_page, R0LAB_RAW_PRIMARY_SLOT);
     g_raw_page.raw.mm = mm;
     g_raw_page.raw.address = (unsigned long)page_address;
     g_raw_page.generation = ++g_raw_generation;
@@ -8198,7 +8296,7 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
     memset(g_hwbp_slots, 0, sizeof(g_hwbp_slots));
     memset(&g_m3_page, 0, sizeof(g_m3_page));
     memset(&g_m4_page, 0, sizeof(g_m4_page));
-    memset(&g_raw_page, 0, sizeof(g_raw_page));
+    r0lab_raw_page_table_reset_locked();
     memset(&g_s4_brk, 0, sizeof(g_s4_brk));
     g_next_seq = 0;
     g_m3_generation = 0;
