@@ -51,6 +51,7 @@ F45_PRCTL_CHECKPOINT=docs/wxshadow-f4.5-prctl-routing-source-checkpoint.md
 F46_EXIT_PLAN=docs/wxshadow-f4.6-exit-hook-routing-plan.md
 F46_PANIC_DIAGNOSIS=docs/wxshadow-f4.6-panic-diagnosis.md
 F46_D4_R3A_PLAN=docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md
+F46_D4_R3B_PLAN=docs/wxshadow-f4.6-d4-r3b-raw-hold-split-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -72,6 +73,7 @@ require_file "$F45_PRCTL_CHECKPOINT"
 require_file "$F46_EXIT_PLAN"
 require_file "$F46_PANIC_DIAGNOSIS"
 require_file "$F46_D4_R3A_PLAN"
+require_file "$F46_D4_R3B_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file scripts/test_raw_exit_hook_routing_device.sh
 require_file scripts/test_raw_exit_hook_routing_diagnostics_device.sh
@@ -419,6 +421,12 @@ require_text "$F46_EXIT_PLAN" 'D4-R3a first device result'
 require_text "$F46_EXIT_PLAN" 'raw-exit-hook-preclear-hold-split-20260724-055545.log'
 require_text "$F46_EXIT_PLAN" 'D4-R3a-boot-id-reader-unstable'
 require_text "$F46_EXIT_PLAN" 'F4.6-D4-R3b Lab App-only raw-hold split packet'
+require_text "$F46_EXIT_PLAN" 'F4.6-D4-R3b plan-lock packet'
+require_text "$F46_EXIT_PLAN" 'docs/wxshadow-f4.6-d4-r3b-raw-hold-split-plan.md'
+require_text "$F46_EXIT_PLAN" 'raw raw-hold routing hold <token>'
+require_text "$F46_EXIT_PLAN" 'scripts/test_raw_exit_hook_raw_hold_split_device.sh'
+require_text "$F46_EXIT_PLAN" 'raw mode=raw-hold-routing-hold failures=0'
+require_text "$F46_EXIT_PLAN" 'exit_mmap_armed=0'
 require_text "$F46_EXIT_PLAN" 'If the command cannot emit the D3 anchor without changing KPM behavior'
 require_text "$F46_EXIT_PLAN" 'raw slot exit hook arm <token> <slot> <generation>'
 require_text "$F46_EXIT_PLAN" 'raw slot exit hook status <token> <slot>'
@@ -487,6 +495,12 @@ require_text "$F46_PANIC_DIAGNOSIS" 'D4-R3a-boot-id-reader-unstable'
 require_text "$F46_PANIC_DIAGNOSIS" 'D4-R3a First Device Result'
 require_text "$F46_PANIC_DIAGNOSIS" 'phase=d4_r3a_boot_id_reader boot_id_reader_rc=134'
 require_text "$F46_PANIC_DIAGNOSIS" 'F4.6-D4-R3b Lab App-only raw-hold split packet'
+require_text "$F46_PANIC_DIAGNOSIS" 'D4-R3b is currently a plan-lock packet'
+require_text "$F46_PANIC_DIAGNOSIS" 'docs/wxshadow-f4.6-d4-r3b-raw-hold-split-plan.md'
+require_text "$F46_PANIC_DIAGNOSIS" 'raw raw-hold routing hold <token>'
+require_text "$F46_PANIC_DIAGNOSIS" 'scripts/test_raw_exit_hook_raw_hold_split_device.sh'
+require_text "$F46_PANIC_DIAGNOSIS" 'raw mode=raw-hold-routing-hold failures=0'
+require_text "$F46_PANIC_DIAGNOSIS" 'exit_mmap_armed=0'
 require_text "$F46_PANIC_DIAGNOSIS" 'boringssl_self_test_apex64'
 require_text "$F46_PANIC_DIAGNOSIS" 'Current classification: `system-reboot-after-owner-exit`.'
 require_text "$F46_PANIC_DIAGNOSIS" 'warn_count` stayed `2 -> 2`'
@@ -513,8 +527,9 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R1 reboot-source decoupling | Fail
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R2 explicit-clear cleanup isolation | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3 exit-hook release source packet | Attempted/blocked'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3a pre-clear hold-state split | Failed/classified'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3b Lab App-only raw-hold split | Current diagnostic gate'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3b Lab App-only raw-hold split | Plan lock in progress'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3b-raw-hold-split-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_exit_hook_preclear_hold_split_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3a-boot-id-reader-unstable'
 require_text "$DEVELOPMENT_SEQUENCE" 'must not modify KPM behavior'
@@ -530,6 +545,18 @@ require_text "$F46_D4_R3A_PLAN" 'phase=d4_r3a_boot_id_reader boot_id_reader_rc=1
 require_text "$F46_D4_R3A_PLAN" 'D4-R3a-boot-id-reader-unstable'
 require_text "$F46_D4_R3A_PLAN" 'F4.6-D4-R3b Lab App-only raw-hold split packet'
 require_text "$F46_D4_R3A_PLAN" 'Lab App-only raw-hold split packet'
+require_text "$F46_D4_R3B_PLAN" 'wxshadow F4.6 D4-R3b Raw-Hold Split Plan'
+require_text "$F46_D4_R3B_PLAN" 'Status: plan-lock packet'
+require_text "$F46_D4_R3B_PLAN" 'D4-R3b-P plan lock'
+require_text "$F46_D4_R3B_PLAN" 'D4-R3b-L Lab App raw-hold implementation'
+require_text "$F46_D4_R3B_PLAN" 'Finding missing behavior during source review is not enough to edit source'
+require_text "$F46_D4_R3B_PLAN" 'raw raw-hold routing hold <token>'
+require_text "$F46_D4_R3B_PLAN" 'scripts/test_raw_exit_hook_raw_hold_split_device.sh'
+require_text "$F46_D4_R3B_PLAN" 'kpm/r0lab.c` behavior changes'
+require_text "$F46_D4_R3B_PLAN" 'exit_mmap_armed=0'
+require_text "$F46_D4_R3B_PLAN" 'phase=d4_r3b_raw_hold_established result=pass exit_mmap_armed=0 raw_slots=2 page_records=2'
+require_text "$F46_D4_R3B_PLAN" 'D4-R3b-boot-id-reader-unstable'
+require_text "$F46_D4_R3B_PLAN" 'scripts/verify_v1_contract.sh'
 require_text scripts/test_raw_exit_hook_device.sh 'command_timeout command=%s wait_ms=10000'
 require_text scripts/test_raw_exit_hook_device.sh '*"command=$command"*'
 require_text scripts/test_raw_exit_hook_device.sh 'LC_ALL=C grep -F -- "$needle"'
@@ -604,14 +631,18 @@ require_text "$FINAL_ROADMAP" 'D4-R2 explicit-clear cleanup isolation'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_cleanup_isolation_device.sh'
 require_text "$FINAL_ROADMAP" 'D4-R2-exit-hook-clear-only-panic'
 require_text "$FINAL_ROADMAP" 'D4-R3-pre-clear-hold-state-init-sigsegv'
-require_text "$FINAL_ROADMAP" 'next checkpoint is D4-R3a'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_preclear_hold_split_device.sh'
 require_text "$FINAL_ROADMAP" 'D4-R3a-boot-id-reader-unstable'
+require_text "$FINAL_ROADMAP" 'checkpoint is D4-R3b-P'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3b-raw-hold-split-plan.md'
+require_text "$FINAL_ROADMAP" 'raw raw-hold routing hold <token>'
+require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_raw_hold_split_device.sh'
 require_text "$FINAL_ROADMAP" 'F4.6-D4-R3b'
 require_text "$FINAL_ROADMAP" 'delayed `exit_mmap` wrapper'
-require_text "$FINAL_ROADMAP" 'split the pre-clear hold-state crash'
 require_text "$FINAL_ROADMAP" 'quiet hold, shell/getprop, optional Lab'
+require_text "$FINAL_ROADMAP" 'active gate is'
+require_text "$FINAL_ROADMAP" 'same reader ladder without arming `exit_mmap`'
 require_text "$FINAL_ROADMAP" 'F4.5 syscall gate outcome'
 require_text "$FINAL_ROADMAP" 'build/evidence/raw-syscall-hook-routing-20260724-033233.log'
 require_text "$FINAL_ROADMAP" 'The active source checkpoint is F4.2a preflight, not callback migration.'
