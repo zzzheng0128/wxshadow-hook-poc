@@ -48,6 +48,7 @@ F43_GUP_PLAN=docs/wxshadow-f4.3-gup-hook-routing-plan.md
 F44_FORK_PLAN=docs/wxshadow-f4.4-fork-hook-routing-plan.md
 F45_SYSCALL_PRCTL_PLAN=docs/wxshadow-f4.5-syscall-prctl-routing-plan.md
 F45_PRCTL_CHECKPOINT=docs/wxshadow-f4.5-prctl-routing-source-checkpoint.md
+F46_EXIT_PLAN=docs/wxshadow-f4.6-exit-hook-routing-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -66,6 +67,7 @@ require_file "$F43_GUP_PLAN"
 require_file "$F44_FORK_PLAN"
 require_file "$F45_SYSCALL_PRCTL_PLAN"
 require_file "$F45_PRCTL_CHECKPOINT"
+require_file "$F46_EXIT_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
@@ -113,6 +115,7 @@ require_text "$FINAL_ROADMAP" 'Completed F4.4 gate'
 require_text "$FINAL_ROADMAP" 'build/evidence/raw-fork-hook-routing-20260724-031442.log'
 require_text "$FINAL_ROADMAP" 'status_source=cross_clear'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.5-syscall-prctl-routing-plan.md'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-exit-hook-routing-plan.md'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_fork_hook_routing_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'wxshadow Planned Development Sequence'
 require_text "$DEVELOPMENT_SEQUENCE" 'This document turns the roadmap into a fixed development queue.'
@@ -132,6 +135,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.2-positive-trigger-plan.m
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.3-gup-hook-routing-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.4-fork-hook-routing-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.5-syscall-prctl-routing-plan.md'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-exit-hook-routing-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.2a verification ladder'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_gup_hook_routing_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_fork_hook_device.sh'
@@ -312,6 +316,25 @@ require_text "$F45_PRCTL_CHECKPOINT" 'R0LAB_RAW_HOOK_PRCTL'
 require_text "$F45_PRCTL_CHECKPOINT" 'raw_slot_prctl_hook_ready slot=%u generation=%llu symbol=prctl installed=1 selected=1 page_record_routed=1'
 require_text "$F45_PRCTL_CHECKPOINT" 'raw mode=prctl-routing failures=0 trigger=prctl_magic route=selected_slot,address page_record_routed=1'
 require_text "$F45_PRCTL_CHECKPOINT" 'scripts/test_raw_prctl_hook_routing_device.sh'
+require_text "$F46_EXIT_PLAN" 'wxshadow F4.6 Exit Hook Routing Plan'
+require_text "$F46_EXIT_PLAN" 'Status: plan checkpoint. Source implementation is not started.'
+require_text "$F46_EXIT_PLAN" 'hook callbacks may mark and record matching page records,'
+require_text "$F46_EXIT_PLAN" 'but they must not directly free page memory'
+require_text "$F46_EXIT_PLAN" 'F4.6-D0 plan lock'
+require_text "$F46_EXIT_PLAN" 'F4.6-D1 KPM source scaffold'
+require_text "$F46_EXIT_PLAN" 'F4.6-D2 slot-0 regression'
+require_text "$F46_EXIT_PLAN" 'F4.6-D3 Lab two-slot hold source'
+require_text "$F46_EXIT_PLAN" 'F4.6-D4 two-slot owner-exit smoke'
+require_text "$F46_EXIT_PLAN" 'F4.6-D5 lifecycle regression'
+require_text "$F46_EXIT_PLAN" 'F4.6-D6 commit/tag'
+require_text "$F46_EXIT_PLAN" 'raw slot exit hook arm <token> <slot> <generation>'
+require_text "$F46_EXIT_PLAN" 'raw slot exit hook status <token> <slot>'
+require_text "$F46_EXIT_PLAN" 'raw slot exit hook clear <token> <slot> <generation>'
+require_text "$F46_EXIT_PLAN" 'raw exit hook routing hold <token>'
+require_text "$F46_EXIT_PLAN" 'scripts/test_raw_exit_hook_routing_device.sh'
+require_text "$F46_EXIT_PLAN" 'target_mm_scoped=1 page_record_routed=1 observe_only=0 cleanup=monitor'
+require_text "$F46_EXIT_PLAN" 'verify at least two `op=34 result=0` exit-mmap hit events'
+require_text "$F46_EXIT_PLAN" 'Singleton residue'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_kind'
 require_text kpm/r0lab.c 'enum r0lab_raw_hook_route_flags'
 require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_ROUTE_MUTATING'
@@ -337,7 +360,7 @@ require_text "$VERIFICATION" 'current 29-phase ordered acceptance run passed'
 require_text "$FINAL_ROADMAP" 'Current status: F4.1 abort routing, F4.3 GUP routing, F4.4 fork routing, and'
 require_text "$FINAL_ROADMAP" 'diagnostic/observe-only on this Pixel 7'
 require_text "$FINAL_ROADMAP" 'handle_mm_fault_positive_blocked'
-require_text "$FINAL_ROADMAP" 'F4.5-D4..D6 prctl routing is the'
+require_text "$FINAL_ROADMAP" 'F4.6 exit hook routing is the next source checkpoint'
 require_text "$FINAL_ROADMAP" 'F4.5 syscall gate outcome'
 require_text "$FINAL_ROADMAP" 'build/evidence/raw-syscall-hook-routing-20260724-033233.log'
 require_text "$FINAL_ROADMAP" 'The active source checkpoint is F4.2a preflight, not callback migration.'
@@ -1031,4 +1054,4 @@ require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records s
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' 'v1_contract=pass scripts=43 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=43 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
