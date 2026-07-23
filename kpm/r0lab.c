@@ -270,6 +270,24 @@ enum r0lab_s4_state {
     R0LAB_S4_RESTORING = 6,
 };
 
+enum r0lab_raw_hook_kind {
+    R0LAB_RAW_HOOK_NONE = 0,
+    R0LAB_RAW_HOOK_ABORT = 1,
+    R0LAB_RAW_HOOK_FAULT = 2,
+    R0LAB_RAW_HOOK_GUP = 3,
+    R0LAB_RAW_HOOK_FORK = 4,
+    R0LAB_RAW_HOOK_SYSCALL = 5,
+    R0LAB_RAW_HOOK_PRCTL = 6,
+    R0LAB_RAW_HOOK_EXIT = 7,
+};
+
+enum r0lab_raw_hook_route_flags {
+    R0LAB_RAW_HOOK_ROUTE_MUTATING = 1U << 0,
+    R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX = 1U << 1,
+    R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN = 1U << 2,
+    R0LAB_RAW_HOOK_ROUTE_ALLOW_ORIGINAL_READ = 1U << 3,
+};
+
 struct r0lab_page_record {
     unsigned long source_address;
     unsigned long peer_address;
@@ -288,6 +306,23 @@ struct r0lab_patch_record {
     uint8_t reserved[3];
     uint64_t version;
     void *data;
+};
+
+struct r0lab_raw_hook_route_stats {
+    uint32_t route_hits;
+    uint32_t route_rejects;
+    uint32_t route_wrong_mm;
+    uint32_t route_outside_page;
+    uint32_t route_stale_generation;
+    uint32_t route_busy;
+    uint32_t route_wrong_state;
+};
+
+struct r0lab_raw_hook_page_token {
+    uint16_t slot_id;
+    uint64_t generation;
+    struct r0lab_raw_shadow_page *page;
+    enum r0lab_raw_hook_kind kind;
 };
 
 struct r0lab_prctl_patch_request {
@@ -391,11 +426,13 @@ struct r0lab_raw_shadow_page {
     uint32_t abort_read_cycle_last_esr;
     unsigned long abort_read_cycle_last_far;
     int abort_read_cycle_last_result;
+    struct r0lab_raw_hook_route_stats hook_route_stats;
 };
 
 struct r0lab_raw_page_table {
     struct r0lab_raw_shadow_page slots[R0LAB_RAW_PAGE_SLOT_CAPACITY];
     uint16_t selected_slot;
+    struct r0lab_raw_hook_route_stats hook_route_miss_stats;
 };
 
 struct r0lab_s4_breakpoint {
@@ -922,6 +959,193 @@ static unsigned int r0lab_raw_page_table_active_count_locked(void)
             ++count;
     }
     return count;
+}
+
+static unsigned long r0lab_raw_page_base(unsigned long address)
+{
+    return address & ~(R0LAB_RAW_PAGE_SIZE - 1UL);
+}
+
+static const char *r0lab_raw_hook_kind_name(enum r0lab_raw_hook_kind kind)
+{
+    switch (kind) {
+    case R0LAB_RAW_HOOK_ABORT:
+        return "do_mem_abort";
+    case R0LAB_RAW_HOOK_FAULT:
+        return "handle_mm_fault";
+    case R0LAB_RAW_HOOK_GUP:
+        return "gup";
+    case R0LAB_RAW_HOOK_FORK:
+        return "dup_mmap";
+    case R0LAB_RAW_HOOK_SYSCALL:
+        return "syscall_getpid";
+    case R0LAB_RAW_HOOK_PRCTL:
+        return "prctl";
+    case R0LAB_RAW_HOOK_EXIT:
+        return "exit_mmap";
+    default:
+        return "none";
+    }
+}
+
+static struct r0lab_raw_shadow_page *r0lab_raw_page_find_by_mm_addr_locked(
+    void *mm, unsigned long address)
+{
+    unsigned long page_address = r0lab_raw_page_base(address);
+    unsigned int index;
+
+    if (!mm || !page_address)
+        return NULL;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+
+        if (!r0lab_raw_page_slot_owned_locked(page))
+            continue;
+        if (page->raw.mm == mm && page->raw.address == page_address)
+            return page;
+    }
+    return NULL;
+}
+
+static struct r0lab_raw_shadow_page *r0lab_raw_page_find_by_fault_locked(
+    void *mm, unsigned long far, unsigned int esr)
+{
+    (void)esr;
+    return r0lab_raw_page_find_by_mm_addr_locked(mm, far);
+}
+
+static void r0lab_raw_hook_route_reject_locked(
+    struct r0lab_raw_shadow_page *page, bool outside_page, bool wrong_mm,
+    bool stale_generation, bool busy, bool wrong_state)
+{
+    struct r0lab_raw_hook_route_stats *stats =
+        page ? &page->hook_route_stats :
+               &g_raw_page_table.hook_route_miss_stats;
+
+    ++stats->route_rejects;
+    if (outside_page)
+        ++stats->route_outside_page;
+    if (wrong_mm)
+        ++stats->route_wrong_mm;
+    if (stale_generation)
+        ++stats->route_stale_generation;
+    if (busy)
+        ++stats->route_busy;
+    if (wrong_state)
+        ++stats->route_wrong_state;
+}
+
+static bool r0lab_raw_hook_route_state_allowed(
+    const struct r0lab_raw_shadow_page *page, unsigned int route_flags)
+{
+    unsigned long state;
+
+    if (!page)
+        return false;
+    state = page->raw.state;
+    if (state == R0LAB_RAW_SHADOW_RX)
+        return true;
+    if ((route_flags & R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN) &&
+        state == R0LAB_RAW_SOURCE_UXN)
+        return true;
+    if ((route_flags & R0LAB_RAW_HOOK_ROUTE_ALLOW_ORIGINAL_READ) &&
+        state == R0LAB_RAW_ORIGINAL_READ)
+        return true;
+    if (!(route_flags & R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX) &&
+        state != R0LAB_RAW_EMPTY && state != R0LAB_RAW_POISONED)
+        return true;
+    return false;
+}
+
+static int r0lab_raw_page_find_for_hook_locked(
+    enum r0lab_raw_hook_kind kind, void *mm, unsigned long address,
+    uint64_t generation, unsigned int route_flags,
+    struct r0lab_raw_hook_page_token *token)
+{
+    struct r0lab_raw_shadow_page *page;
+    bool wrong_state;
+    bool busy;
+
+    if (token) {
+        token->slot_id = R0LAB_RAW_PRIMARY_SLOT;
+        token->generation = 0;
+        token->page = NULL;
+        token->kind = R0LAB_RAW_HOOK_NONE;
+    }
+    page = r0lab_raw_page_find_by_mm_addr_locked(mm, address);
+    if (!page) {
+        r0lab_raw_hook_route_reject_locked(NULL, true, false, false,
+                                           false, false);
+        return R0LAB_ENOENT;
+    }
+    if (!mm || page->raw.mm != mm) {
+        r0lab_raw_hook_route_reject_locked(page, false, true, false,
+                                           false, false);
+        return R0LAB_EPERM;
+    }
+    if (generation && page->generation != generation) {
+        r0lab_raw_hook_route_reject_locked(page, false, false, true,
+                                           false, false);
+        return R0LAB_EAGAIN;
+    }
+    busy = page->transitioning ||
+           ((route_flags & R0LAB_RAW_HOOK_ROUTE_MUTATING) &&
+            (page->raw.gup_hide_active || page->raw.fork_hide_active ||
+             page->raw.read_cycle_active));
+    if (busy) {
+        r0lab_raw_hook_route_reject_locked(page, false, false, false,
+                                           true, false);
+        return R0LAB_EBUSY;
+    }
+    wrong_state = !page->armed || page->reserving || page->clearing ||
+                  !page->generation ||
+                  !r0lab_raw_hook_route_state_allowed(page, route_flags);
+    if (wrong_state) {
+        r0lab_raw_hook_route_reject_locked(page, false, false, false,
+                                           false, true);
+        return R0LAB_EAGAIN;
+    }
+    ++page->hook_route_stats.route_hits;
+    if (route_flags & R0LAB_RAW_HOOK_ROUTE_MUTATING)
+        page->transitioning = true;
+    if (token) {
+        token->slot_id = page->slot_id;
+        token->generation = page->generation;
+        token->page = page;
+        token->kind = kind;
+    }
+    return 0;
+}
+
+static __maybe_unused int r0lab_raw_hook_page_token_acquire_locked(
+    enum r0lab_raw_hook_kind kind, void *mm, unsigned long address,
+    uint64_t generation, unsigned int route_flags,
+    struct r0lab_raw_hook_page_token *token)
+{
+    if (!token)
+        return R0LAB_EINVAL;
+    return r0lab_raw_page_find_for_hook_locked(kind, mm, address, generation,
+                                               route_flags, token);
+}
+
+static __maybe_unused int r0lab_raw_hook_page_token_release_locked(
+    struct r0lab_raw_hook_page_token *token, bool clear_transition)
+{
+    struct r0lab_raw_shadow_page *page;
+
+    if (!token || !token->page ||
+        token->slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
+    page = r0lab_raw_page_slot_locked(token->slot_id);
+    if (page != token->page || page->generation != token->generation)
+        return R0LAB_EAGAIN;
+    if (clear_transition)
+        page->transitioning = false;
+    token->page = NULL;
+    token->generation = 0;
+    token->kind = R0LAB_RAW_HOOK_NONE;
+    return 0;
 }
 
 static bool r0lab_raw_page_has_aux_state_locked(
@@ -6159,6 +6383,69 @@ static long r0lab_raw_slot_patch_status(uint64_t token, uint16_t slot_id,
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
+static long r0lab_raw_hook_route_status(uint64_t token, uint16_t slot_id,
+                                        char __user *out_msg, int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *page;
+    struct r0lab_raw_hook_route_stats stats = {0};
+    struct r0lab_raw_hook_route_stats miss_stats = {0};
+    unsigned long flags;
+    unsigned long address = 0;
+    unsigned long state = R0LAB_RAW_EMPTY;
+    uint64_t generation = 0;
+    bool owned = false;
+    bool armed = false;
+    bool lookup_self = false;
+    bool fault_lookup_self = false;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (page) {
+        owned = r0lab_raw_page_slot_owned_locked(page);
+        armed = page->armed;
+        generation = page->generation;
+        address = page->raw.address;
+        state = page->raw.state;
+        stats = page->hook_route_stats;
+        if (page->raw.mm && page->raw.address) {
+            lookup_self =
+                r0lab_raw_page_find_by_mm_addr_locked(page->raw.mm,
+                                                      page->raw.address) ==
+                page;
+            fault_lookup_self =
+                r0lab_raw_page_find_by_fault_locked(page->raw.mm,
+                                                    page->raw.address,
+                                                    0) == page;
+        }
+    }
+    miss_stats = g_raw_page_table.hook_route_miss_stats;
+    r0lab_unlock(flags);
+
+    snprintf(reply, sizeof(reply),
+             "raw_hook_route_status slot=%u generation=%llu hook=all owned=%u armed=%u page=%llx state=%lu route_helper_ready=1 page_record_routed=0 lookup_self=%u fault_lookup_self=%u target_mm_scoped=1 route_hits=%u route_rejects=%u route_wrong_mm=%u route_outside_page=%u route_stale_generation=%u route_busy=%u route_wrong_state=%u table_route_rejects=%u table_route_outside_page=%u migration=callbacks_slot0_compat route_kinds=%s,%s,%s,%s,%s,%s,%s\n",
+             (unsigned int)slot_id, (unsigned long long)generation,
+             owned ? 1U : 0U, armed ? 1U : 0U, (uint64_t)address, state,
+             lookup_self ? 1U : 0U, fault_lookup_self ? 1U : 0U,
+             stats.route_hits, stats.route_rejects, stats.route_wrong_mm,
+             stats.route_outside_page, stats.route_stale_generation,
+             stats.route_busy, stats.route_wrong_state,
+             miss_stats.route_rejects, miss_stats.route_outside_page,
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_ABORT),
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_FAULT),
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_GUP),
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_FORK),
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_SYSCALL),
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_PRCTL),
+             r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_EXIT));
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
 static long r0lab_raw_slot_patch_apply(uint64_t token, uint16_t slot_id,
                                        uint64_t generation, uint64_t offset,
                                        uint64_t value, unsigned int length,
@@ -8849,6 +9136,13 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_patch_status(token, slot_id, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw hook route status ", 22)) {
+        value = args + 22;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_hook_route_status(token, slot_id, out_msg, outlen);
     }
     if (!strncmp(args, "raw slot patch check ", 21)) {
         value = args + 21;
