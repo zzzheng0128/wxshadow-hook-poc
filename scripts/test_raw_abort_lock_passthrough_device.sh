@@ -49,6 +49,18 @@ require_tag_target() {
     fail "Git tag target mismatch for $tag: expected=$expected actual=$actual"
 }
 
+require_tagged_head() {
+  tag=$1
+  tagged=$(
+    git -C "$ROOT" rev-parse --verify "refs/tags/${tag}^{commit}" 2>/dev/null
+  ) || fail "required Git tag is missing: $tag"
+  head=$(
+    git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null
+  ) || fail "current Git HEAD is unavailable"
+  [ "$head" = "$tagged" ] ||
+    fail "D4-R3i requires the source-tagged HEAD: tag=$tag tagged=$tagged head=$head"
+}
+
 sha256_file() {
   path=$1
   if command -v shasum >/dev/null 2>&1; then
@@ -219,6 +231,7 @@ poll_adb_transport() {
 ensure_clean_source
 require_tag_target wxshadow-v2-f46-d4-r3h-mm-reference-stable-20260724 e6ee7c080ec5760f4b2c43bb0062724009ab440f
 require_tag_target wxshadow-v2-f46-d4-r3i-lock-exposure-plan-20260724 93601f7dc0166ce4559b80a79669b8905f8e4dc6
+require_tagged_head wxshadow-v2-f46-d4-r3i-lock-exposure-source-20260724
 mkdir -p "$EVIDENCE_DIR"
 trap cleanup EXIT INT TERM
 

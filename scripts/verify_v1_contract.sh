@@ -1200,7 +1200,7 @@ require_line_before lab-app/src/main/cpp/labprobe.c \
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'RAW_ABORT_LOCK_CLEAN_BOOT_CONFIRMED'
 require_file_sha256 scripts/test_raw_abort_lock_passthrough_device.sh \
-  ffcfd20a8c25bd5709b21342cabd477ed36f36f3dd1a7876c5abe7767f0d3bc4
+  c1dc682a9b3909881d3082de0664d8d600bf8f3826e5cb3301d11b4a2830e0f4
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'IDLE_SECONDS=15'
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
@@ -1231,6 +1231,8 @@ require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'D4-R3i-setup-blocked'
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'refs/tags/${tag}^{commit}'
+require_text scripts/test_raw_abort_lock_passthrough_device.sh \
+  'require_tagged_head wxshadow-v2-f46-d4-r3i-lock-exposure-source-20260724'
 require_function_text scripts/test_raw_abort_lock_passthrough_device.sh \
   cleanup 'if [ "$HOLD_ACTIVE" -eq 1 ]; then'
 require_function_text scripts/test_raw_abort_lock_passthrough_device.sh \
@@ -1264,6 +1266,9 @@ require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
   'require_tag_target wxshadow-v2-f46-d4-r3h-mm-reference-stable-20260724 e6ee7c080ec5760f4b2c43bb0062724009ab440f'
 require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
   'require_tag_target wxshadow-v2-f46-d4-r3i-lock-exposure-plan-20260724 93601f7dc0166ce4559b80a79669b8905f8e4dc6' \
+  'EXISTING=$(supercmd module list 2>&1) ||'
+require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
+  'require_tagged_head wxshadow-v2-f46-d4-r3i-lock-exposure-source-20260724' \
   'EXISTING=$(supercmd module list 2>&1) ||'
 require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
   'require_sha256 kpm "$EXPECTED_KPM_SHA" "$KPM_SHA"' \
