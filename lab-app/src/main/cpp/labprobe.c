@@ -11128,6 +11128,109 @@ done:
     return failures ? -1 : 0;
 }
 
+static int r0lab_s4_descriptor_negative_run(const char *token_text,
+                                            char *output,
+                                            size_t output_size)
+{
+    uint64_t token;
+    void *page0 = MAP_FAILED;
+    void *page1 = MAP_FAILED;
+    char command[192];
+    char arm_reply[512] = {0};
+    char probe_reply[1600] = {0};
+    long arm_rc = -1;
+    long probe_rc = -1;
+    long clear_rc = -1;
+    long cleared_rc = -1;
+    int normal0 = -1;
+    int normal1 = -1;
+    int restored0 = -1;
+    int restored1 = -1;
+    int failures = 0;
+    size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
+
+    if (r0lab_parse_token(token_text, &token) ||
+        page_size != R0LAB_M3_PAGE_SIZE) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid S4 descriptor negative request");
+        return -1;
+    }
+    if (r0lab_s4_map_raw_step_page(&page0) ||
+        r0lab_s4_map_raw_step_page(&page1)) {
+        snprintf(output, output_size,
+                 "rc=-12 error=s4 descriptor negative page allocation errno=%d",
+                 errno);
+        if (page0 != MAP_FAILED)
+            munmap(page0, page_size);
+        if (page1 != MAP_FAILED)
+            munmap(page1, page_size);
+        return -1;
+    }
+    normal0 = ((int (*)(void))page0)();
+    normal1 = ((int (*)(void))page1)();
+
+    snprintf(command, sizeof(command),
+             "s4 descriptor routing arm 0x%llx 0x%llx 0x%llx",
+             (unsigned long long)token,
+             (unsigned long long)(uintptr_t)page0,
+             (unsigned long long)(uintptr_t)page1);
+    arm_rc = r0lab_control_raw(command, arm_reply, sizeof(arm_reply));
+    if (arm_rc < 0) {
+        failures = 1;
+        goto done;
+    }
+
+    snprintf(command, sizeof(command), "s4 descriptor negative probe 0x%llx",
+             (unsigned long long)token);
+    probe_rc = r0lab_control_raw(command, probe_reply, sizeof(probe_reply));
+    r0lab_s4_descriptor_routing_clear(token, &clear_rc, &cleared_rc);
+    if (cleared_rc >= 0) {
+        restored0 = ((int (*)(void))page0)();
+        restored1 = ((int (*)(void))page1)();
+    }
+
+    if (normal0 != 42 || normal1 != 42 || restored0 != 42 ||
+        restored1 != 42 || arm_rc < 0 || probe_rc < 0 || clear_rc < 0 ||
+        cleared_rc < 0 ||
+        !strstr(arm_reply, "s4_descriptor_routing_ready") ||
+        !strstr(probe_reply, "s4_descriptor_negative_observed") ||
+        !strstr(probe_reply, "baseline_brk_matches=2") ||
+        !strstr(probe_reply, "baseline_step_matches=2") ||
+        !strstr(probe_reply, "reject_checks=11") ||
+        !strstr(probe_reply, "state_intact=1") ||
+        !strstr(probe_reply, "bad_brk_offset_rejected=1") ||
+        !strstr(probe_reply, "bad_step_offset_rejected=1") ||
+        !strstr(probe_reply, "stale_brk_generation_rejected=1") ||
+        !strstr(probe_reply, "stale_step_generation_rejected=1") ||
+        !strstr(probe_reply, "wrong_brk_slot_rejected=1") ||
+        !strstr(probe_reply, "wrong_step_slot_rejected=1") ||
+        !strstr(probe_reply, "bad_register_index_rejected=1") ||
+        !strstr(probe_reply, "bad_register_value_rejected=1") ||
+        !strstr(probe_reply, "cross_slot_brk_rejected=1") ||
+        !strstr(probe_reply, "cross_slot_step_rejected=1") ||
+        !strstr(probe_reply, "wrong_step_tid_rejected=1") ||
+        !strstr(probe_reply, "brk_events=0") ||
+        !strstr(probe_reply, "step_events=0") ||
+        !strstr(probe_reply, "pte_begin_events=0") ||
+        !strstr(probe_reply, "pte_finish_events=0"))
+        failures = 1;
+
+done:
+    if (arm_rc >= 0 && clear_rc < 0)
+        r0lab_s4_descriptor_routing_clear(token, &clear_rc, &cleared_rc);
+    if (page1 != MAP_FAILED)
+        munmap(page1, page_size);
+    if (page0 != MAP_FAILED)
+        munmap(page0, page_size);
+    snprintf(output, output_size,
+             "s4 mode=descriptor-negative failures=%d normal0=%d normal1=%d restored0=%d restored1=%d arm_rc=%ld probe_rc=%ld clear_rc=%ld cleared_rc=%ld page0=%llx page1=%llx arm=\"%s\" probe=\"%s\"",
+             failures, normal0, normal1, restored0, restored1, arm_rc,
+             probe_rc, clear_rc, cleared_rc,
+             (unsigned long long)(uintptr_t)page0,
+             (unsigned long long)(uintptr_t)page1, arm_reply, probe_reply);
+    return failures ? -1 : 0;
+}
+
 static int r0lab_m5_hold_m3(const char *token_text, char *output,
                              size_t output_size)
 {
@@ -12022,6 +12125,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "s4 descriptor routing ", 22)) {
         r0lab_s4_descriptor_routing_run(args + 22, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "s4 descriptor negative ", 23)) {
+        r0lab_s4_descriptor_negative_run(args + 23, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

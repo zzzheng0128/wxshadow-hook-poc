@@ -1110,6 +1110,28 @@ static bool r0lab_s4_descriptor_register_allowed(
            descriptor->register_value == R0LAB_S4_RAW_REG_VALUE;
 }
 
+static bool r0lab_s4_descriptor_same(
+    const struct r0lab_s4_descriptor *left,
+    const struct r0lab_s4_descriptor *right)
+{
+    return left && right && left->mm == right->mm &&
+           left->page_address == right->page_address &&
+           left->generation == right->generation &&
+           left->brk_offset == right->brk_offset &&
+           left->step_offset == right->step_offset &&
+           left->brk_events == right->brk_events &&
+           left->step_events == right->step_events &&
+           left->pte_begin_events == right->pte_begin_events &&
+           left->pte_finish_events == right->pte_finish_events &&
+           left->reject_events == right->reject_events &&
+           left->register_index == right->register_index &&
+           left->register_value == right->register_value &&
+           left->step_tid == right->step_tid &&
+           left->slot_id == right->slot_id &&
+           left->state == right->state && left->mode == right->mode &&
+           left->present == right->present;
+}
+
 static bool r0lab_s4_descriptor_brk_matches_locked(
     const struct r0lab_raw_shadow_page *page, unsigned long pc, uint64_t esr)
 {
@@ -1126,6 +1148,7 @@ static bool r0lab_s4_descriptor_brk_matches_locked(
         descriptor->mm != page->raw.mm ||
         descriptor->page_address != page->raw.address ||
         descriptor->generation != page->generation ||
+        descriptor->slot_id != page->slot_id ||
         descriptor->brk_offset >= R0LAB_RAW_PAGE_SIZE ||
         descriptor->step_offset >= R0LAB_RAW_PAGE_SIZE ||
         (descriptor->brk_offset & 3U) ||
@@ -1156,6 +1179,7 @@ static bool r0lab_s4_descriptor_step_matches_locked(
         descriptor->mm != page->raw.mm ||
         descriptor->page_address != page->raw.address ||
         descriptor->generation != page->generation ||
+        descriptor->slot_id != page->slot_id ||
         descriptor->step_tid != r0lab_current_tid() ||
         descriptor->step_offset >= R0LAB_RAW_PAGE_SIZE ||
         (descriptor->step_offset & 3U))
@@ -2725,6 +2749,276 @@ static long r0lab_s4_descriptor_routing_observed(uint64_t token,
              pte_begin_slot_events[1], pte_finish_slot_events[1],
              r0lab_s4_descriptor_state_name(descriptor_states[1]),
              r0lab_page_record_state_name(record_states[1]));
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_s4_descriptor_negative_probe(uint64_t token,
+                                               char __user *out_msg,
+                                               int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_shadow_page *slot0;
+    struct r0lab_raw_shadow_page *slot1;
+    struct r0lab_s4_descriptor saved0;
+    struct r0lab_s4_descriptor saved1;
+    unsigned long raw_state0;
+    unsigned long raw_state1;
+    bool transitioning0;
+    bool transitioning1;
+    unsigned long flags;
+    pid_t tid;
+    uint32_t brk_events;
+    uint32_t step_events;
+    uint32_t enable_events;
+    uint32_t disable_events;
+    uint32_t pte_begin_events;
+    uint32_t pte_finish_events;
+    unsigned int active_descriptors;
+    unsigned int raw_slots;
+    unsigned int raw_page_table_active;
+    unsigned int baseline_brk_matches = 0;
+    unsigned int baseline_step_matches = 0;
+    unsigned int reject_checks = 0;
+    bool bad_brk_offset_rejected = false;
+    bool bad_step_offset_rejected = false;
+    bool stale_brk_generation_rejected = false;
+    bool stale_step_generation_rejected = false;
+    bool wrong_brk_slot_rejected = false;
+    bool wrong_step_slot_rejected = false;
+    bool bad_register_index_rejected = false;
+    bool bad_register_value_rejected = false;
+    bool cross_slot_brk_rejected = false;
+    bool cross_slot_step_rejected = false;
+    bool wrong_step_tid_rejected = false;
+    bool state_intact;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+
+    flags = r0lab_lock();
+    slot0 = &g_raw_page_table.slots[0];
+    slot1 = &g_raw_page_table.slots[1];
+    if (!g_s4_brk.armed || g_s4_brk.clearing || !g_s4_brk.step_mode ||
+        !g_s4_brk.raw_step_mode || g_s4_brk.raw_reg_mode ||
+        g_s4_brk.state != R0LAB_S4_HOOKED ||
+        !r0lab_raw_page_slot_owned_locked(slot0) ||
+        !r0lab_raw_page_slot_owned_locked(slot1) ||
+        !r0lab_s4_descriptor_owned_locked(&slot0->s4_descriptor) ||
+        !r0lab_s4_descriptor_owned_locked(&slot1->s4_descriptor) ||
+        slot0->raw.state != R0LAB_RAW_SHADOW_RX ||
+        slot1->raw.state != R0LAB_RAW_SHADOW_RX) {
+        r0lab_unlock(flags);
+        return R0LAB_EAGAIN;
+    }
+
+    saved0 = slot0->s4_descriptor;
+    saved1 = slot1->s4_descriptor;
+    raw_state0 = slot0->raw.state;
+    raw_state1 = slot1->raw.state;
+    transitioning0 = slot0->transitioning;
+    transitioning1 = slot1->transitioning;
+    tid = r0lab_current_tid();
+
+    if (r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT))
+        ++baseline_brk_matches;
+    if (r0lab_s4_descriptor_brk_matches_locked(
+            slot1, saved1.page_address + saved1.brk_offset,
+            R0LAB_S4_BRK_COMMENT))
+        ++baseline_brk_matches;
+
+    slot0->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot0->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot0->s4_descriptor.step_tid = tid;
+    slot1->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot1->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot1->s4_descriptor.step_tid = tid;
+    if (r0lab_s4_descriptor_step_matches_locked(
+            slot0, saved0.page_address + saved0.step_offset))
+        ++baseline_step_matches;
+    if (r0lab_s4_descriptor_step_matches_locked(
+            slot1, saved1.page_address + saved1.step_offset))
+        ++baseline_step_matches;
+
+    slot0->s4_descriptor = saved0;
+    slot1->s4_descriptor = saved1;
+    slot0->raw.state = raw_state0;
+    slot1->raw.state = raw_state1;
+
+    slot0->s4_descriptor.brk_offset = R0LAB_RAW_PAGE_SIZE;
+    if (!r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT)) {
+        bad_brk_offset_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+
+    slot0->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot0->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot0->s4_descriptor.step_tid = tid;
+    slot0->s4_descriptor.step_offset = R0LAB_RAW_PAGE_SIZE;
+    if (!r0lab_s4_descriptor_step_matches_locked(
+            slot0, saved0.page_address + saved0.step_offset)) {
+        bad_step_offset_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+    slot0->raw.state = raw_state0;
+
+    slot0->s4_descriptor.generation = saved0.generation + 1ULL;
+    if (!r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT)) {
+        stale_brk_generation_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+
+    slot0->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot0->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot0->s4_descriptor.step_tid = tid;
+    slot0->s4_descriptor.generation = saved0.generation + 1ULL;
+    if (!r0lab_s4_descriptor_step_matches_locked(
+            slot0, saved0.page_address + saved0.step_offset)) {
+        stale_step_generation_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+    slot0->raw.state = raw_state0;
+
+    slot0->s4_descriptor.slot_id = slot1->slot_id;
+    if (!r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT)) {
+        wrong_brk_slot_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+
+    slot0->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot0->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot0->s4_descriptor.step_tid = tid;
+    slot0->s4_descriptor.slot_id = slot1->slot_id;
+    if (!r0lab_s4_descriptor_step_matches_locked(
+            slot0, saved0.page_address + saved0.step_offset)) {
+        wrong_step_slot_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+    slot0->raw.state = raw_state0;
+
+    slot0->s4_descriptor.mode = R0LAB_S4_DESCRIPTOR_MODE_RAW_REG;
+    slot0->s4_descriptor.register_index = R0LAB_S4_RAW_REG_INDEX + 1U;
+    slot0->s4_descriptor.register_value = R0LAB_S4_RAW_REG_VALUE;
+    if (!r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT)) {
+        bad_register_index_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+
+    slot0->s4_descriptor.mode = R0LAB_S4_DESCRIPTOR_MODE_RAW_REG;
+    slot0->s4_descriptor.register_index = R0LAB_S4_RAW_REG_INDEX;
+    slot0->s4_descriptor.register_value = R0LAB_S4_RAW_REG_VALUE + 1ULL;
+    if (!r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT)) {
+        bad_register_value_rejected = true;
+        ++reject_checks;
+    }
+    slot0->s4_descriptor = saved0;
+
+    if (!r0lab_s4_descriptor_brk_matches_locked(
+            slot0, saved1.page_address + saved1.brk_offset,
+            R0LAB_S4_BRK_COMMENT) &&
+        !r0lab_s4_descriptor_brk_matches_locked(
+            slot1, saved0.page_address + saved0.brk_offset,
+            R0LAB_S4_BRK_COMMENT)) {
+        cross_slot_brk_rejected = true;
+        ++reject_checks;
+    }
+
+    slot0->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot0->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot0->s4_descriptor.step_tid = tid;
+    slot1->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot1->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot1->s4_descriptor.step_tid = tid;
+    if (!r0lab_s4_descriptor_step_matches_locked(
+            slot0, saved1.page_address + saved1.step_offset) &&
+        !r0lab_s4_descriptor_step_matches_locked(
+            slot1, saved0.page_address + saved0.step_offset)) {
+        cross_slot_step_rejected = true;
+        ++reject_checks;
+    }
+
+    slot0->s4_descriptor = saved0;
+    slot1->s4_descriptor = saved1;
+    slot0->raw.state = raw_state0;
+    slot1->raw.state = raw_state1;
+
+    slot0->raw.state = R0LAB_RAW_ORIGINAL_STEP;
+    slot0->s4_descriptor.state =
+        R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+    slot0->s4_descriptor.step_tid = tid + 1;
+    if (!r0lab_s4_descriptor_step_matches_locked(
+            slot0, saved0.page_address + saved0.step_offset)) {
+        wrong_step_tid_rejected = true;
+        ++reject_checks;
+    }
+
+    slot0->s4_descriptor = saved0;
+    slot1->s4_descriptor = saved1;
+    slot0->raw.state = raw_state0;
+    slot1->raw.state = raw_state1;
+    slot0->transitioning = transitioning0;
+    slot1->transitioning = transitioning1;
+
+    state_intact =
+        slot0->raw.state == raw_state0 && slot1->raw.state == raw_state1 &&
+        slot0->transitioning == transitioning0 &&
+        slot1->transitioning == transitioning1 &&
+        r0lab_s4_descriptor_same(&slot0->s4_descriptor, &saved0) &&
+        r0lab_s4_descriptor_same(&slot1->s4_descriptor, &saved1);
+    brk_events = g_s4_brk.brk_events;
+    step_events = g_s4_brk.step_events;
+    enable_events = g_s4_brk.step_enable_events;
+    disable_events = g_s4_brk.step_disable_events;
+    pte_begin_events = g_s4_brk.pte_begin_events;
+    pte_finish_events = g_s4_brk.pte_finish_events;
+    active_descriptors = r0lab_s4_descriptor_count_locked();
+    raw_slots = r0lab_raw_slot_count_locked();
+    raw_page_table_active = r0lab_raw_page_table_active_count_locked();
+    r0lab_unlock(flags);
+
+    snprintf(reply, sizeof(reply),
+             "s4_descriptor_negative_observed slots=2 active=%u baseline_brk_matches=%u baseline_step_matches=%u reject_checks=%u state_intact=%u bad_brk_offset_rejected=%u bad_step_offset_rejected=%u stale_brk_generation_rejected=%u stale_step_generation_rejected=%u wrong_brk_slot_rejected=%u wrong_step_slot_rejected=%u bad_register_index_rejected=%u bad_register_value_rejected=%u cross_slot_brk_rejected=%u cross_slot_step_rejected=%u wrong_step_tid_rejected=%u brk_events=%u step_events=%u enable_events=%u disable_events=%u pte_begin_events=%u pte_finish_events=%u raw_slots=%u raw_page_table_active=%u\n",
+             active_descriptors, baseline_brk_matches,
+             baseline_step_matches, reject_checks, state_intact ? 1U : 0U,
+             bad_brk_offset_rejected ? 1U : 0U,
+             bad_step_offset_rejected ? 1U : 0U,
+             stale_brk_generation_rejected ? 1U : 0U,
+             stale_step_generation_rejected ? 1U : 0U,
+             wrong_brk_slot_rejected ? 1U : 0U,
+             wrong_step_slot_rejected ? 1U : 0U,
+             bad_register_index_rejected ? 1U : 0U,
+             bad_register_value_rejected ? 1U : 0U,
+             cross_slot_brk_rejected ? 1U : 0U,
+             cross_slot_step_rejected ? 1U : 0U,
+             wrong_step_tid_rejected ? 1U : 0U, brk_events, step_events,
+             enable_events, disable_events, pte_begin_events,
+             pte_finish_events, raw_slots, raw_page_table_active);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -12141,6 +12435,13 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_parse_u64(value, &token))
             return R0LAB_EINVAL;
         return r0lab_s4_descriptor_routing_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "s4 descriptor negative probe ", 29)) {
+        value = args + 29;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_s4_descriptor_negative_probe(token, out_msg, outlen);
     }
     if (!strncmp(args, "s4 brk arm ", 11)) {
         value = args + 11;
