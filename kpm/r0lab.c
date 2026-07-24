@@ -1092,6 +1092,76 @@ static void r0lab_s4_descriptor_prepare_locked(
     descriptor->present = true;
 }
 
+static bool r0lab_s4_descriptor_raw_mode(uint8_t mode)
+{
+    return mode == R0LAB_S4_DESCRIPTOR_MODE_RAW_STEP ||
+           mode == R0LAB_S4_DESCRIPTOR_MODE_RAW_REG;
+}
+
+static bool r0lab_s4_descriptor_register_allowed(
+    const struct r0lab_s4_descriptor *descriptor)
+{
+    return descriptor &&
+           descriptor->register_index == R0LAB_S4_RAW_REG_INDEX &&
+           descriptor->register_value == R0LAB_S4_RAW_REG_VALUE;
+}
+
+static bool r0lab_s4_descriptor_brk_matches_locked(
+    const struct r0lab_raw_shadow_page *page, unsigned long pc, uint64_t esr)
+{
+    const struct r0lab_s4_descriptor *descriptor;
+
+    if (!page || !page->armed || page->clearing || page->transitioning ||
+        page->raw.state != R0LAB_RAW_SHADOW_RX ||
+        (esr & 0xffffU) != R0LAB_S4_BRK_COMMENT)
+        return false;
+    descriptor = &page->s4_descriptor;
+    if (!r0lab_s4_descriptor_owned_locked(descriptor) ||
+        descriptor->state != R0LAB_S4_DESCRIPTOR_ARMED_SHADOW ||
+        !r0lab_s4_descriptor_raw_mode(descriptor->mode) ||
+        descriptor->mm != page->raw.mm ||
+        descriptor->page_address != page->raw.address ||
+        descriptor->generation != page->generation ||
+        descriptor->brk_offset >= R0LAB_RAW_PAGE_SIZE ||
+        descriptor->step_offset >= R0LAB_RAW_PAGE_SIZE ||
+        (descriptor->brk_offset & 3U) ||
+        (descriptor->step_offset & 3U))
+        return false;
+    if (descriptor->mode == R0LAB_S4_DESCRIPTOR_MODE_RAW_REG &&
+        !r0lab_s4_descriptor_register_allowed(descriptor))
+        return false;
+    if (pc < descriptor->page_address ||
+        pc >= descriptor->page_address + R0LAB_RAW_PAGE_SIZE)
+        return false;
+    return pc == descriptor->page_address + descriptor->brk_offset;
+}
+
+static bool r0lab_s4_descriptor_step_matches_locked(
+    const struct r0lab_raw_shadow_page *page, unsigned long pc)
+{
+    const struct r0lab_s4_descriptor *descriptor;
+
+    if (!page || !page->armed || page->clearing || page->transitioning ||
+        page->raw.state != R0LAB_RAW_ORIGINAL_STEP)
+        return false;
+    descriptor = &page->s4_descriptor;
+    if (!r0lab_s4_descriptor_owned_locked(descriptor) ||
+        descriptor->state !=
+            R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP ||
+        !r0lab_s4_descriptor_raw_mode(descriptor->mode) ||
+        descriptor->mm != page->raw.mm ||
+        descriptor->page_address != page->raw.address ||
+        descriptor->generation != page->generation ||
+        descriptor->step_tid != r0lab_current_tid() ||
+        descriptor->step_offset >= R0LAB_RAW_PAGE_SIZE ||
+        (descriptor->step_offset & 3U))
+        return false;
+    if (pc < descriptor->page_address ||
+        pc >= descriptor->page_address + R0LAB_RAW_PAGE_SIZE)
+        return false;
+    return pc == descriptor->page_address + descriptor->step_offset;
+}
+
 static unsigned long r0lab_raw_page_base(unsigned long address)
 {
     return address & ~(R0LAB_RAW_PAGE_SIZE - 1UL);
@@ -1761,38 +1831,41 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
     ++g_s4_inflight;
     if (g_s4_brk.armed && !g_s4_brk.clearing && g_session.active &&
         g_session.owner_tgid == r0lab_current_tgid() &&
-        g_s4_brk.target_address == regs->pc &&
         (esr & 0xffffU) == R0LAB_S4_BRK_COMMENT) {
-        ++g_s4_brk.brk_events;
         step_ready = g_s4_brk.step_mode && g_s4_user_enable_single_step &&
                      g_s4_brk.step_hook_installed;
         event_pc = regs->pc;
         event_x0 = regs->regs[0];
         event_x30 = regs->regs[30];
         if (step_ready && g_s4_brk.raw_step_mode) {
-            if (g_raw_page.armed && !g_raw_page.clearing &&
-                !g_raw_page.transitioning &&
-                g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX &&
-                g_raw_page.raw.address ==
-                    (g_s4_brk.target_address &
-                     ~(R0LAB_RAW_PAGE_SIZE - 1UL))) {
+            struct r0lab_s4_descriptor *descriptor =
+                &g_raw_page.s4_descriptor;
+
+            if (r0lab_s4_descriptor_brk_matches_locked(&g_raw_page,
+                                                       regs->pc, esr)) {
+                ++g_s4_brk.brk_events;
+                ++descriptor->brk_events;
                 g_raw_page.transitioning = true;
-                raw_generation = g_raw_page.generation;
+                raw_generation = descriptor->generation;
                 raw_begin = true;
+                matched = true;
             }
-        } else if (step_ready) {
-            g_s4_brk.state = R0LAB_S4_STEP_ARMED;
-            g_s4_brk.step_tid = r0lab_current_tid();
-            ++g_s4_brk.step_enable_events;
-            /* Step-mode only: consume BRK and run the fixed Lab instruction. */
-            regs->pc = g_s4_brk.target_address + 4;
-            args->skip_origin = 1;
-            args->ret = 0;
-            enable_step = true;
-        } else {
-            g_s4_brk.state = R0LAB_S4_BRK_OBSERVED;
+        } else if (g_s4_brk.target_address == regs->pc) {
+            ++g_s4_brk.brk_events;
+            if (step_ready) {
+                g_s4_brk.state = R0LAB_S4_STEP_ARMED;
+                g_s4_brk.step_tid = r0lab_current_tid();
+                ++g_s4_brk.step_enable_events;
+                /* Step-mode only: consume BRK and run the fixed Lab instruction. */
+                regs->pc = g_s4_brk.target_address + 4;
+                args->skip_origin = 1;
+                args->ret = 0;
+                enable_step = true;
+            } else {
+                g_s4_brk.state = R0LAB_S4_BRK_OBSERVED;
+            }
+            matched = true;
         }
-        matched = true;
     }
     r0lab_unlock(flags);
 
@@ -1802,18 +1875,28 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
     if (raw_begin) {
         flags = r0lab_lock();
         if (g_raw_page.generation == raw_generation) {
+            struct r0lab_s4_descriptor *descriptor =
+                &g_raw_page.s4_descriptor;
+
             g_raw_page.transitioning = false;
             if (!raw_result && g_s4_brk.armed && !g_s4_brk.clearing &&
                 g_s4_brk.raw_step_mode &&
-                g_s4_brk.state == R0LAB_S4_HOOKED) {
+                g_s4_brk.state == R0LAB_S4_HOOKED &&
+                r0lab_s4_descriptor_owned_locked(descriptor) &&
+                descriptor->generation == raw_generation &&
+                descriptor->state == R0LAB_S4_DESCRIPTOR_ARMED_SHADOW &&
+                r0lab_s4_descriptor_raw_mode(descriptor->mode)) {
                 g_s4_brk.state = R0LAB_S4_STEP_ARMED;
                 g_s4_brk.step_tid = r0lab_current_tid();
+                descriptor->state =
+                    R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP;
+                descriptor->step_tid = r0lab_current_tid();
                 ++g_s4_brk.step_enable_events;
                 ++g_s4_brk.pte_begin_events;
                 g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_STEP;
-                if (g_s4_brk.raw_reg_mode) {
-                    reg_value = g_s4_brk.reg_value;
-                    regs->regs[R0LAB_S4_RAW_REG_INDEX] = reg_value;
+                if (descriptor->mode == R0LAB_S4_DESCRIPTOR_MODE_RAW_REG) {
+                    reg_value = descriptor->register_value;
+                    regs->regs[descriptor->register_index] = reg_value;
                     ++g_s4_brk.reg_write_events;
                     reg_write = true;
                 }
@@ -1864,26 +1947,35 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
     flags = r0lab_lock();
     ++g_s4_inflight;
     if (g_s4_brk.armed && !g_s4_brk.clearing && g_s4_brk.step_mode &&
-        g_s4_brk.state == R0LAB_S4_STEP_ARMED && g_session.active &&
-        g_session.owner_tgid == r0lab_current_tgid() &&
-        g_s4_brk.step_tid == r0lab_current_tid()) {
-        ++g_s4_brk.step_disable_events;
-        disable_step = true;
+        g_session.active && g_session.owner_tgid == r0lab_current_tgid()) {
         raw_step_mode = g_s4_brk.raw_step_mode;
-        if (raw_step_mode && g_raw_page.armed && !g_raw_page.clearing &&
-            !g_raw_page.transitioning &&
-            g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_STEP) {
-            g_raw_page.transitioning = true;
-            raw_generation = g_raw_page.generation;
-            raw_finish = true;
+        if (raw_step_mode) {
+            struct r0lab_s4_descriptor *descriptor =
+                &g_raw_page.s4_descriptor;
+
+            if (g_s4_brk.state == R0LAB_S4_STEP_ARMED &&
+                r0lab_s4_descriptor_step_matches_locked(&g_raw_page,
+                                                        regs->pc)) {
+                ++g_s4_brk.step_disable_events;
+                disable_step = true;
+                g_raw_page.transitioning = true;
+                raw_generation = descriptor->generation;
+                raw_finish = true;
+                args->skip_origin = 1;
+                args->ret = 0;
+            }
+        } else if (g_s4_brk.state == R0LAB_S4_STEP_ARMED &&
+                   g_s4_brk.step_tid == r0lab_current_tid()) {
+            ++g_s4_brk.step_disable_events;
+            disable_step = true;
+            if (regs->pc == g_s4_brk.target_address + 8) {
+                ++g_s4_brk.step_events;
+                g_s4_brk.state = R0LAB_S4_STEP_OBSERVED;
+                matched = true;
+            }
+            args->skip_origin = 1;
+            args->ret = 0;
         }
-        if (!raw_step_mode && regs->pc == g_s4_brk.target_address + 8) {
-            ++g_s4_brk.step_events;
-            g_s4_brk.state = R0LAB_S4_STEP_OBSERVED;
-            matched = true;
-        }
-        args->skip_origin = 1;
-        args->ret = 0;
     }
     r0lab_unlock(flags);
 
@@ -1893,13 +1985,25 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
     if (raw_finish) {
         flags = r0lab_lock();
         if (g_raw_page.generation == raw_generation) {
+            struct r0lab_s4_descriptor *descriptor =
+                &g_raw_page.s4_descriptor;
+
             g_raw_page.transitioning = false;
             if (!raw_result && g_s4_brk.armed && !g_s4_brk.clearing &&
                 g_s4_brk.raw_step_mode &&
-                regs->pc == g_s4_brk.target_address + 4) {
+                r0lab_s4_descriptor_owned_locked(descriptor) &&
+                descriptor->generation == raw_generation &&
+                descriptor->state ==
+                    R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP &&
+                regs->pc == descriptor->page_address +
+                    descriptor->step_offset) {
                 ++g_s4_brk.step_events;
+                ++descriptor->step_events;
                 ++g_s4_brk.pte_finish_events;
                 g_s4_brk.state = R0LAB_S4_STEP_OBSERVED;
+                descriptor->state =
+                    R0LAB_S4_DESCRIPTOR_STEP_MATCHED_SHADOW;
+                descriptor->step_tid = 0;
                 g_raw_page.record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
                 matched = true;
             }
@@ -1913,6 +2017,8 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
         flags = r0lab_lock();
         if (g_s4_brk.step_tid == r0lab_current_tid())
             g_s4_brk.step_tid = 0;
+        if (g_raw_page.s4_descriptor.step_tid == r0lab_current_tid())
+            g_raw_page.s4_descriptor.step_tid = 0;
         r0lab_unlock(flags);
     }
 

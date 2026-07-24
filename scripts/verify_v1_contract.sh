@@ -3464,10 +3464,12 @@ require_text "$FINAL_ROADMAP" \
   'docs/wxshadow-f6-brk-step-descriptor-abi-plan.md'
 require_text "$FINAL_ROADMAP" \
   'F6-D1 adds page-owned descriptor scaffold'
+require_text "$FINAL_ROADMAP" \
+  'F6-D2 slot-0 compatibility migration is device-verified'
 require_text "$F6_BRK_STEP_PLAN" \
   'wxshadow F6 BRK/Step Descriptor ABI Plan'
 require_text "$F6_BRK_STEP_PLAN" \
-  'Status: F6-D1 descriptor scaffold'
+  'Status: F6-D2 slot-0 compatibility migration is device-verified'
 require_text "$F6_BRK_STEP_PLAN" \
   'shadow_page_begin_stepping'
 require_text "$F6_BRK_STEP_PLAN" \
@@ -3486,18 +3488,43 @@ require_text "$F6_BRK_STEP_PLAN" \
   'scripts/test_s4_descriptor_negative_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 32 | F6-D1 | BRK/step descriptor scaffold |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 33 | F6-D2 | Slot-0 S4 descriptor compatibility migration |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'arbitrary register/value mutation remains rejected'
 require_text "$REFERENCE_COVERAGE" \
-  'F6-D1 now adds page-owned descriptor fields'
+  'F6-D2 is device-verified for routing the existing slot-0 raw-step/raw-reg callback admission'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
   'F6-D1 is now device-verified as a descriptor'
 require_text "$VERIFICATION" \
   's4_descriptor_active=1 s4_descriptor_state=armed_shadow'
+require_text "$VERIFICATION" \
+  'F6-D2 is the slot-0 compatibility migration'
 require_text "$F6_BRK_STEP_PLAN" \
   'build/evidence/m5-lifecycle-20260724-210942.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/s4-abi-20260724-231424.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/s4-raw-step-20260724-231442.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/s4-raw-reg-20260724-231505.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/m5-lifecycle-20260724-231528.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'normal_value=42 hook_value=73 restored_value=42'
+require_text "$F6_BRK_STEP_PLAN" \
+  'reg_write_events=1 register_apply=brk_before_single_step'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'Complete/device-verified: the existing slot-0 raw-step/raw-reg BRK and single-step callback admission now routes through page-owned descriptor checks'
+require_text "$VERIFICATION" \
+  'F6-D2 is now device-verified with:'
+require_text "$VERIFICATION" \
+  'build/evidence/s4-raw-step-20260724-231442.log'
+require_text "$VERIFICATION" \
+  'build/evidence/s4-raw-reg-20260724-231505.log'
+require_text "$VERIFICATION" \
+  'This proves the slot-0 descriptor consumption path and owner-exit descriptor'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'BRK/single-step callbacks still do not route through descriptors'
 require_text "$VERIFICATION" \
@@ -3525,19 +3552,33 @@ require_text "$KPM_COMPAT_MATRIX" \
 require_text "$F6_BRK_STEP_PLAN" \
   'F6-D1 may edit only:'
 require_text "$F6_BRK_STEP_PLAN" \
-  'F6-D1 must not edit Lab App C source or device scripts'
+  'F6-D2 may edit only:'
 require_text "$F6_BRK_STEP_PLAN" \
-  'It must not route BRK'
+  'F6-D2 must keep compatibility scoped to slot 0'
+require_text "$F6_BRK_STEP_PLAN" \
+  'Plain `s4 brk` and `s4 step` remain singleton-driven'
 require_text kpm/r0lab.c 'enum r0lab_s4_descriptor_state'
 require_text kpm/r0lab.c 'enum r0lab_s4_descriptor_mode'
 require_text kpm/r0lab.c 'struct r0lab_s4_descriptor'
 require_text kpm/r0lab.c 'struct r0lab_s4_descriptor s4_descriptor;'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_prepare_locked(&g_raw_page, raw_mm,'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_brk_matches_locked'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_step_matches_locked'
+require_function_text kpm/r0lab.c r0lab_s4_brk_before \
+  'r0lab_s4_descriptor_brk_matches_locked(&g_raw_page'
+require_function_text kpm/r0lab.c r0lab_s4_brk_before \
+  'R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP'
+require_function_text kpm/r0lab.c r0lab_s4_brk_before \
+  'regs->regs[descriptor->register_index] = reg_value'
+require_function_text kpm/r0lab.c r0lab_s4_step_before \
+  'r0lab_s4_descriptor_step_matches_locked(&g_raw_page'
+require_function_text kpm/r0lab.c r0lab_s4_step_before \
+  'R0LAB_S4_DESCRIPTOR_STEP_MATCHED_SHADOW'
+require_function_text kpm/r0lab.c r0lab_s4_step_before \
+  'descriptor->generation == raw_generation'
 require_text kpm/r0lab.c 's4_descriptor_slots=%u s4_descriptor_active=%u'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_state_name(s4_descriptor_state)'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_mode_name(s4_descriptor_mode)'
-reject_function_text kpm/r0lab.c r0lab_s4_brk_before 's4_descriptor'
-reject_function_text kpm/r0lab.c r0lab_s4_step_before 's4_descriptor'
 require_text scripts/probe_shadow_page_capabilities_device.sh \
   'ordinary_xom_read_path=blocked reason=user_xom_read_fault_absent'
 require_text scripts/probe_shadow_page_capabilities_device.sh \
@@ -3884,7 +3925,7 @@ require_text kpm/r0lab.c 'r0lab_hook_detach(g_s4_single_step_handler, r0lab_s4_s
 require_text kpm/r0lab.c 'Step-mode only: consume BRK and run the fixed Lab instruction.'
 require_text kpm/r0lab.c 'args->skip_origin = 1'
 require_text kpm/r0lab.c 's4_raw_reg_ready target=%llx state=%s mode=raw_reg'
-require_text kpm/r0lab.c 'regs->regs[R0LAB_S4_RAW_REG_INDEX] = reg_value'
+require_text kpm/r0lab.c 'regs->regs[descriptor->register_index] = reg_value'
 require_text kpm/r0lab.c 'register_apply=brk_before_single_step'
 require_text kpm/r0lab.c 's4 raw-reg arm '
 require_text lab-app/src/main/cpp/labprobe.c 'ready=\"%s\" observed=\"%s\"'
