@@ -694,8 +694,6 @@ static int r0lab_raw_wait_for_callbacks(void);
 static unsigned int r0lab_raw_syscall_hook_users_locked(void);
 static unsigned int r0lab_raw_prctl_hook_users_locked(void);
 static unsigned int r0lab_raw_exit_hook_users_locked(void);
-static void r0lab_raw_unhook_except_exit(void);
-static void r0lab_raw_unhook(void);
 static void r0lab_raw_reset(struct mm_struct *mm);
 static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation);
 static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page);
@@ -1208,6 +1206,63 @@ static int r0lab_raw_hook_page_token_acquire_iabt_transition_locked(
     return 0;
 }
 
+static bool r0lab_raw_page_uses_full_abort_callback_locked(
+    const struct r0lab_raw_shadow_page *page)
+{
+    return page && page->hook_installed && !page->abort_hook_suppressed &&
+           !page->abort_hook_passthrough && !page->abort_hook_mmget &&
+           !page->abort_hook_lock && !page->abort_hook_inflight &&
+           !page->abort_hook_iabt_route &&
+           !page->abort_hook_iabt_transition;
+}
+
+static int r0lab_raw_hook_page_token_acquire_full_abort_locked(
+    void *mm, unsigned long address, unsigned int route_flags,
+    struct r0lab_raw_hook_page_token *token)
+{
+    struct r0lab_raw_shadow_page *page;
+    bool state_allowed;
+    bool original_read_resume;
+
+    if (!token)
+        return R0LAB_EINVAL;
+    token->slot_id = R0LAB_RAW_PRIMARY_SLOT;
+    token->generation = 0;
+    token->page = NULL;
+    token->kind = R0LAB_RAW_HOOK_NONE;
+    page = r0lab_raw_page_find_by_mm_addr_locked(mm, address);
+    if (!page)
+        return R0LAB_ENOENT;
+    if (!mm || page->raw.mm != mm)
+        return R0LAB_EPERM;
+    if (!r0lab_raw_page_uses_full_abort_callback_locked(page))
+        return R0LAB_EPERM;
+    original_read_resume =
+        (route_flags & R0LAB_RAW_HOOK_ROUTE_ALLOW_ORIGINAL_READ) &&
+        page->raw.state == R0LAB_RAW_ORIGINAL_READ &&
+        page->raw.read_cycle_active;
+    if (route_flags & R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN) {
+        state_allowed = page->raw.state == R0LAB_RAW_SOURCE_UXN ||
+                        original_read_resume;
+    } else {
+        state_allowed =
+            r0lab_raw_hook_route_state_allowed(page, route_flags);
+    }
+    if (page->transitioning || page->raw.gup_hide_active ||
+        page->raw.fork_hide_active ||
+        ((route_flags & R0LAB_RAW_HOOK_ROUTE_MUTATING) &&
+         page->raw.read_cycle_active && !original_read_resume))
+        return R0LAB_EBUSY;
+    if (!page->armed || page->reserving || page->clearing ||
+        !page->generation || !state_allowed)
+        return R0LAB_EAGAIN;
+    token->slot_id = page->slot_id;
+    token->generation = page->generation;
+    token->page = page;
+    token->kind = R0LAB_RAW_HOOK_ABORT;
+    return 0;
+}
+
 static __maybe_unused int r0lab_raw_hook_page_token_release_locked(
     struct r0lab_raw_hook_page_token *token, bool clear_transition)
 {
@@ -1368,6 +1423,7 @@ static long r0lab_status(char __user *out_msg, int outlen)
     unsigned int page_records;
     unsigned int raw_page_table_slots;
     unsigned int raw_page_table_active;
+    unsigned int raw_inflight;
     uint16_t raw_selected_slot;
     uint8_t raw_slot_backend;
     uint8_t raw_slot_state;
@@ -1402,6 +1458,7 @@ static long r0lab_status(char __user *out_msg, int outlen)
     page_records = r0lab_page_record_count_locked();
     raw_page_table_slots = R0LAB_RAW_PAGE_SLOT_CAPACITY;
     raw_page_table_active = r0lab_raw_page_table_active_count_locked();
+    raw_inflight = g_raw_inflight;
     raw_selected = r0lab_raw_selected_page_locked();
     raw_selected_slot = raw_selected ? raw_selected->slot_id :
                         R0LAB_RAW_PRIMARY_SLOT;
@@ -1443,11 +1500,12 @@ static long r0lab_status(char __user *out_msg, int outlen)
     current_cpu = (int)g_current_cpu();
 
     snprintf(reply, sizeof(reply),
-             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
+             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u raw_inflight=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
              g_session.lab_uid, active, owner_tgid, next_seq, last_summary_seq,
              hwbp_slots, hwbp_entry_events, hwbp_return_events, m3_slots,
              m3_fault_events, m4_slots, m4_redirect_events, raw_slots,
-             raw_activation_events, s4_slots, s4_brk_events, s4_step_events,
+             raw_activation_events, raw_inflight, s4_slots, s4_brk_events,
+             s4_step_events,
              r0lab_s4_state_name(s4_state), page_records,
              r0lab_page_record_backend_name(page_backend),
              r0lab_page_record_state_name(page_state), raw_page_table_slots,
@@ -2889,7 +2947,8 @@ static void r0lab_close_exited_session(pid_t owner_tgid)
     bool closed = false;
 
     flags = r0lab_lock();
-    if (g_session.active && g_session.owner_tgid == owner_tgid) {
+    if (g_session.active && g_session.owner_tgid == owner_tgid &&
+        !r0lab_session_has_slots_locked()) {
         g_session.last_closed_tgid = g_session.owner_tgid;
         g_session.last_closed_token = g_session.token;
         g_session.active = false;
@@ -4346,54 +4405,67 @@ static void r0lab_raw_before_abort_iabt_transition(hook_fargs3_t *args,
 
 static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
 {
-    const unsigned long far = (unsigned long)args->arg0;
-    const unsigned int esr = (unsigned int)args->arg1;
-    struct pt_regs *regs = (struct pt_regs *)(unsigned long)args->arg2;
-    struct mm_struct *current_mm = NULL;
+    unsigned long far;
+    unsigned int esr;
+    unsigned int ec;
+    struct pt_regs *regs;
+    struct mm_struct *current_mm;
     struct r0lab_raw_hook_page_token route_token = {0};
     struct r0lab_raw_shadow_page *fault_page = NULL;
-    struct r0lab_raw_shadow_page *abort_page = NULL;
-    unsigned long page_address;
     uint64_t generation = 0;
     unsigned long flags;
-    bool should_handle = false;
-    bool handled = false;
+    bool iabt_hit = false;
+    bool iabt_committed = false;
     bool read_cycle_resume = false;
     bool abort_probe_hit = false;
-    bool should_release_write = false;
+    bool read_cycle_hit = false;
     bool write_release_hit = false;
-    bool should_begin_abort_read_cycle = false;
-    bool abort_read_cycle_hit = false;
     uint32_t abort_probe_kind = 0;
     uint32_t abort_probe_events = 0;
     uint32_t write_release_events = 0;
     uint32_t write_release_failures = 0;
     uint32_t abort_read_cycle_events = 0;
     uint32_t abort_read_cycle_failures = 0;
-    int result = R0LAB_EINVAL;
+    enum {
+        R0LAB_RAW_ABORT_BRANCH_NONE = 0,
+        R0LAB_RAW_ABORT_BRANCH_IABT,
+        R0LAB_RAW_ABORT_BRANCH_READ,
+        R0LAB_RAW_ABORT_BRANCH_WRITE,
+    } branch = R0LAB_RAW_ABORT_BRANCH_NONE;
+    int branch_result = R0LAB_EINVAL;
     int write_release_result = R0LAB_EINVAL;
     int abort_read_cycle_result = R0LAB_EINVAL;
 
     (void)udata;
-    current_mm = g_get_task_mm ? g_get_task_mm(current) : NULL;
+    if (!args || !g_get_task_mm || !g_mmput)
+        return;
+    far = (unsigned long)args->arg0;
+    esr = (unsigned int)args->arg1;
+    regs = (struct pt_regs *)(unsigned long)args->arg2;
+    current_mm = g_get_task_mm(current);
+    if (!current_mm)
+        return;
+    ec = esr >> R0LAB_M3_ESR_EC_SHIFT;
+
     flags = r0lab_lock();
     ++g_raw_inflight;
-    if (regs && current_mm &&
-        (esr >> R0LAB_M3_ESR_EC_SHIFT) == R0LAB_M3_ESR_EC_IABT_LOW &&
+    if (regs && ec == R0LAB_M3_ESR_EC_IABT_LOW &&
         (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
         g_session.active &&
         g_session.owner_tgid == r0lab_current_tgid()) {
-        int route_result = r0lab_raw_hook_page_token_acquire_locked(
-            R0LAB_RAW_HOOK_ABORT, current_mm, far, 0,
+        int route_result =
+            r0lab_raw_hook_page_token_acquire_full_abort_locked(
+            current_mm, far,
+            R0LAB_RAW_HOOK_ROUTE_MUTATING |
             R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN |
                 R0LAB_RAW_HOOK_ROUTE_ALLOW_ORIGINAL_READ,
             &route_token);
 
         if (!route_result) {
             fault_page = route_token.page;
-            page_address = fault_page->raw.address;
-            if (regs->pc >= page_address &&
-                regs->pc < page_address + R0LAB_RAW_PAGE_SIZE &&
+            if (regs->pc >= fault_page->raw.address &&
+                regs->pc <
+                    fault_page->raw.address + R0LAB_RAW_PAGE_SIZE &&
                 (fault_page->raw.state == R0LAB_RAW_SOURCE_UXN ||
                  (fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ &&
                   fault_page->raw.read_cycle_active))) {
@@ -4401,16 +4473,14 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                     fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ;
                 fault_page->transitioning = true;
                 generation = route_token.generation;
-                should_handle = true;
+                branch = R0LAB_RAW_ABORT_BRANCH_IABT;
             } else {
                 (void)r0lab_raw_hook_page_token_release_locked(
                     &route_token, false);
                 fault_page = NULL;
             }
         }
-    } else if (regs && current_mm &&
-               (esr >> R0LAB_M3_ESR_EC_SHIFT) ==
-                   R0LAB_M3_ESR_EC_DABT_LOW &&
+    } else if (regs && ec == R0LAB_M3_ESR_EC_DABT_LOW &&
                g_session.active &&
                g_session.owner_tgid == r0lab_current_tgid()) {
         bool translation_read =
@@ -4420,75 +4490,80 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         bool permission_write =
             (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
             (esr & R0LAB_M3_ESR_WNR);
-        int route_result = r0lab_raw_hook_page_token_acquire_locked(
-            R0LAB_RAW_HOOK_ABORT, current_mm, far, 0,
-            R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX, &route_token);
+        int route_result =
+            r0lab_raw_hook_page_token_acquire_full_abort_locked(
+                current_mm, far,
+                R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX, &route_token);
 
         if (!route_result) {
-            abort_page = route_token.page;
-            if (translation_read && abort_page->abort_read_cycle_armed) {
-                if (!abort_page->raw.gup_hide_active &&
-                    !abort_page->raw.fork_hide_active &&
-                    !abort_page->raw.read_cycle_active) {
-                    abort_page->transitioning = true;
+            fault_page = route_token.page;
+            if (translation_read && fault_page->abort_read_cycle_armed) {
+                if (!fault_page->raw.gup_hide_active &&
+                    !fault_page->raw.fork_hide_active &&
+                    !fault_page->raw.read_cycle_active) {
+                    fault_page->transitioning = true;
                     generation = route_token.generation;
-                    should_begin_abort_read_cycle = true;
+                    branch = R0LAB_RAW_ABORT_BRANCH_READ;
                 } else {
-                    r0lab_raw_hook_route_reject_locked(
-                        abort_page, false, false, false, true, false);
-                    abort_page = NULL;
+                    fault_page = NULL;
                 }
             } else if (permission_write &&
-                       abort_page->abort_write_release_armed) {
-                abort_page->transitioning = true;
+                       fault_page->abort_write_release_armed) {
+                fault_page->transitioning = true;
                 generation = route_token.generation;
-                should_release_write = true;
-            } else if (abort_page->abort_probe_armed) {
-                if (permission_write || translation_read ||
-                    (esr >> R0LAB_M3_ESR_EC_SHIFT) ==
-                        R0LAB_M3_ESR_EC_DABT_LOW) {
+                branch = R0LAB_RAW_ABORT_BRANCH_WRITE;
+            } else if (fault_page->abort_probe_armed) {
+                if (permission_write || translation_read) {
                     abort_probe_kind = (esr & R0LAB_M3_ESR_WNR) ?
                                        R0LAB_FAULT_KIND_WRITE :
                                        R0LAB_FAULT_KIND_READ;
                     if (abort_probe_kind == R0LAB_FAULT_KIND_WRITE)
-                        ++abort_page->abort_probe_write_events;
+                        ++fault_page->abort_probe_write_events;
                     else
-                        ++abort_page->abort_probe_read_events;
+                        ++fault_page->abort_probe_read_events;
                     abort_probe_events =
-                        abort_page->abort_probe_read_events +
-                        abort_page->abort_probe_write_events +
-                        abort_page->abort_probe_exec_events;
-                    abort_page->abort_probe_last_esr = esr;
-                    abort_page->abort_probe_last_far = far;
+                        fault_page->abort_probe_read_events +
+                        fault_page->abort_probe_write_events +
+                        fault_page->abort_probe_exec_events;
+                    fault_page->abort_probe_last_esr = esr;
+                    fault_page->abort_probe_last_far = far;
                     abort_probe_hit = true;
                 }
-                abort_page = NULL;
+                fault_page = NULL;
             } else {
-                abort_page = NULL;
+                fault_page = NULL;
             }
-            if (!should_begin_abort_read_cycle && !should_release_write)
+            if (branch == R0LAB_RAW_ABORT_BRANCH_NONE)
                 (void)r0lab_raw_hook_page_token_release_locked(
                     &route_token, false);
         }
     }
     r0lab_unlock(flags);
 
-    if (should_handle && fault_page) {
+    if (branch == R0LAB_RAW_ABORT_BRANCH_IABT && fault_page) {
         if (read_cycle_resume)
-            result = r0lab_raw_finish_read_cycle(&fault_page->raw);
+            branch_result =
+                r0lab_raw_finish_read_cycle(&fault_page->raw);
         else
-            result = r0lab_raw_activate_shadow(&fault_page->raw);
-    } else if (should_begin_abort_read_cycle && abort_page) {
+            branch_result =
+                r0lab_raw_activate_shadow(&fault_page->raw);
+    } else if (branch == R0LAB_RAW_ABORT_BRANCH_READ && fault_page) {
         abort_read_cycle_result =
-            r0lab_raw_begin_fault_read_cycle(&abort_page->raw);
-    } else if (should_release_write && abort_page) {
-        write_release_result = r0lab_raw_restore_original(&abort_page->raw);
+            r0lab_raw_begin_fault_read_cycle(&fault_page->raw);
+    } else if (branch == R0LAB_RAW_ABORT_BRANCH_WRITE && fault_page) {
+        write_release_result =
+            r0lab_raw_restore_original(&fault_page->raw);
     }
 
     flags = r0lab_lock();
-    if (should_handle && fault_page && fault_page->generation == generation) {
-        fault_page->transitioning = false;
-        if (!result && fault_page->raw.state == R0LAB_RAW_SHADOW_RX) {
+    if (branch == R0LAB_RAW_ABORT_BRANCH_IABT && fault_page &&
+        fault_page->generation == generation &&
+        fault_page->transitioning) {
+        iabt_hit = true;
+        if (!r0lab_raw_hook_page_token_release_locked(
+                &route_token, true) &&
+            !branch_result &&
+            fault_page->raw.state == R0LAB_RAW_SHADOW_RX) {
             if (!read_cycle_resume) {
                 ++fault_page->activation_events;
                 fault_page->record.events = fault_page->activation_events;
@@ -4499,61 +4574,63 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
             }
             fault_page->record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
             args->skip_origin = 1;
-            handled = true;
+            args->ret = 0;
+            iabt_committed = true;
         }
     }
-    if (should_begin_abort_read_cycle && abort_page &&
-        abort_page->generation == generation) {
-        abort_page->transitioning = false;
-        abort_page->abort_read_cycle_armed = false;
-        ++abort_page->abort_read_cycle_events;
+    if (branch == R0LAB_RAW_ABORT_BRANCH_READ && fault_page &&
+        fault_page->generation == generation &&
+        fault_page->transitioning &&
+        !r0lab_raw_hook_page_token_release_locked(&route_token, true)) {
+        fault_page->abort_read_cycle_armed = false;
+        ++fault_page->abort_read_cycle_events;
         if (abort_read_cycle_result)
-            ++abort_page->abort_read_cycle_failures;
-        abort_page->abort_read_cycle_last_esr = esr;
-        abort_page->abort_read_cycle_last_far = far;
-        abort_page->abort_read_cycle_last_result = abort_read_cycle_result;
-        abort_read_cycle_events = abort_page->abort_read_cycle_events;
-        abort_read_cycle_failures = abort_page->abort_read_cycle_failures;
+            ++fault_page->abort_read_cycle_failures;
+        fault_page->abort_read_cycle_last_esr = esr;
+        fault_page->abort_read_cycle_last_far = far;
+        fault_page->abort_read_cycle_last_result = abort_read_cycle_result;
+        abort_read_cycle_events = fault_page->abort_read_cycle_events;
+        abort_read_cycle_failures = fault_page->abort_read_cycle_failures;
         if (!abort_read_cycle_result &&
-            abort_page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
-            abort_page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+            fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
+            fault_page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
             args->skip_origin = 1;
+            args->ret = 0;
         }
-        abort_read_cycle_hit = true;
+        read_cycle_hit = true;
     }
-    if (should_release_write && abort_page &&
-        abort_page->generation == generation) {
-        abort_page->transitioning = false;
-        abort_page->abort_write_release_armed = false;
-        ++abort_page->abort_write_release_events;
+    if (branch == R0LAB_RAW_ABORT_BRANCH_WRITE && fault_page &&
+        fault_page->generation == generation &&
+        fault_page->transitioning &&
+        !r0lab_raw_hook_page_token_release_locked(&route_token, true)) {
+        fault_page->abort_write_release_armed = false;
+        ++fault_page->abort_write_release_events;
         if (write_release_result)
-            ++abort_page->abort_write_release_failures;
-        abort_page->abort_write_release_last_esr = esr;
-        abort_page->abort_write_release_last_far = far;
-        abort_page->abort_write_release_last_result = write_release_result;
-        abort_page->record.state = R0LAB_PAGE_RECORD_RESTORING;
+            ++fault_page->abort_write_release_failures;
+        fault_page->abort_write_release_last_esr = esr;
+        fault_page->abort_write_release_last_far = far;
+        fault_page->abort_write_release_last_result = write_release_result;
+        fault_page->record.state = R0LAB_PAGE_RECORD_RESTORING;
         if (!write_release_result)
-            r0lab_raw_deactivate_patch_records_locked(abort_page);
-        write_release_events = abort_page->abort_write_release_events;
-        write_release_failures = abort_page->abort_write_release_failures;
+            r0lab_raw_deactivate_patch_records_locked(fault_page);
+        write_release_events = fault_page->abort_write_release_events;
+        write_release_failures =
+            fault_page->abort_write_release_failures;
         write_release_hit = true;
     }
-    --g_raw_inflight;
     r0lab_unlock(flags);
-    if (current_mm)
-        g_mmput(current_mm);
 
-    if (handled)
+    if (iabt_committed)
         r0lab_record_regs(read_cycle_resume ?
                           R0LAB_EVENT_RAW_READ_CYCLE_FINISH :
                           R0LAB_EVENT_RAW_ACTIVATE, 0, regs);
-    else if (should_handle)
-        r0lab_record_regs(R0LAB_EVENT_REJECT, result, regs);
+    else if (iabt_hit)
+        r0lab_record_regs(R0LAB_EVENT_REJECT, branch_result, regs);
     if (abort_probe_hit)
         r0lab_record_values(R0LAB_EVENT_RAW_ABORT_PROBE_HIT, 0, far, esr,
                             abort_probe_kind | ((uint64_t)abort_probe_events
                                                 << 32));
-    if (abort_read_cycle_hit)
+    if (read_cycle_hit)
         r0lab_record_values(R0LAB_EVENT_RAW_ABORT_READ_CYCLE_BEGIN,
                             abort_read_cycle_result, far, esr,
                             abort_read_cycle_events |
@@ -4563,6 +4640,10 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                             write_release_result, far, esr,
                             write_release_events |
                                 ((uint64_t)write_release_failures << 32));
+    g_mmput(current_mm);
+    flags = r0lab_lock();
+    --g_raw_inflight;
+    r0lab_unlock(flags);
 }
 
 static void r0lab_raw_gup_before_common(void *vma, unsigned long address,
@@ -5531,33 +5612,77 @@ out:
 
 static void r0lab_raw_exit_mmap_before(hook_fargs1_t *args, void *udata)
 {
-    void *mm = (void *)(unsigned long)args->arg0;
+    struct r0lab_raw_hook_page_token tokens[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0};
+    int results[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0};
+    void *mm;
     unsigned long flags;
-    unsigned long address = 0;
-    unsigned long state = 0;
-    uint32_t events = 0;
-    bool hit = false;
+    unsigned int index;
 
     (void)udata;
-    flags = r0lab_lock();
-    if (!g_raw_page.exit_hook_installed) {
-        r0lab_unlock(flags);
+    if (!args)
         return;
-    }
+    mm = (void *)(unsigned long)args->arg0;
+    flags = r0lab_lock();
     ++g_raw_inflight;
-    if (mm && g_raw_page.raw.mm == mm && g_raw_page.raw.address &&
-        g_raw_page.generation) {
-        ++g_raw_page.exit_hook_events;
-        events = g_raw_page.exit_hook_events;
-        address = g_raw_page.raw.address;
-        state = g_raw_page.raw.state;
-        hit = true;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+        struct r0lab_raw_hook_page_token *token = &tokens[index];
+
+        if (!mm || page->raw.mm != mm || !page->raw.address ||
+            !page->generation || !page->exit_hook_installed ||
+            !r0lab_raw_page_slot_owned_locked(page))
+            continue;
+        if (page->transitioning) {
+            ++page->exit_hook_failures;
+            continue;
+        }
+        token->slot_id = page->slot_id;
+        token->generation = page->generation;
+        token->page = page;
+        token->kind = R0LAB_RAW_HOOK_EXIT;
+        page->target_exiting = true;
+        page->clearing = true;
+        page->transitioning = true;
+        page->record.state = R0LAB_PAGE_RECORD_RESTORING;
     }
     r0lab_unlock(flags);
 
-    if (hit)
-        r0lab_record_values(R0LAB_EVENT_RAW_EXIT_MMAP_HIT, 0, address,
-                            state, events);
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page = tokens[index].page;
+
+        if (!page)
+            continue;
+        results[index] =
+            page->raw.state == R0LAB_RAW_RESTORED ?
+                0 : r0lab_raw_restore_original(&page->raw);
+    }
+
+    flags = r0lab_lock();
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_hook_page_token *token = &tokens[index];
+        struct r0lab_raw_shadow_page *page = token->page;
+
+        if (!page || page->generation != token->generation ||
+            !page->transitioning)
+            continue;
+        ++page->exit_hook_events;
+        if (results[index])
+            ++page->exit_hook_failures;
+        (void)r0lab_raw_hook_page_token_release_locked(token, true);
+    }
+    r0lab_unlock(flags);
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+
+        if (!page->target_exiting || page->raw.mm != mm)
+            continue;
+        r0lab_record_values(R0LAB_EVENT_RAW_EXIT_MMAP_HIT,
+                            results[index], page->raw.address,
+                            page->raw.state, page->exit_hook_events);
+    }
 
     flags = r0lab_lock();
     --g_raw_inflight;
@@ -5804,25 +5929,6 @@ static void r0lab_raw_fork_hook_release(struct r0lab_raw_shadow_page *page)
         (void)r0lab_raw_wait_for_callbacks();
 }
 
-static void r0lab_raw_fork_unhook(void)
-{
-    bool installed;
-    unsigned int index;
-    unsigned long flags = r0lab_lock();
-
-    installed = r0lab_raw_fork_hook_users_locked() != 0;
-    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index)
-        g_raw_page_table.slots[index].fork_hook_installed = false;
-    r0lab_unlock(flags);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-    if (installed)
-        r0lab_hook_detach(g_dup_mmap, r0lab_raw_fork_before,
-                          r0lab_raw_fork_after);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-}
-
 static void r0lab_raw_fault_hook_release(struct r0lab_raw_shadow_page *page)
 {
     bool installed = false;
@@ -5848,11 +5954,6 @@ static void r0lab_raw_fault_hook_release(struct r0lab_raw_shadow_page *page)
         r0lab_hook_detach(g_handle_mm_fault, r0lab_raw_fault_before, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
-}
-
-static void r0lab_raw_fault_unhook(void)
-{
-    r0lab_raw_fault_hook_release(&g_raw_page);
 }
 
 static unsigned int r0lab_raw_syscall_hook_users_locked(void)
@@ -6049,17 +6150,6 @@ static unsigned int r0lab_raw_gup_hook_users_locked(void)
     return count;
 }
 
-static bool r0lab_raw_gup_hook_uses_pte_locked(void)
-{
-    unsigned int index;
-
-    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
-        if (g_raw_page_table.slots[index].gup_hook_installed)
-            return g_raw_page_table.slots[index].gup_hook_uses_pte;
-    }
-    return !!g_follow_page_pte;
-}
-
 static void r0lab_raw_gup_hook_release(struct r0lab_raw_shadow_page *page)
 {
     bool installed = false;
@@ -6085,32 +6175,6 @@ static void r0lab_raw_gup_hook_release(struct r0lab_raw_shadow_page *page)
         r0lab_hook_detach(g_follow_page_pte, r0lab_raw_gup_pte_before,
                           r0lab_raw_gup_pte_after);
     else if (should_detach)
-        r0lab_hook_detach(g_follow_page_mask, r0lab_raw_gup_mask_before,
-                          r0lab_raw_gup_mask_after);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-}
-
-static void r0lab_raw_gup_unhook(void)
-{
-    bool installed;
-    bool uses_pte;
-    unsigned int index;
-    unsigned long flags = r0lab_lock();
-
-    installed = r0lab_raw_gup_hook_users_locked() != 0;
-    uses_pte = r0lab_raw_gup_hook_uses_pte_locked();
-    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
-        g_raw_page_table.slots[index].gup_hook_installed = false;
-        g_raw_page_table.slots[index].gup_hook_uses_pte = false;
-    }
-    r0lab_unlock(flags);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-    if (installed && uses_pte)
-        r0lab_hook_detach(g_follow_page_pte, r0lab_raw_gup_pte_before,
-                          r0lab_raw_gup_pte_after);
-    else if (installed)
         r0lab_hook_detach(g_follow_page_mask, r0lab_raw_gup_mask_before,
                           r0lab_raw_gup_mask_after);
     if (installed)
@@ -6284,13 +6348,8 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
 static void r0lab_raw_unhook_page(struct r0lab_raw_shadow_page *page,
                                   bool include_exit)
 {
-    if (page == &g_raw_page) {
-        if (include_exit)
-            r0lab_raw_unhook();
-        else
-            r0lab_raw_unhook_except_exit();
+    if (!page)
         return;
-    }
     r0lab_raw_fork_hook_release(page);
     r0lab_raw_gup_hook_release(page);
     r0lab_raw_fault_hook_release(page);
@@ -6299,22 +6358,6 @@ static void r0lab_raw_unhook_page(struct r0lab_raw_shadow_page *page,
     r0lab_raw_prctl_hook_release(page);
     if (include_exit)
         r0lab_raw_exit_hook_release(page);
-}
-
-static void r0lab_raw_unhook(void)
-{
-    r0lab_raw_unhook_except_exit();
-    r0lab_raw_exit_unhook();
-}
-
-static void r0lab_raw_unhook_except_exit(void)
-{
-    r0lab_raw_fault_unhook();
-    r0lab_raw_fork_unhook();
-    r0lab_raw_prctl_unhook();
-    r0lab_raw_syscall_unhook();
-    r0lab_raw_gup_unhook();
-    r0lab_raw_abort_hook_release(&g_raw_page);
 }
 
 static void r0lab_raw_reset_page(struct r0lab_raw_shadow_page *page,
@@ -6365,7 +6408,6 @@ static void r0lab_raw_reset_final_page(struct r0lab_raw_shadow_page *page,
                                        uint64_t generation)
 {
     void *shadow_kaddr = NULL;
-    bool exit_hook_installed = false;
     bool should_reset = false;
     uint16_t slot_id = 0;
     unsigned long flags;
@@ -6375,56 +6417,23 @@ static void r0lab_raw_reset_final_page(struct r0lab_raw_shadow_page *page,
     flags = r0lab_lock();
     if (page->raw.mm == mm && page->generation == generation) {
         slot_id = page->slot_id;
-        exit_hook_installed = page->exit_hook_installed;
-        if (!exit_hook_installed) {
-            page->clearing = true;
-            page->armed = false;
-            should_reset = true;
-        }
+        page->clearing = true;
+        page->armed = false;
+        should_reset = true;
     }
     r0lab_unlock(flags);
 
-    if (should_reset) {
-        r0lab_raw_drain_patch_buffers_page(page, mm, generation, true);
-        flags = r0lab_lock();
-        if (page->raw.mm == mm && page->generation == generation) {
-            shadow_kaddr = page->raw.shadow_kaddr;
-            r0lab_raw_page_slot_reset_locked(page, slot_id);
-        }
-        r0lab_unlock(flags);
-        if (shadow_kaddr && g_vfree)
-            g_vfree(shadow_kaddr);
-        g_mmput(mm);
+    if (!should_reset)
         return;
+    r0lab_raw_drain_patch_buffers_page(page, mm, generation, true);
+    flags = r0lab_lock();
+    if (page->raw.mm == mm && page->generation == generation) {
+        shadow_kaddr = page->raw.shadow_kaddr;
+        r0lab_raw_page_slot_reset_locked(page, slot_id);
     }
-
-    if (exit_hook_installed) {
-        g_mmput(mm);
-        flags = r0lab_lock();
-        if (page->raw.mm == mm && page->generation == generation)
-            page->exit_hook_installed = false;
-        r0lab_unlock(flags);
-        (void)r0lab_raw_wait_for_callbacks();
-        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
-        (void)r0lab_raw_wait_for_callbacks();
-        flags = r0lab_lock();
-        if (page->raw.mm == mm && page->generation == generation) {
-            page->clearing = true;
-            page->armed = false;
-        }
-        r0lab_unlock(flags);
-        r0lab_raw_drain_patch_buffers_page(page, mm, generation, true);
-        flags = r0lab_lock();
-        if (page->raw.mm == mm && page->generation == generation) {
-            shadow_kaddr = page->raw.shadow_kaddr;
-            r0lab_raw_page_slot_reset_locked(page, slot_id);
-        }
-        r0lab_unlock(flags);
-        if (shadow_kaddr && g_vfree)
-            g_vfree(shadow_kaddr);
-        return;
-    }
-
+    r0lab_unlock(flags);
+    if (shadow_kaddr && g_vfree)
+        g_vfree(shadow_kaddr);
     g_mmput(mm);
 }
 
@@ -6505,7 +6514,7 @@ static int r0lab_raw_monitor_worker(void *opaque)
     r0lab_record(R0LAB_EVENT_TARGET_EXIT, 0);
     result = page->raw.state == R0LAB_RAW_RESTORED ?
              0 : r0lab_raw_restore_original(&page->raw);
-    r0lab_raw_unhook_page(page, false);
+    r0lab_raw_unhook_page(page, true);
     if (!result)
         result = r0lab_raw_wait_for_callbacks();
     r0lab_raw_reset_final_page(page, mm, generation);
@@ -6671,7 +6680,7 @@ target_exit:
         page->record.state = R0LAB_PAGE_RECORD_RESTORING;
     r0lab_unlock(flags);
     result = r0lab_raw_restore_original(&page->raw);
-    r0lab_raw_unhook_page(page, false);
+    r0lab_raw_unhook_page(page, true);
     if (!result)
         result = r0lab_raw_wait_for_callbacks();
     r0lab_raw_reset_final_page(page, mm, generation);
@@ -7066,6 +7075,7 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     bool abort_hook_mmget;
     bool abort_hook_suppressed;
     bool abort_hook_passthrough;
+    bool abort_hook_full;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -7101,9 +7111,11 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     abort_hook_mmget = page->abort_hook_mmget;
     abort_hook_suppressed = page->abort_hook_suppressed;
     abort_hook_passthrough = page->abort_hook_passthrough;
+    abort_hook_full =
+        r0lab_raw_page_uses_full_abort_callback_locked(page);
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u abort_hook_lock=%u abort_hook_inflight=%u abort_hook_iabt_route=%u abort_hook_iabt_transition=%u\n",
+             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u abort_hook_lock=%u abort_hook_inflight=%u abort_hook_iabt_route=%u abort_hook_iabt_transition=%u abort_hook_full=%u\n",
              (unsigned int)slot_id, (uint64_t)address,
              (unsigned long long)generation, source_pfn & 0xffffUL,
              shadow_pfn & 0xffffUL,
@@ -7116,7 +7128,8 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
              abort_hook_lock ? 1U : 0U,
              abort_hook_inflight ? 1U : 0U,
              abort_hook_iabt_route ? 1U : 0U,
-             abort_hook_iabt_transition ? 1U : 0U);
+             abort_hook_iabt_transition ? 1U : 0U,
+             abort_hook_full ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
