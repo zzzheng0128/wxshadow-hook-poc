@@ -4,8 +4,8 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
-EXPECTED_BOOT_ID=30ea3346-dc2b-486a-a811-602005e79e43
-SOURCE_TAG=wxshadow-v2-f46-d4-r3n-owner-exit-mmput-fix-source-20260724
+EXPECTED_BOOT_ID=85ea557e-0182-4cc8-8509-0586bdaaab04
+SOURCE_TAG=wxshadow-v2-f46-d4-r3n-owner-exit-mmput-fix-retry1-source-20260724
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3n.kpm
 PACKAGE=dev.r0hook.lab

@@ -1549,6 +1549,10 @@ require_text "$F46_D4_R3N_MM_FIX_PLAN" \
   'No PTE primitive runs after the final `mmput()` returns.'
 require_text "$F46_D4_R3N_MM_FIX_PLAN" \
   'two successful `op=34` events'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'boot_reason=reboot,userrequested'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'candidate_kpm_loaded=0'
 require_text scripts/verify_d4_r3n_plan_packet.sh \
   'D4_R3N_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1715,9 +1719,9 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'EXPECTED_SERIAL=32250DLH2000Z3'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
-  'EXPECTED_BOOT_ID=30ea3346-dc2b-486a-a811-602005e79e43'
+  'EXPECTED_BOOT_ID=85ea557e-0182-4cc8-8509-0586bdaaab04'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
-  'SOURCE_TAG=wxshadow-v2-f46-d4-r3n-owner-exit-mmput-fix-source-20260724'
+  'SOURCE_TAG=wxshadow-v2-f46-d4-r3n-owner-exit-mmput-fix-retry1-source-20260724'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'PHASE=phase-a'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
