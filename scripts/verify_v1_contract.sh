@@ -69,6 +69,7 @@ F46_D4_R3C_PLAN=docs/wxshadow-f4.6-d4-r3c-status-reader-split-plan.md
 F46_D4_R3D_PLAN=docs/wxshadow-f4.6-d4-r3d-status-transport-split-plan.md
 F46_D4_R3E_PLAN=docs/wxshadow-f4.6-d4-r3e-raw-hold-lifetime-plan.md
 F46_D4_R3E_L2_PLAN=docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md
+F46_D4_R3E_L3_PLAN=docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 
 require_file "$CONTRACT"
@@ -95,6 +96,7 @@ require_file "$F46_D4_R3C_PLAN"
 require_file "$F46_D4_R3D_PLAN"
 require_file "$F46_D4_R3E_PLAN"
 require_file "$F46_D4_R3E_L2_PLAN"
+require_file "$F46_D4_R3E_L3_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file scripts/test_raw_exit_hook_routing_device.sh
 require_file scripts/test_raw_exit_hook_routing_diagnostics_device.sh
@@ -581,7 +583,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3a pre-clear hold-state split | F
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3b Lab App-only raw-hold split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3c status-reader split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split | Failed/classified'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured; L3 planning next'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Plan locked; device/source work deferred'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-P | Plan/docs/contract only'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-L1 | Raw-hold idle diagnostic script only'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md'
@@ -722,6 +725,18 @@ require_text "$F46_D4_R3E_L2_PLAN" 'raw-live-pte-snapshot-20260724-080322.log'
 require_text "$F46_D4_R3E_L2_PLAN" 'live_pte=e00009f9bfffc3 expected_pte=e00009f9bfffc3'
 require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-stable'
 require_text "$F46_D4_R3E_L2_PLAN" 'repeat/lower-intrusion observation'
+require_text "$F46_D4_R3E_L2_PLAN" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
+require_text "$F46_D4_R3E_L3_PLAN" 'wxshadow F4.6 D4-R3e-L3 Observer Perturbation Plan'
+require_text "$F46_D4_R3E_L3_PLAN" 'Status: planning checkpoint only.'
+require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-observer-perturbation'
+require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B0-baseline-unstable'
+require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-external-snapshot-stable'
+require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-observer-correlated'
+require_text "$F46_D4_R3E_L3_PLAN" 'No majority vote is allowed.'
+require_text "$F46_D4_R3E_L3_PLAN" 'snapshot_stage=after_set_same_pte_lock'
+require_text "$F46_D4_R3E_L3_PLAN" 'inline_walk=0 extra_pte_lock=0'
+require_text "$F46_D4_R3E_L3_PLAN" 'No KPM or Lab source is allowed in L3-A.'
+require_text "$F46_D4_R3E_L3_PLAN" 'No device action is part of this planning checkpoint.'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-raw-hold-self-unstable'
@@ -729,7 +744,10 @@ require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-P'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-A'
 require_text "$DEVELOPMENT_SEQUENCE" 'Lab App-only lifetime matrix'
 require_text "$DEVELOPMENT_SEQUENCE" 'slot count and retained PTE state'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured; L3 planning next'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Plan locked; device/source work deferred'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
+require_text "$DEVELOPMENT_SEQUENCE" 'three valid samples per variant'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw raw-hold lifetime source|shadow single|double <token>'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L2-P'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L1-single-source-uxn-unstable'
@@ -743,7 +761,9 @@ require_text "$FINAL_ROADMAP" 'D4-R3e-L2 live-PTE planning'
 require_text "$FINAL_ROADMAP" 'raw slot live pte'
 require_text "$FINAL_ROADMAP" 'raw raw-hold live-pte <token>'
 require_text "$FINAL_ROADMAP" 'raw-live-pte-snapshot-20260724-080322.log'
-require_text "$FINAL_ROADMAP" 'D4-R3e-L3 repeat/lower-intrusion planning'
+require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
+require_text "$FINAL_ROADMAP" 'strict 3/3 baseline instability versus 3/3 external-snapshot'
+require_text "$FINAL_ROADMAP" 'paired B0/B1 repeat matrix'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw-hold idle stability'
 require_text "$DEVELOPMENT_SEQUENCE" 'Activity/Logcat status transport'
 require_text "$DEVELOPMENT_SEQUENCE" 'KPM status supercall'
