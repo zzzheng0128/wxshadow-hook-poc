@@ -338,6 +338,7 @@ S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
 FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F5_DECISION_PLAN=docs/wxshadow-f5-hidden-read-decision-plan.md
 F6_BRK_STEP_PLAN=docs/wxshadow-f6-brk-step-descriptor-abi-plan.md
+F6_D3_PLAN=docs/wxshadow-f6-d3-two-slot-descriptor-routing-plan.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
@@ -383,6 +384,7 @@ require_file "$S4_PLAN"
 require_file "$FINAL_ROADMAP"
 require_file "$F5_DECISION_PLAN"
 require_file "$F6_BRK_STEP_PLAN"
+require_file "$F6_D3_PLAN"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
@@ -3465,11 +3467,37 @@ require_text "$FINAL_ROADMAP" \
 require_text "$FINAL_ROADMAP" \
   'F6-D1 adds page-owned descriptor scaffold'
 require_text "$FINAL_ROADMAP" \
-  'F6-D2 slot-0 compatibility migration is device-verified'
+  'F6-D3-D0 two-slot descriptor routing plan is active'
 require_text "$F6_BRK_STEP_PLAN" \
   'wxshadow F6 BRK/Step Descriptor ABI Plan'
 require_text "$F6_BRK_STEP_PLAN" \
-  'Status: F6-D2 slot-0 compatibility migration is device-verified'
+  'Status: F6-D3-D0 two-slot descriptor routing plan gate'
+require_text "$F6_BRK_STEP_PLAN" \
+  'docs/wxshadow-f6-d3-two-slot-descriptor-routing-plan.md'
+require_text "$F6_D3_PLAN" \
+  'wxshadow F6-D3 Two-Slot Descriptor Routing Plan'
+require_text "$F6_D3_PLAN" \
+  'Status: F6-D3-D0 plan/contract gate'
+require_text "$F6_D3_PLAN" \
+  'wxshadow-v2-f6-d2-slot0-descriptor-compat-20260724'
+require_text "$F6_D3_PLAN" \
+  'KPM command:     s4 descriptor routing arm <token> <page0> <page1>'
+require_text "$F6_D3_PLAN" \
+  'r0lab_s4_descriptor_find_brk_locked()'
+require_text "$F6_D3_PLAN" \
+  'r0lab_s4_descriptor_find_step_locked()'
+require_text "$F6_D3_PLAN" \
+  'PTE begin/finish must operate on the selected page, not on the slot-0 alias'
+require_text "$F6_D3_PLAN" \
+  'scripts/test_s4_descriptor_routing_device.sh'
+require_text "$F6_D3_PLAN" \
+  'page 1 can execute through its descriptor first and return `99`'
+require_text "$F6_D3_PLAN" \
+  'page 0 can execute through its descriptor second and return `99`'
+require_text "$F6_D3_PLAN" \
+  'descriptor step owner crossed slots'
+require_tag_target wxshadow-v2-f6-d2-slot0-descriptor-compat-20260724 \
+  e086c917db1f0707953b58d0ef5f5650bd82a830
 require_text "$F6_BRK_STEP_PLAN" \
   'shadow_page_begin_stepping'
 require_text "$F6_BRK_STEP_PLAN" \
@@ -3489,10 +3517,13 @@ require_text "$F6_BRK_STEP_PLAN" \
 require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 32 | F6-D1 | BRK/step descriptor scaffold |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 33 | F6-D2 | Slot-0 S4 descriptor compatibility migration |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 34 | F6-D3-D0 | Two-slot S4 descriptor routing plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'arbitrary register/value mutation remains rejected'
 require_text "$REFERENCE_COVERAGE" \
   'F6-D2 is device-verified for routing the existing slot-0 raw-step/raw-reg callback admission'
+require_text "$REFERENCE_COVERAGE" \
+  'F6-D3-D0 now locks the two-slot descriptor routing plan'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
@@ -3519,6 +3550,8 @@ require_text "$DEVELOPMENT_SEQUENCE" \
   'Complete/device-verified: the existing slot-0 raw-step/raw-reg BRK and single-step callback admission now routes through page-owned descriptor checks'
 require_text "$VERIFICATION" \
   'F6-D2 is now device-verified with:'
+require_text "$VERIFICATION" \
+  'F6-D3-D0 is the plan/contract gate for two-slot descriptor routing'
 require_text "$VERIFICATION" \
   'build/evidence/s4-raw-step-20260724-231442.log'
 require_text "$VERIFICATION" \
