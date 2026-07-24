@@ -340,6 +340,7 @@ F5_DECISION_PLAN=docs/wxshadow-f5-hidden-read-decision-plan.md
 F6_BRK_STEP_PLAN=docs/wxshadow-f6-brk-step-descriptor-abi-plan.md
 F6_D3_PLAN=docs/wxshadow-f6-d3-two-slot-descriptor-routing-plan.md
 F6_D4_PLAN=docs/wxshadow-f6-d4-negative-descriptor-controls-plan.md
+F7_STRESS_PLAN=docs/wxshadow-f7-final-lifecycle-stress-plan.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
@@ -387,6 +388,7 @@ require_file "$F5_DECISION_PLAN"
 require_file "$F6_BRK_STEP_PLAN"
 require_file "$F6_D3_PLAN"
 require_file "$F6_D4_PLAN"
+require_file "$F7_STRESS_PLAN"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
@@ -3596,6 +3598,31 @@ require_text "$KPM_COMPAT_MATRIX" \
   'F6-D5 full runner preserves `warn_count=3`'
 require_text "$KPM_COMPAT_MATRIX" \
   'build/evidence/v1-device-20260724T163408Z/manifest.log'
+require_text "$F7_STRESS_PLAN" \
+  'wxshadow F7 Final Lifecycle And Stress Pass Plan'
+require_text "$F7_STRESS_PLAN" \
+  'Status: F7-D0 plan/contract gate.'
+require_text "$F7_STRESS_PLAN" \
+  'wxshadow-v2-f6-d5-full-refresh-20260725'
+require_text "$F7_STRESS_PLAN" \
+  'scripts/test_m5_faults_device.sh'
+require_text "$F7_STRESS_PLAN" \
+  'scripts/test_m5_lifecycle_device.sh'
+require_text "$F7_STRESS_PLAN" \
+  'scripts/test_v1_device.sh'
+require_text "$F7_STRESS_PLAN" \
+  'scripts/test_f7_lifecycle_stress_device.sh'
+require_text "$F7_STRESS_PLAN" \
+  'historical `scripts/test_raw_r3o_lifetime_device.sh` remains a source-tagged'
+require_text "$F7_STRESS_PLAN" \
+  'No F7 source patch may merge until the failure class is named'
+require_text "$FINAL_ROADMAP" \
+  'docs/wxshadow-f7-final-lifecycle-stress-plan.md'
+require_text "$FINAL_ROADMAP" \
+  'F7-D1 adds a current-HEAD lifecycle stress runner'
+require_text "$DEVELOPMENT_SEQUENCE" '| 37 | F7-D0 | Final lifecycle stress plan gate |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'not historical source-tagged R3o scripts'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
