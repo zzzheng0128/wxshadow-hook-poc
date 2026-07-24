@@ -8652,7 +8652,7 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
     size_t page_size;
     char command[160];
     char reply[512] = {0};
-    char ready[2][320] = {{0}, {0}};
+    char ready[2][512] = {{0}, {0}};
     char observed[2][256] = {{0}, {0}};
     char inspect[2][512] = {{0}, {0}};
     char live_pte_reply[768] = {0};

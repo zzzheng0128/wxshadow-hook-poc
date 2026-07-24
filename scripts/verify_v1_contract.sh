@@ -1217,7 +1217,7 @@ require_function_sha256 kpm/r0lab.c r0lab_control0 \
   c37ba3019829afee056c4980b51d05d7dc3552123c42dcee3cb00090233869cf
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  d4c42216531c66eb0dd8df98da18dad384d658ede3098bfbbdf398dee1b05e76
+  6882598c12cf29e8a1c3ea2f7f0a48246d22c36d652d6edc6eb78314cb00a7c4
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
   d9b68a753737d4d3f8d6c247f1fb0f90b9edd387d3b8f88e6addf0967565a25e
@@ -1388,7 +1388,7 @@ require_text scripts/verify_d4_r3l_plan_packet.sh \
 require_text scripts/verify_v1_contract.sh \
   'D4-R3l plan packet contains a forbidden changed path'
 require_text "$F46_D4_R3M_PLAN" 'wxshadow F4.6 D4-R3m IABT Transition And Restore-ABI Plan'
-require_text "$F46_D4_R3M_PLAN" 'Status: source implemented and host-verified; device row not run.'
+require_text "$F46_D4_R3M_PLAN" 'Status: first device row classified as Lab ready-buffer truncation; retry1'
 require_text "$F46_D4_R3M_PLAN" 'D4-R3m-global-abort-iabt-transition-restore-abi'
 require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition'
 require_text "$F46_D4_R3M_PLAN" 'raw slot arm abort-iabt-transition <token> <slot> <page>'
@@ -1417,7 +1417,17 @@ require_text "$F46_D4_R3M_PLAN" 'signer_cert_sha256=73f1e2d251423909f33bfc757358
 require_text "$F46_D4_R3M_PLAN" 'device_script_sha256=02bd98414c29c07e78cc39695d6dc6b2e268bf6b87fd604c3fbbf2e1413c9295'
 require_text "$F46_D4_R3M_PLAN" 'disassembly_script_sha256=1c4deb9a5a6b3e54e1262ac352e62234873191c07696b38315bfa2021d3872ab'
 require_text "$F46_D4_R3M_PLAN" 'contract_script_count=58'
-require_text "$F46_D4_R3M_PLAN" 'device_access=not_run'
+require_text "$F46_D4_R3M_PLAN" 'source_commit=614c977f598cded206475b4a778cbdf37d52e42a'
+require_text "$F46_D4_R3M_PLAN" 'runtime_evidence=build/evidence/raw-abort-iabt-transition-20260724-162705.log'
+require_text "$F46_D4_R3M_PLAN" 'runtime_sha256=ee3305a49f251067aad653c8369264e4f0c05b0d270f872770b7cf5112d5fbda'
+require_text "$F46_D4_R3M_PLAN" 'classification=D4-R3m-source-uxn-iabt-transition-unstable'
+require_text "$F46_D4_R3M_PLAN" 'ready_rc=320'
+require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition=-1'
+require_text "$F46_D4_R3M_PLAN" 'retry_source_tag=wxshadow-v2-f46-d4-r3m-iabt-transition-retry1-source-20260724'
+require_text "$F46_D4_R3M_PLAN" 'retry_kpm_sha256=c29b114970e94e4b6d559728a1e72dfaadc441f9333c906de67554379c121feb'
+require_text "$F46_D4_R3M_PLAN" 'retry_apk_lib_entry_sha256=48a6317362355be5e8070ecfa31179cc163f777bf46a865404986255da127a9d'
+require_text "$F46_D4_R3M_PLAN" 'retry_device_script_sha256=555ac5d539f00131e316d5ed403c16271d756c23b55086df97ce74dfe311217e'
+require_text "$F46_D4_R3M_PLAN" 'device_access=locked_pending_physical_reboot'
 require_text scripts/verify_d4_r3m_plan_packet.sh \
   'D4_R3M_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1625,7 +1635,7 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
   6d5e437214fcaefe75fce1d2f6126ab38a59f27bfc6634336b99843633714068
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  d4c42216531c66eb0dd8df98da18dad384d658ede3098bfbbdf398dee1b05e76
+  6882598c12cf29e8a1c3ea2f7f0a48246d22c36d652d6edc6eb78314cb00a7c4
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_iabt_transition \
   12ecd7fadde7f3f38ff129c12e5366f98f1908926c60970fb4ff6b06c97b7826
@@ -1753,6 +1763,9 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
   'expect_shadow = want_shadow || iabt_transition_abort_hook;'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
+  'char ready[2][512] = {{0}, {0}};'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
   'iabt_transition_abort_hook ? 1 : 0;'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
@@ -1786,13 +1799,13 @@ require_text scripts/test_raw_abort_iabt_transition_device.sh \
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'EXPECTED_KPM_SHA=c29b114970e94e4b6d559728a1e72dfaadc441f9333c906de67554379c121feb'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
-  'EXPECTED_LABPROBE_SHA=8f3e8256b023514b379c2ebdd6d6d043b36d53e2d1fca1d2d6d8b56861d947f3'
+  'EXPECTED_LABPROBE_SHA=48a6317362355be5e8070ecfa31179cc163f777bf46a865404986255da127a9d'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
-  'wxshadow-v2-f46-d4-r3m-iabt-transition-source-20260724'
+  'wxshadow-v2-f46-d4-r3m-iabt-transition-retry1-source-20260724'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'raw raw-hold abort-iabt-transition $TOKEN'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
@@ -1802,7 +1815,7 @@ require_text scripts/test_raw_abort_iabt_transition_device.sh \
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'D4-R3m-setup-blocked'
 require_file_sha256 scripts/test_raw_abort_iabt_transition_device.sh \
-  02bd98414c29c07e78cc39695d6dc6b2e268bf6b87fd604c3fbbf2e1413c9295
+  555ac5d539f00131e316d5ed403c16271d756c23b55086df97ce74dfe311217e
 require_function_text scripts/test_raw_abort_iabt_transition_device.sh \
   poll_adb_transport 'state=$(adb_device get-state 2>&1)'
 reject_function_text scripts/test_raw_abort_iabt_transition_device.sh \

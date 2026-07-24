@@ -16,7 +16,7 @@ KEYSTORE=${R0LAB_DEBUG_KEYSTORE:-$ROOT/lab-app/debug.keystore}
 EVIDENCE_DIR="$ROOT/build/evidence"
 EVIDENCE="$EVIDENCE_DIR/raw-abort-iabt-transition-$(date +%Y%m%d-%H%M%S).log"
 EXPECTED_KPM_SHA=c29b114970e94e4b6d559728a1e72dfaadc441f9333c906de67554379c121feb
-EXPECTED_LABPROBE_SHA=8f3e8256b023514b379c2ebdd6d6d043b36d53e2d1fca1d2d6d8b56861d947f3
+EXPECTED_LABPROBE_SHA=48a6317362355be5e8070ecfa31179cc163f777bf46a865404986255da127a9d
 EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79
 EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd
 MODULE_LOADED=0
@@ -255,7 +255,7 @@ poll_adb_transport() {
 }
 
 ensure_clean_source
-require_tagged_head wxshadow-v2-f46-d4-r3m-iabt-transition-source-20260724
+require_tagged_head wxshadow-v2-f46-d4-r3m-iabt-transition-retry1-source-20260724
 [ -f "$KEYSTORE" ] || fail "fixed Lab keystore is missing: $KEYSTORE"
 SIGNER_CERT_SHA=$(sha256_signer_cert "$KEYSTORE")
 require_sha256 signer-cert "$EXPECTED_SIGNER_CERT_SHA" "$SIGNER_CERT_SHA"
