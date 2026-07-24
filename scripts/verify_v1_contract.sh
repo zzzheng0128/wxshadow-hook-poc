@@ -303,6 +303,8 @@ require_file scripts/test_raw_abort_inflight_passthrough_device.sh
 require_file scripts/verify_d4_r3j_disassembly.sh
 require_file scripts/verify_d4_r3j_plan_packet.sh
 require_file scripts/verify_d4_r3k_plan_packet.sh
+require_file scripts/test_raw_abort_visible_inflight_device.sh
+require_file scripts/verify_d4_r3k_disassembly.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -1217,7 +1219,7 @@ require_text scripts/verify_d4_r3j_plan_packet.sh \
 require_text scripts/verify_v1_contract.sh \
   'D4-R3j plan packet contains a forbidden changed path'
 require_text "$F46_D4_R3K_PLAN" 'wxshadow F4.6 D4-R3k Visible Inflight-Lifetime Plan'
-require_text "$F46_D4_R3K_PLAN" 'Status: plan locked; source implementation pending.'
+require_text "$F46_D4_R3K_PLAN" 'Status: source implemented and host verified; device row pending.'
 require_text "$F46_D4_R3K_PLAN" 'D4-R3k-global-abort-visible-inflight-lifetime'
 require_text "$F46_D4_R3K_PLAN" 'The R3k target ordering is:'
 require_text "$F46_D4_R3K_PLAN" 'keeps the acquired'
@@ -1234,6 +1236,21 @@ require_text "$F46_D4_R3K_PLAN" 'scripts/test_raw_abort_visible_inflight_device.
 require_text "$F46_D4_R3K_PLAN" 'scripts/verify_d4_r3k_disassembly.sh'
 require_text "$F46_D4_R3K_PLAN" 'lab-app/src/main/cpp/labprobe.c'
 require_text "$F46_D4_R3K_PLAN" 'Unrelated main-worktree exit-hook changes must not enter its KPM hash.'
+require_text "$F46_D4_R3K_PLAN" '## Source Implementation Checkpoint'
+require_text "$F46_D4_R3K_PLAN" 'first lock -> ++g_raw_inflight -> unlock'
+require_text "$F46_D4_R3K_PLAN" 'second lock -> --g_raw_inflight -> unlock'
+require_text "$F46_D4_R3K_PLAN" 'D4-R3k disassembly=pass'
+require_text "$F46_D4_R3K_PLAN" 'increment=1'
+require_text "$F46_D4_R3K_PLAN" 'decrement=1'
+require_text "$F46_D4_R3K_PLAN" 'counter_stores=2'
+require_text "$F46_D4_R3K_PLAN" 'intervening_calls=3'
+require_text "$F46_D4_R3K_PLAN" 'hardware_barriers=0'
+require_text "$F46_D4_R3K_PLAN" 'kpm_sha256=7f83c71160629f12db6d4e752b076ec42c102aeb9228972001736e06755468cc'
+require_text "$F46_D4_R3K_PLAN" 'apk_lib_entry_sha256=f927140d79d9298d8c55a22cecd2021d664c320557ec74854eb39a90af1e37cb'
+require_text "$F46_D4_R3K_PLAN" 'apk_dex_entry_sha256=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text "$F46_D4_R3K_PLAN" 'signer_cert_sha256=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
+require_text "$F46_D4_R3K_PLAN" 'source_tag=wxshadow-v2-f46-d4-r3k-visible-inflight-source-20260724'
+require_text "$F46_D4_R3K_PLAN" 'device_access=not_run'
 require_text scripts/verify_d4_r3k_plan_packet.sh \
   'D4_R3K_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1248,7 +1265,7 @@ require_text kpm/r0lab.c 'bool abort_hook_inflight;'
 require_text kpm/r0lab.c 'raw slot arm abort-inflight '
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough \
-  7d0c9a27c5bc7df460496d665ab62fde01f990ed2d119ed5dde0cbabb64d1a51
+  47a891ca29896f4f599b045250dccf90896d1999b41af09df73a5d657f708b7d
 require_function_text kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough \
   'current_mm = g_get_task_mm(current);'
@@ -1256,8 +1273,6 @@ require_function_text kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough 'flags = r0lab_lock();'
 require_function_text kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough '++g_raw_inflight;'
-require_function_text kpm/r0lab.c \
-  r0lab_raw_before_abort_inflight_passthrough 'barrier();'
 require_function_text kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough '--g_raw_inflight;'
 require_function_text kpm/r0lab.c \
@@ -1267,17 +1282,17 @@ require_function_text kpm/r0lab.c \
 require_function_count kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough 'g_get_task_mm(' 1
 require_function_count kpm/r0lab.c \
-  r0lab_raw_before_abort_inflight_passthrough 'r0lab_lock(' 1
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_lock(' 2
 require_function_count kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough '++g_raw_inflight;' 1
 require_function_count kpm/r0lab.c \
-  r0lab_raw_before_abort_inflight_passthrough 'barrier();' 1
-require_function_count kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough '--g_raw_inflight;' 1
 require_function_count kpm/r0lab.c \
-  r0lab_raw_before_abort_inflight_passthrough 'r0lab_unlock(' 1
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_unlock(' 2
 require_function_count kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough 'g_mmput(' 1
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'barrier();'
 reject_function_text kpm/r0lab.c \
   r0lab_raw_before_abort_inflight_passthrough 'args->'
 reject_function_text kpm/r0lab.c \
@@ -1375,6 +1390,53 @@ reject_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
 require_text scripts/verify_d4_r3j_disassembly.sh \
   'D4-R3j disassembly passed: increment=1 decrement=1 stores=2 hardware_barriers=0'
 require_text scripts/verify_d4_r3j_disassembly.sh \
+  "grep -Eq '[[:space:]](dmb|dsb|isb)([[:space:]]|$)'"
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'RAW_ABORT_VISIBLE_INFLIGHT_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'EXPECTED_SERIAL=32250DLH2000Z3'
+require_line_before scripts/test_raw_abort_visible_inflight_device.sh \
+  '[ "$SERIAL" = "$EXPECTED_SERIAL" ] ||' \
+  'case "$CLEAN_BOOT_CONFIRMED" in'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'EXPECTED_KPM_SHA=7f83c71160629f12db6d4e752b076ec42c102aeb9228972001736e06755468cc'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'EXPECTED_LABPROBE_SHA=f927140d79d9298d8c55a22cecd2021d664c320557ec74854eb39a90af1e37cb'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'wxshadow-v2-f46-d4-r3k-visible-inflight-source-20260724'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'source_commit=%s source_tag=%s'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'raw raw-hold abort-inflight $TOKEN'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'abort_hook_lock=0'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'abort_hook_inflight=1'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'D4-R3k-source-uxn-abort-visible-inflight-stable'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'D4-R3k-source-uxn-abort-visible-inflight-unstable'
+require_text scripts/test_raw_abort_visible_inflight_device.sh \
+  'D4-R3k-setup-blocked'
+require_function_text scripts/test_raw_abort_visible_inflight_device.sh \
+  poll_adb_transport 'adb_device get-state'
+reject_function_text scripts/test_raw_abort_visible_inflight_device.sh \
+  poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_abort_visible_inflight_device.sh \
+  poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_abort_visible_inflight_device.sh \
+  poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_abort_visible_inflight_device.sh \
+  poll_adb_transport 'adb_device shell getprop'
+reject_function_text scripts/test_raw_abort_visible_inflight_device.sh \
+  poll_adb_transport 'module unload'
+require_text scripts/verify_d4_r3k_disassembly.sh \
+  'D4-R3k disassembly passed: increment=1 decrement=1 stores=2 intervening_calls=3 hardware_barriers=0'
+require_text scripts/verify_d4_r3k_disassembly.sh \
   "grep -Eq '[[:space:]](dmb|dsb|isb)([[:space:]]|$)'"
 require_text kpm/r0lab.c 'bool abort_hook_lock;'
 require_text kpm/r0lab.c 'static bool g_raw_abort_hook_transitioning;'
@@ -2423,6 +2485,8 @@ scripts/test_raw_exit_hook_preclear_hold_split_device.sh
 scripts/test_raw_abort_mmget_passthrough_device.sh
 scripts/verify_d4_r3j_plan_packet.sh
 scripts/verify_d4_r3k_plan_packet.sh
+scripts/test_raw_abort_visible_inflight_device.sh
+scripts/verify_d4_r3k_disassembly.sh
 scripts/test_v1_device.sh
 '
 

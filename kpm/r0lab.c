@@ -4113,10 +4113,11 @@ static void r0lab_raw_before_abort_inflight_passthrough(
         return;
     flags = r0lab_lock();
     ++g_raw_inflight;
-    barrier();
-    --g_raw_inflight;
     r0lab_unlock(flags);
     g_mmput(current_mm);
+    flags = r0lab_lock();
+    --g_raw_inflight;
+    r0lab_unlock(flags);
 }
 
 static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
