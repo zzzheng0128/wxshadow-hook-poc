@@ -97,6 +97,7 @@ F46_D4_R3E_PLAN=docs/wxshadow-f4.6-d4-r3e-raw-hold-lifetime-plan.md
 F46_D4_R3E_L2_PLAN=docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md
 F46_D4_R3E_L3_PLAN=docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
+FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -124,6 +125,7 @@ require_file "$F46_D4_R3E_PLAN"
 require_file "$F46_D4_R3E_L2_PLAN"
 require_file "$F46_D4_R3E_L3_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
+require_file "$FOLKPATCH_REFERENCE"
 require_file scripts/test_raw_exit_hook_routing_device.sh
 require_file scripts/test_raw_exit_hook_routing_diagnostics_device.sh
 require_file scripts/test_raw_exit_hook_cleanup_isolation_device.sh
@@ -1151,6 +1153,16 @@ require_text "$S4_PLAN" 'arbitrary register/value mutation API'
 require_text "$S4_PLAN" 'S4_BRK_OBSERVED'
 require_text docs/kpm-research-plan.md 'M0-M5 plus raw two-PFN are complete for this pinned device and Lab App.'
 require_text docs/kpm-compatibility-matrix.md 'Trusting `.kpm.exit` to block FolkPatch unload'
+require_text docs/kpm-compatibility-matrix.md 'reference only, not installed-binary provenance'
+require_text docs/kpm-research-plan.md '[the FolkPatch source reference](folkpatch-runtime-reference.md)'
+require_text "$FOLKPATCH_REFERENCE" 'https://github.com/LyraVoid/FolkPatch.git'
+require_text "$FOLKPATCH_REFERENCE" '5da126b92af481bd226eb161183ddacdfadb3987'
+require_text "$FOLKPATCH_REFERENCE" 'FolkPatch reports `50ac6,d01`'
+require_text "$FOLKPATCH_REFERENCE" 'The source checkout is useful for control-path review, but its current'
+require_text "$FOLKPATCH_REFERENCE" '`0x1020` load, `0x1021` unload, `0x1022` control'
+require_text "$FOLKPATCH_REFERENCE" '/data/adb/fp/kpms/kpm_autoload_config.json'
+require_text "$FOLKPATCH_REFERENCE" '`references/KernelPatch` remains the pinned compile/header'
+require_text "$FOLKPATCH_REFERENCE" '/system/bin/truncate su module ...'
 
 SCRIPTS='
 scripts/build_kpm.sh

@@ -2,8 +2,8 @@
 /build/
 /kpm/build/
 
-# External reference checkouts. KernelPatch and rustFrida remain local
-# dependencies/references; do not vendor nested Git repositories here.
+# External reference checkouts. KernelPatch, FolkPatch, and rustFrida remain
+# local dependencies/references; do not vendor nested Git repositories here.
 /references/
 
 # Local workflow/runtime state.
