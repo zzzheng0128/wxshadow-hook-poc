@@ -1388,8 +1388,8 @@ require_text scripts/verify_d4_r3l_plan_packet.sh \
 require_text scripts/verify_v1_contract.sh \
   'D4-R3l plan packet contains a forbidden changed path'
 require_text "$F46_D4_R3M_PLAN" 'wxshadow F4.6 D4-R3m IABT Transition And Restore-ABI Plan'
-require_text "$F46_D4_R3M_PLAN" 'Status: first device row classified as Lab ready-buffer truncation and'
-require_text "$F46_D4_R3M_PLAN" 'physical-reboot closed; retry1 source is host-verified and ready for device.'
+require_text "$F46_D4_R3M_PLAN" 'Status: retry1 device row classified stable; its active hold is preserved and'
+require_text "$F46_D4_R3M_PLAN" 'physical-reboot closure is pending.'
 require_text "$F46_D4_R3M_PLAN" 'D4-R3m-global-abort-iabt-transition-restore-abi'
 require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition'
 require_text "$F46_D4_R3M_PLAN" 'raw slot arm abort-iabt-transition <token> <slot> <page>'
@@ -1435,6 +1435,13 @@ require_text "$F46_D4_R3M_PLAN" 'retry_apk_lib_entry_sha256=48a6317362355be5e807
 require_text "$F46_D4_R3M_PLAN" 'retry_device_script_sha256=34b5edfe7081f87afefe99c06078f34f515aeb946d01d424b7ab664fd5486c02'
 require_text "$F46_D4_R3M_PLAN" 'retry_pre_hold_boot_id=f5d754c7-b25c-4375-894f-b5a2e374cbf8'
 require_text "$F46_D4_R3M_PLAN" 'device_access=ready_after_physical_reboot_closure'
+require_text "$F46_D4_R3M_PLAN" 'retry_source_commit=ce3fc3da1c0d6f551cf14a2e15f9d50e03b72b95'
+require_text "$F46_D4_R3M_PLAN" 'retry_runtime_evidence=build/evidence/raw-abort-iabt-transition-20260724-164024.log'
+require_text "$F46_D4_R3M_PLAN" 'retry_runtime_sha256=7e3321901530be4927e856c67a8d3fcb0c0a26d50c6a0b303d144c0200b3ce18'
+require_text "$F46_D4_R3M_PLAN" 'classification=D4-R3m-source-uxn-iabt-transition-stable'
+require_text "$F46_D4_R3M_PLAN" 'ready_rc=344'
+require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition=1'
+require_text "$F46_D4_R3M_PLAN" 'idle_polls=15/15'
 require_text scripts/verify_d4_r3m_plan_packet.sh \
   'D4_R3M_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
