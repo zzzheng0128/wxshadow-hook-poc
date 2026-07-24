@@ -5,7 +5,7 @@ ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
 EXPECTED_BOOT_ID=30ea3346-dc2b-486a-a811-602005e79e43
-SOURCE_TAG=wxshadow-v2-f46-d4-r3n-full-abort-lifecycle-source-20260724
+SOURCE_TAG=wxshadow-v2-f46-d4-r3n-owner-exit-mmput-fix-source-20260724
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3n.kpm
 PACKAGE=dev.r0hook.lab
@@ -15,7 +15,7 @@ TOKEN_B=${RAW_FULL_ABORT_TOKEN_B:-0x72939c}
 KEYSTORE=${R0LAB_DEBUG_KEYSTORE:-$ROOT/lab-app/debug.keystore}
 EVIDENCE_DIR="$ROOT/build/evidence"
 EVIDENCE="$EVIDENCE_DIR/raw-full-abort-lifecycle-$(date +%Y%m%d-%H%M%S).log"
-EXPECTED_KPM_SHA=264dff1308e0f9303f9ca264e4a6b124b40e8893d506e592973ba8fd7c32c183
+EXPECTED_KPM_SHA=318c9a86e57d1301c34aa357fa9d8da7c6de11df7fdfdfa1dedd442dc582cc68
 EXPECTED_LABPROBE_SHA=ce787040a378c18e6619f2e43d07d703da9929303176853bce42a6824b9109b4
 EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79
 EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd
@@ -165,12 +165,12 @@ require_tagged_head() {
 }
 
 require_empty_status() {
-  status=$1
-  require_contains "$status" ' active=0 ' &&
-    require_contains "$status" ' raw_slots=0 ' &&
-    require_contains "$status" ' raw_inflight=0 ' &&
-    require_contains "$status" ' page_records=0 ' &&
-    require_contains "$status" ' raw_page_table_active=0 '
+  empty_status=$1
+  require_contains "$empty_status" ' active=0 ' &&
+    require_contains "$empty_status" ' raw_slots=0 ' &&
+    require_contains "$empty_status" ' raw_inflight=0 ' &&
+    require_contains "$empty_status" ' page_records=0 ' &&
+    require_contains "$empty_status" ' raw_page_table_active=0 '
 }
 
 prepare_worker_shutdown() {
@@ -218,11 +218,11 @@ unload_module() {
 }
 
 cleanup() {
-  status=$?
+  cleanup_rc=$?
   trap - EXIT INT TERM
 
   adb_device shell am force-stop "$PACKAGE" >/dev/null 2>&1 || true
-  if [ "$status" -ne 0 ] && [ "$MODULE_LOADED" -eq 1 ]; then
+  if [ "$cleanup_rc" -ne 0 ] && [ "$MODULE_LOADED" -eq 1 ]; then
     cleanup_status=$(run_app_command status 2>&1 || true)
     if require_empty_status "$cleanup_status"; then
       if prepare_worker_shutdown >/dev/null 2>&1; then
@@ -242,7 +242,7 @@ cleanup() {
     fi
   fi
   adb_device shell rm -f "$REMOTE" >/dev/null 2>&1 || true
-  exit "$status"
+  exit "$cleanup_rc"
 }
 
 [ -n "$SERIAL" ] ||

@@ -361,6 +361,7 @@ F46_D4_R3K_PLAN=docs/wxshadow-f4.6-d4-r3k-visible-inflight-lifetime-plan.md
 F46_D4_R3L_PLAN=docs/wxshadow-f4.6-d4-r3l-readonly-iabt-route-plan.md
 F46_D4_R3M_PLAN=docs/wxshadow-f4.6-d4-r3m-iabt-transition-restore-abi-plan.md
 F46_D4_R3N_PLAN=docs/wxshadow-f4.6-d4-r3n-full-abort-lifecycle-plan.md
+F46_D4_R3N_MM_FIX_PLAN=docs/wxshadow-f4.6-d4-r3n-owner-exit-mmput-fix-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
@@ -401,6 +402,7 @@ require_file "$F46_D4_R3K_PLAN"
 require_file "$F46_D4_R3L_PLAN"
 require_file "$F46_D4_R3M_PLAN"
 require_file "$F46_D4_R3N_PLAN"
+require_file "$F46_D4_R3N_MM_FIX_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
@@ -1537,6 +1539,16 @@ require_text "$F46_D4_R3N_PLAN" 'D4-R3n-no-reboot-reload-unstable'
 require_text "$F46_D4_R3N_PLAN" 'D4-R3n-owner-exit-cleanup-unstable'
 require_text "$F46_D4_R3N_PLAN" 'D4-R3n-setup-blocked'
 require_text "$F46_D4_R3N_PLAN" 'R3n is the final F4.6 gate.'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'F4.6 D4-R3n Owner-Exit `mmput` Fix Plan'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'zero `RAW_EXIT_MMAP_HIT` events (`op=34`)'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'The final `mmput()` must enter the still-installed'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'No PTE primitive runs after the final `mmput()` returns.'
+require_text "$F46_D4_R3N_MM_FIX_PLAN" \
+  'two successful `op=34` events'
 require_text scripts/verify_d4_r3n_plan_packet.sh \
   'D4_R3N_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1553,7 +1565,13 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_unhook_page \
 require_function_sha256 kpm/r0lab.c r0lab_raw_reset_final_page \
   0cd8a16c2e4644ee2aad4dc91123abf6c5b0d3d82b4f4c392b8ffcfb16bd7205
 require_function_sha256 kpm/r0lab.c r0lab_raw_monitor_worker \
-  235ea57361c560f30e63d7e1422718e4a08962c0528208d22af938d58ab7ce8a
+  a3b60e02adb98313cf591eca4b3a86fae7c3104d37ebb720074ceea2cd4917e8
+require_function_sha256 kpm/r0lab.c r0lab_raw_reset_exited_page \
+  49031e17f634b309566e2dfd353324603bfb6938eb5088132b31959af39660a6
+require_function_sha256 kpm/r0lab.c r0lab_raw_wait_for_owner_task_exit \
+  723a423f9019563f2d6d0cda6a28d47f88383942602a99e7c70a48d92519a8db
+require_function_sha256 kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
+  9ee8da24003a783dba1578545d6cb5b18c3ae428c708cfda3be7380a3c2ece4f
 require_function_sha256 kpm/r0lab.c r0lab_close_exited_session \
   bf36ee85521a043f93718ffa806ce92535e8471f40256891d5269eeac98a7573
 require_function_sha256 kpm/r0lab.c r0lab_status \
@@ -1637,6 +1655,40 @@ require_function_text_before kpm/r0lab.c r0lab_raw_reset_final_page \
   'g_vfree(shadow_kaddr);' 'g_mmput(mm);'
 require_function_count kpm/r0lab.c r0lab_raw_reset_final_page \
   'g_mmput(mm);' 1
+require_function_text kpm/r0lab.c r0lab_raw_wait_for_owner_task_exit \
+  'if (!r0lab_target_task_live(owner_tgid))'
+require_function_text_before kpm/r0lab.c \
+  r0lab_raw_cleanup_exited_mm \
+  'r0lab_raw_drain_patch_buffers_page' 'g_mmput(mm);'
+require_function_text_before kpm/r0lab.c \
+  r0lab_raw_cleanup_exited_mm \
+  'g_mmput(mm);' 'r0lab_raw_exit_hook_release'
+require_function_text_before kpm/r0lab.c \
+  r0lab_raw_cleanup_exited_mm \
+  'r0lab_raw_exit_hook_release' 'r0lab_raw_reset_exited_page'
+require_function_count kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
+  'g_mmput(mm);' 1
+require_function_text kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
+  'slot->exit_hook_events_before + 1U'
+for forbidden in \
+  'g_mmput' \
+  'r0lab_raw_restore_original' \
+  'r0lab_raw_activate_shadow' \
+  'r0lab_raw_begin_fault_read_cycle' \
+  'r0lab_raw_finish_read_cycle'
+do
+  reject_function_text kpm/r0lab.c r0lab_raw_reset_exited_page "$forbidden"
+done
+require_function_text_before kpm/r0lab.c r0lab_raw_monitor_worker \
+  'r0lab_raw_wait_for_owner_task_exit' 'r0lab_raw_cleanup_exited_mm'
+for forbidden in \
+  'g_mmput' \
+  'r0lab_raw_restore_original' \
+  'r0lab_raw_unhook_page' \
+  'r0lab_raw_reset_final_page'
+do
+  reject_function_text kpm/r0lab.c r0lab_raw_monitor_worker "$forbidden"
+done
 require_text kpm/r0lab.c '!r0lab_session_has_slots_locked()'
 require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
   'abort_hook_full=%u'
@@ -1665,7 +1717,7 @@ require_text scripts/test_raw_full_abort_lifecycle_device.sh \
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'EXPECTED_BOOT_ID=30ea3346-dc2b-486a-a811-602005e79e43'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
-  'SOURCE_TAG=wxshadow-v2-f46-d4-r3n-full-abort-lifecycle-source-20260724'
+  'SOURCE_TAG=wxshadow-v2-f46-d4-r3n-owner-exit-mmput-fix-source-20260724'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'PHASE=phase-a'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
@@ -1673,7 +1725,7 @@ require_text scripts/test_raw_full_abort_lifecycle_device.sh \
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'reload_without_reboot=1'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
-  'EXPECTED_KPM_SHA=264dff1308e0f9303f9ca264e4a6b124b40e8893d506e592973ba8fd7c32c183'
+  'EXPECTED_KPM_SHA=318c9a86e57d1301c34aa357fa9d8da7c6de11df7fdfdfa1dedd442dc582cc68'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'EXPECTED_LABPROBE_SHA=ce787040a378c18e6619f2e43d07d703da9929303176853bce42a6824b9109b4'
 require_text scripts/test_raw_full_abort_lifecycle_device.sh \
@@ -1684,6 +1736,10 @@ reject_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'R3N_LABPROBE_SHA256'
 reject_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'R3N_CLASSES_DEX_SHA256'
+require_text scripts/test_raw_full_abort_lifecycle_device.sh \
+  'cleanup_rc=$?'
+reject_text scripts/test_raw_full_abort_lifecycle_device.sh \
+  'status=$?'
 reject_text scripts/test_raw_full_abort_lifecycle_device.sh 'adb reboot'
 reject_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'adb_device reboot'

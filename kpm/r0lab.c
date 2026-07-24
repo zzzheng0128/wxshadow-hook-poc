@@ -436,6 +436,14 @@ struct r0lab_raw_shadow_page {
     struct r0lab_raw_hook_route_stats hook_route_stats;
 };
 
+struct r0lab_raw_exit_cleanup_slot {
+    struct r0lab_raw_shadow_page *page;
+    uint64_t generation;
+    uint32_t exit_hook_events_before;
+    int result;
+    bool exit_hook_installed;
+};
+
 struct r0lab_raw_page_table {
     struct r0lab_raw_shadow_page slots[R0LAB_RAW_PAGE_SLOT_CAPACITY];
     uint16_t selected_slot;
@@ -6442,6 +6450,147 @@ static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
     r0lab_raw_reset_final_page(&g_raw_page, mm, generation);
 }
 
+static void r0lab_raw_reset_exited_page(
+    struct r0lab_raw_exit_cleanup_slot *cleanup)
+{
+    struct r0lab_raw_shadow_page *page;
+    void *shadow_kaddr = NULL;
+    unsigned long flags;
+    uint16_t slot_id;
+
+    if (!cleanup || !cleanup->page)
+        return;
+    page = cleanup->page;
+    flags = r0lab_lock();
+    if (page->generation == cleanup->generation &&
+        page->target_exiting && page->clearing) {
+        slot_id = page->slot_id;
+        shadow_kaddr = page->raw.shadow_kaddr;
+        r0lab_raw_page_slot_reset_locked(page, slot_id);
+    } else if (!cleanup->result) {
+        cleanup->result = R0LAB_EAGAIN;
+    }
+    r0lab_unlock(flags);
+    if (shadow_kaddr && g_vfree)
+        g_vfree(shadow_kaddr);
+}
+
+static int r0lab_raw_wait_for_owner_task_exit(
+    struct r0lab_raw_shadow_page *page, struct mm_struct *mm,
+    uint64_t generation, pid_t owner_tgid)
+{
+    for (;;) {
+        bool valid;
+        unsigned long flags;
+
+        if (!r0lab_target_task_live(owner_tgid))
+            return 0;
+        flags = r0lab_lock();
+        valid = page && page->generation == generation &&
+                page->raw.mm == mm && page->monitor_running &&
+                g_session.active &&
+                g_session.owner_tgid == owner_tgid;
+        r0lab_unlock(flags);
+        if (!valid || r0lab_worker_should_stop())
+            return R0LAB_EAGAIN;
+        g_msleep(R0LAB_M5_MONITOR_INTERVAL_MS);
+    }
+}
+
+static int r0lab_raw_cleanup_exited_mm(struct mm_struct *mm,
+                                       pid_t owner_tgid)
+{
+    struct r0lab_raw_exit_cleanup_slot
+        cleanup[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0};
+    unsigned int count = 0;
+    unsigned int index;
+    int wait_result;
+    unsigned long flags;
+
+    if (!mm)
+        return R0LAB_EINVAL;
+    flags = r0lab_lock();
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+        struct r0lab_raw_exit_cleanup_slot *slot;
+
+        if (page->raw.mm != mm || !page->generation ||
+            !r0lab_raw_page_slot_owned_locked(page))
+            continue;
+        slot = &cleanup[count++];
+        slot->page = page;
+        slot->generation = page->generation;
+        slot->exit_hook_events_before = page->exit_hook_events;
+        slot->exit_hook_installed = page->exit_hook_installed;
+        page->target_exiting = true;
+        page->clearing = true;
+        page->record.state = R0LAB_PAGE_RECORD_RESTORING;
+    }
+    r0lab_unlock(flags);
+    if (!count)
+        return R0LAB_ESRCH;
+
+    for (index = 0; index < count; ++index) {
+        struct r0lab_raw_exit_cleanup_slot *slot = &cleanup[index];
+
+        r0lab_record(R0LAB_EVENT_TARGET_EXIT, 0);
+        if (!slot->exit_hook_installed) {
+            slot->result =
+                slot->page->raw.state == R0LAB_RAW_RESTORED ?
+                    0 : r0lab_raw_restore_original(&slot->page->raw);
+        }
+        r0lab_raw_unhook_page(slot->page, false);
+    }
+
+    wait_result = r0lab_raw_wait_for_callbacks();
+    if (wait_result)
+        return wait_result;
+    for (index = 0; index < count; ++index) {
+        struct r0lab_raw_exit_cleanup_slot *slot = &cleanup[index];
+
+        r0lab_raw_drain_patch_buffers_page(
+            slot->page, mm, slot->generation, true);
+    }
+
+    for (index = 0; index < count; ++index)
+        g_mmput(mm);
+
+    flags = r0lab_lock();
+    for (index = 0; index < count; ++index) {
+        struct r0lab_raw_exit_cleanup_slot *slot = &cleanup[index];
+        struct r0lab_raw_shadow_page *page = slot->page;
+
+        if (!slot->exit_hook_installed)
+            continue;
+        if (page->generation != slot->generation ||
+            page->raw.state != R0LAB_RAW_RESTORED ||
+            page->exit_hook_events !=
+                slot->exit_hook_events_before + 1U) {
+            if (!slot->result)
+                slot->result = R0LAB_EFAULT;
+        }
+    }
+    r0lab_unlock(flags);
+
+    for (index = 0; index < count; ++index) {
+        struct r0lab_raw_exit_cleanup_slot *slot = &cleanup[index];
+
+        if (slot->exit_hook_installed)
+            r0lab_raw_exit_hook_release(slot->page);
+    }
+    while ((wait_result = r0lab_raw_wait_for_callbacks()) != 0)
+        g_msleep(R0LAB_M5_MONITOR_INTERVAL_MS);
+    for (index = 0; index < count; ++index) {
+        struct r0lab_raw_exit_cleanup_slot *slot = &cleanup[index];
+
+        r0lab_raw_reset_exited_page(slot);
+        r0lab_record(R0LAB_EVENT_RAW_CLEAR, slot->result);
+    }
+    r0lab_close_exited_session(owner_tgid);
+    return 0;
+}
+
 static void r0lab_raw_monitor_done(struct r0lab_raw_shadow_page *page,
                                    uint64_t generation)
 {
@@ -6500,26 +6649,21 @@ static int r0lab_raw_monitor_worker(void *opaque)
         g_msleep(R0LAB_M5_MONITOR_INTERVAL_MS);
     }
 
+    result = r0lab_raw_wait_for_owner_task_exit(
+        page, mm, generation, owner_tgid);
+    if (result) {
+        r0lab_raw_monitor_done(page, generation);
+        return 0;
+    }
     flags = r0lab_lock();
     if (page->generation != generation || page->raw.mm != mm) {
         r0lab_unlock(flags);
         r0lab_raw_monitor_done(page, generation);
         return 0;
     }
-    page->target_exiting = true;
-    page->clearing = true;
-    page->record.state = R0LAB_PAGE_RECORD_RESTORING;
     r0lab_unlock(flags);
 
-    r0lab_record(R0LAB_EVENT_TARGET_EXIT, 0);
-    result = page->raw.state == R0LAB_RAW_RESTORED ?
-             0 : r0lab_raw_restore_original(&page->raw);
-    r0lab_raw_unhook_page(page, true);
-    if (!result)
-        result = r0lab_raw_wait_for_callbacks();
-    r0lab_raw_reset_final_page(page, mm, generation);
-    r0lab_close_exited_session(owner_tgid);
-    r0lab_record(R0LAB_EVENT_RAW_CLEAR, result);
+    (void)r0lab_raw_cleanup_exited_mm(mm, owner_tgid);
     return 0;
 }
 
