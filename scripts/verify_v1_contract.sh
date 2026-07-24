@@ -337,6 +337,7 @@ KPM_COMPAT_MATRIX=docs/kpm-compatibility-matrix.md
 S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
 FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F5_DECISION_PLAN=docs/wxshadow-f5-hidden-read-decision-plan.md
+F6_BRK_STEP_PLAN=docs/wxshadow-f6-brk-step-descriptor-abi-plan.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
@@ -381,6 +382,7 @@ require_file "$KPM_COMPAT_MATRIX"
 require_file "$S4_PLAN"
 require_file "$FINAL_ROADMAP"
 require_file "$F5_DECISION_PLAN"
+require_file "$F6_BRK_STEP_PLAN"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
@@ -3458,6 +3460,37 @@ require_text "$DEVELOPMENT_SEQUENCE" \
   'Complete/device-verified'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'F5-D0 selected controlled translation-DABT read-cycle as the Lab hidden-read'
+require_text "$FINAL_ROADMAP" \
+  'docs/wxshadow-f6-brk-step-descriptor-abi-plan.md'
+require_text "$FINAL_ROADMAP" \
+  'F6-D1 adds page-owned descriptor scaffold'
+require_text "$F6_BRK_STEP_PLAN" \
+  'wxshadow F6 BRK/Step Descriptor ABI Plan'
+require_text "$F6_BRK_STEP_PLAN" \
+  'Status: F6-D0 plan gate'
+require_text "$F6_BRK_STEP_PLAN" \
+  'shadow_page_begin_stepping'
+require_text "$F6_BRK_STEP_PLAN" \
+  'shadow_do_set_reg'
+require_text "$F6_BRK_STEP_PLAN" \
+  'allowed register index: 1'
+require_text "$F6_BRK_STEP_PLAN" \
+  'allowed value: 73'
+require_text "$F6_BRK_STEP_PLAN" \
+  'No arbitrary register/value API is allowed in F6'
+require_text "$F6_BRK_STEP_PLAN" \
+  'F6-D3 | Two-slot descriptor routing'
+require_text "$F6_BRK_STEP_PLAN" \
+  'scripts/test_s4_descriptor_routing_device.sh'
+require_text "$F6_BRK_STEP_PLAN" \
+  'scripts/test_s4_descriptor_negative_device.sh'
+require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'arbitrary register/value mutation remains rejected'
+require_text "$REFERENCE_COVERAGE" \
+  'F6-D0 now defines the page-owned descriptor ABI'
+require_text "$VERIFICATION" \
+  'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
   'F5-D0 verification is a decision gate, not a source gate'
 require_text "$VERIFICATION" \
