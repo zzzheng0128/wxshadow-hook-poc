@@ -63,6 +63,8 @@
 #define R0LAB_PATCH_DIRTY_BITMAP_SIZE (R0LAB_RAW_PAGE_SIZE / 8U)
 #define R0LAB_RAW_PAGE_SLOT_CAPACITY 2U
 #define R0LAB_RAW_PRIMARY_SLOT 0U
+#define R0LAB_S4_DESCRIPTOR_BRK_OFFSET 0U
+#define R0LAB_S4_DESCRIPTOR_STEP_OFFSET 4U
 
 #define R0LAB_EINVAL (-22)
 #define R0LAB_EPERM (-1)
@@ -270,6 +272,20 @@ enum r0lab_s4_state {
     R0LAB_S4_RESTORING = 6,
 };
 
+enum r0lab_s4_descriptor_state {
+    R0LAB_S4_DESCRIPTOR_EMPTY = 0,
+    R0LAB_S4_DESCRIPTOR_ARMED_SHADOW = 1,
+    R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP = 2,
+    R0LAB_S4_DESCRIPTOR_STEP_MATCHED_SHADOW = 3,
+    R0LAB_S4_DESCRIPTOR_CLEARED = 4,
+};
+
+enum r0lab_s4_descriptor_mode {
+    R0LAB_S4_DESCRIPTOR_MODE_NONE = 0,
+    R0LAB_S4_DESCRIPTOR_MODE_RAW_STEP = 1,
+    R0LAB_S4_DESCRIPTOR_MODE_RAW_REG = 2,
+};
+
 enum r0lab_raw_hook_kind {
     R0LAB_RAW_HOOK_NONE = 0,
     R0LAB_RAW_HOOK_ABORT = 1,
@@ -325,6 +341,24 @@ struct r0lab_raw_hook_page_token {
     enum r0lab_raw_hook_kind kind;
 };
 
+struct r0lab_s4_descriptor {
+    struct mm_struct *mm;
+    unsigned long page_address;
+    uint64_t generation;
+    uint32_t brk_offset;
+    uint32_t step_offset;
+    uint32_t brk_events;
+    uint32_t step_events;
+    uint32_t reject_events;
+    uint32_t register_index;
+    uint64_t register_value;
+    pid_t step_tid;
+    uint16_t slot_id;
+    uint8_t state;
+    uint8_t mode;
+    bool present;
+};
+
 struct r0lab_prctl_patch_request {
     uint64_t address;
     uint32_t length;
@@ -370,6 +404,7 @@ struct r0lab_raw_shadow_page {
     bool target_exiting;
     bool monitor_running;
     bool transitioning;
+    struct r0lab_s4_descriptor s4_descriptor;
     bool s4_shadow_brk_layout;
     bool s4_shadow_reg_layout;
     bool gup_hook_installed;
@@ -1003,6 +1038,60 @@ static unsigned int r0lab_raw_page_table_active_count_locked(void)
     return count;
 }
 
+static bool r0lab_s4_descriptor_owned_locked(
+    const struct r0lab_s4_descriptor *descriptor)
+{
+    return descriptor && (descriptor->present ||
+                          descriptor->state != R0LAB_S4_DESCRIPTOR_EMPTY);
+}
+
+static unsigned int r0lab_s4_descriptor_count_locked(void)
+{
+    unsigned int index;
+    unsigned int count = 0;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        if (r0lab_s4_descriptor_owned_locked(
+                &g_raw_page_table.slots[index].s4_descriptor))
+            ++count;
+    }
+    return count;
+}
+
+static const struct r0lab_s4_descriptor *
+r0lab_s4_selected_descriptor_locked(void)
+{
+    struct r0lab_raw_shadow_page *page = r0lab_raw_selected_page_locked();
+
+    if (!page)
+        return NULL;
+    return &page->s4_descriptor;
+}
+
+static void r0lab_s4_descriptor_prepare_locked(
+    struct r0lab_raw_shadow_page *page, struct mm_struct *mm,
+    bool raw_reg_mode)
+{
+    struct r0lab_s4_descriptor *descriptor;
+
+    if (!page)
+        return;
+    descriptor = &page->s4_descriptor;
+    memset(descriptor, 0, sizeof(*descriptor));
+    descriptor->mm = mm;
+    descriptor->page_address = page->raw.address;
+    descriptor->generation = page->generation;
+    descriptor->brk_offset = R0LAB_S4_DESCRIPTOR_BRK_OFFSET;
+    descriptor->step_offset = R0LAB_S4_DESCRIPTOR_STEP_OFFSET;
+    descriptor->register_index = R0LAB_S4_RAW_REG_INDEX;
+    descriptor->register_value = raw_reg_mode ? R0LAB_S4_RAW_REG_VALUE : 0;
+    descriptor->slot_id = page->slot_id;
+    descriptor->state = R0LAB_S4_DESCRIPTOR_ARMED_SHADOW;
+    descriptor->mode = raw_reg_mode ? R0LAB_S4_DESCRIPTOR_MODE_RAW_REG :
+                       R0LAB_S4_DESCRIPTOR_MODE_RAW_STEP;
+    descriptor->present = true;
+}
+
 static unsigned long r0lab_raw_page_base(unsigned long address)
 {
     return address & ~(R0LAB_RAW_PAGE_SIZE - 1UL);
@@ -1425,6 +1514,34 @@ static const char *r0lab_s4_state_name(uint8_t state)
     }
 }
 
+static const char *r0lab_s4_descriptor_state_name(uint8_t state)
+{
+    switch (state) {
+    case R0LAB_S4_DESCRIPTOR_ARMED_SHADOW:
+        return "armed_shadow";
+    case R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP:
+        return "brk_matched_original_step";
+    case R0LAB_S4_DESCRIPTOR_STEP_MATCHED_SHADOW:
+        return "step_matched_shadow";
+    case R0LAB_S4_DESCRIPTOR_CLEARED:
+        return "cleared";
+    default:
+        return "empty";
+    }
+}
+
+static const char *r0lab_s4_descriptor_mode_name(uint8_t mode)
+{
+    switch (mode) {
+    case R0LAB_S4_DESCRIPTOR_MODE_RAW_STEP:
+        return "raw_step";
+    case R0LAB_S4_DESCRIPTOR_MODE_RAW_REG:
+        return "raw_reg";
+    default:
+        return "none";
+    }
+}
+
 static unsigned int r0lab_page_record_count_locked(void)
 {
     unsigned int index;
@@ -1471,6 +1588,15 @@ static long r0lab_status(char __user *out_msg, int outlen)
     uint32_t s4_brk_events;
     uint32_t s4_step_events;
     uint8_t s4_state;
+    unsigned int s4_descriptor_slots;
+    unsigned int s4_descriptor_active;
+    uint16_t s4_descriptor_selected_slot;
+    uint8_t s4_descriptor_state;
+    uint8_t s4_descriptor_mode;
+    uint64_t s4_descriptor_page;
+    uint64_t s4_descriptor_generation;
+    uint32_t s4_descriptor_brk_offset;
+    uint32_t s4_descriptor_step_offset;
     uint32_t hwbp_entry_events;
     uint32_t hwbp_return_events;
     unsigned int workers_live;
@@ -1479,6 +1605,7 @@ static long r0lab_status(char __user *out_msg, int outlen)
     bool raw_exit_resident;
     int current_cpu;
     struct r0lab_raw_shadow_page *raw_selected;
+    const struct r0lab_s4_descriptor *s4_descriptor;
 
     flags = r0lab_lock();
     active = g_session.active;
@@ -1527,6 +1654,26 @@ static long r0lab_status(char __user *out_msg, int outlen)
     s4_brk_events = g_s4_brk.brk_events;
     s4_step_events = g_s4_brk.step_events;
     s4_state = g_s4_brk.state;
+    s4_descriptor_slots = R0LAB_RAW_PAGE_SLOT_CAPACITY;
+    s4_descriptor_active = r0lab_s4_descriptor_count_locked();
+    s4_descriptor = r0lab_s4_selected_descriptor_locked();
+    s4_descriptor_selected_slot = raw_selected_slot;
+    if (r0lab_s4_descriptor_owned_locked(s4_descriptor)) {
+        s4_descriptor_selected_slot = s4_descriptor->slot_id;
+        s4_descriptor_state = s4_descriptor->state;
+        s4_descriptor_mode = s4_descriptor->mode;
+        s4_descriptor_page = s4_descriptor->page_address;
+        s4_descriptor_generation = s4_descriptor->generation;
+        s4_descriptor_brk_offset = s4_descriptor->brk_offset;
+        s4_descriptor_step_offset = s4_descriptor->step_offset;
+    } else {
+        s4_descriptor_state = R0LAB_S4_DESCRIPTOR_EMPTY;
+        s4_descriptor_mode = R0LAB_S4_DESCRIPTOR_MODE_NONE;
+        s4_descriptor_page = 0;
+        s4_descriptor_generation = 0;
+        s4_descriptor_brk_offset = 0;
+        s4_descriptor_step_offset = 0;
+    }
     hwbp_entry_events = g_hwbp_entry_events;
     hwbp_return_events = g_hwbp_return_events;
     workers_live = g_workers_live;
@@ -1537,7 +1684,7 @@ static long r0lab_status(char __user *out_msg, int outlen)
     current_cpu = (int)g_current_cpu();
 
     snprintf(reply, sizeof(reply),
-             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u raw_inflight=%u raw_abort_resident=%u raw_exit_resident=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
+             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u raw_inflight=%u raw_abort_resident=%u raw_exit_resident=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s s4_descriptor_slots=%u s4_descriptor_active=%u s4_descriptor_selected_slot=%u s4_descriptor_state=%s s4_descriptor_mode=%s s4_descriptor_page=%llx s4_descriptor_generation=%llu s4_descriptor_brk_offset=%u s4_descriptor_step_offset=%u page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
              g_session.lab_uid, active, owner_tgid, next_seq, last_summary_seq,
              hwbp_slots, hwbp_entry_events, hwbp_return_events, m3_slots,
              m3_fault_events, m4_slots, m4_redirect_events, raw_slots,
@@ -1545,7 +1692,13 @@ static long r0lab_status(char __user *out_msg, int outlen)
              raw_abort_resident ? 1U : 0U,
              raw_exit_resident ? 1U : 0U, s4_slots, s4_brk_events,
              s4_step_events,
-             r0lab_s4_state_name(s4_state), page_records,
+             r0lab_s4_state_name(s4_state), s4_descriptor_slots,
+             s4_descriptor_active, (unsigned int)s4_descriptor_selected_slot,
+             r0lab_s4_descriptor_state_name(s4_descriptor_state),
+             r0lab_s4_descriptor_mode_name(s4_descriptor_mode),
+             s4_descriptor_page, s4_descriptor_generation,
+             s4_descriptor_brk_offset, s4_descriptor_step_offset,
+             page_records,
              r0lab_page_record_backend_name(page_backend),
              r0lab_page_record_state_name(page_state), raw_page_table_slots,
              raw_page_table_active, (unsigned int)raw_selected_slot,
@@ -2039,6 +2192,8 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
         g_raw_page.record.state = R0LAB_PAGE_RECORD_PREPARING;
         g_raw_page.s4_shadow_brk_layout = true;
         g_raw_page.s4_shadow_reg_layout = raw_reg_mode;
+        r0lab_s4_descriptor_prepare_locked(&g_raw_page, raw_mm,
+                                           raw_reg_mode);
         g_raw_page.reserving = true;
     }
     g_s4_brk.mm = mm;

@@ -1589,7 +1589,7 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
 require_function_sha256 kpm/r0lab.c r0lab_close_exited_session \
   f8c8d6d4669cfe52fc937abf3cbfd3599c905aca10cf81da2d43b7ccbc02bf9d
 require_function_sha256 kpm/r0lab.c r0lab_status \
-  39cf3adc7feff8f0f1f55c51ddfa7caf02c7002551415bc6ef01517b6b354307
+  a3fae779f6b10185d3e63b769f4415a8efcc72334387a77f5093d97bca64fa1e
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
   78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm_worker \
@@ -3467,7 +3467,7 @@ require_text "$FINAL_ROADMAP" \
 require_text "$F6_BRK_STEP_PLAN" \
   'wxshadow F6 BRK/Step Descriptor ABI Plan'
 require_text "$F6_BRK_STEP_PLAN" \
-  'Status: F6-D0 plan gate'
+  'Status: F6-D1 descriptor scaffold'
 require_text "$F6_BRK_STEP_PLAN" \
   'shadow_page_begin_stepping'
 require_text "$F6_BRK_STEP_PLAN" \
@@ -3485,12 +3485,21 @@ require_text "$F6_BRK_STEP_PLAN" \
 require_text "$F6_BRK_STEP_PLAN" \
   'scripts/test_s4_descriptor_negative_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 32 | F6-D1 | BRK/step descriptor scaffold |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'arbitrary register/value mutation remains rejected'
 require_text "$REFERENCE_COVERAGE" \
-  'F6-D0 now defines the page-owned descriptor ABI'
+  'F6-D1 now adds page-owned descriptor fields'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
+require_text "$VERIFICATION" \
+  'F6-D1 is now device-verified as a descriptor'
+require_text "$VERIFICATION" \
+  's4_descriptor_active=1 s4_descriptor_state=armed_shadow'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/m5-lifecycle-20260724-210942.log'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'BRK/single-step callbacks still do not route through descriptors'
 require_text "$VERIFICATION" \
   'F5-D0 verification is a decision gate, not a source gate'
 require_text "$VERIFICATION" \
@@ -3513,6 +3522,22 @@ require_text "$KPM_COMPAT_MATRIX" \
   'F5 selected hidden-read model'
 require_text "$KPM_COMPAT_MATRIX" \
   'Raw-XOM, permission-fault hidden read, `PTE_USER` clearing'
+require_text "$F6_BRK_STEP_PLAN" \
+  'F6-D1 may edit only:'
+require_text "$F6_BRK_STEP_PLAN" \
+  'F6-D1 must not edit Lab App C source or device scripts'
+require_text "$F6_BRK_STEP_PLAN" \
+  'It must not route BRK'
+require_text kpm/r0lab.c 'enum r0lab_s4_descriptor_state'
+require_text kpm/r0lab.c 'enum r0lab_s4_descriptor_mode'
+require_text kpm/r0lab.c 'struct r0lab_s4_descriptor'
+require_text kpm/r0lab.c 'struct r0lab_s4_descriptor s4_descriptor;'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_prepare_locked(&g_raw_page, raw_mm,'
+require_text kpm/r0lab.c 's4_descriptor_slots=%u s4_descriptor_active=%u'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_state_name(s4_descriptor_state)'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_mode_name(s4_descriptor_mode)'
+reject_function_text kpm/r0lab.c r0lab_s4_brk_before 's4_descriptor'
+reject_function_text kpm/r0lab.c r0lab_s4_step_before 's4_descriptor'
 require_text scripts/probe_shadow_page_capabilities_device.sh \
   'ordinary_xom_read_path=blocked reason=user_xom_read_fault_absent'
 require_text scripts/probe_shadow_page_capabilities_device.sh \
