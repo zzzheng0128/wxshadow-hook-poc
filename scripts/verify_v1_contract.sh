@@ -268,6 +268,8 @@ require_file scripts/test_raw_observer_aggregate_host.sh
 require_file scripts/test_raw_abort_hook_exposure_device.sh
 require_file scripts/test_raw_abort_mmget_passthrough_device.sh
 require_file scripts/test_raw_abort_lock_passthrough_device.sh
+require_file scripts/test_raw_abort_inflight_passthrough_device.sh
+require_file scripts/verify_d4_r3j_disassembly.sh
 require_file scripts/verify_d4_r3j_plan_packet.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
@@ -1101,29 +1103,29 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_before_abort_lock_passthrough \
   be53f3e27caa976d597375ce599bd626404c10e9aad630240acb5e4e4c11aa92
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_callback \
-  340f8dc672ef2e48862ab44aedd086fa719ea6aef470a8e700d3b3556d8e3a9c
+  48d3bb2de62fe7eaa1e3e4ddcb69abc74665d9e67630c4abe1a9e4be15d841eb
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
-  80426e0f8f30461a6745e6acb50e06adeeaba8342310e708d72962e752b68e6c
+  28192353f7cb843a1977b28655e6f6342498a8e93313b41c00b0326b4913013f
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  7277fbaec457070ebd3eacb3a3492db2388c312151a745d93f5fffae13209850
+  02669b06fecd2d43c0866a29b384ff761c77774df66e8e958bc3302ad0911da1
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
-  727c9f269a44d681774f68d9ce58668cc6c1ea3f002d7ac2babf76eda235e50d
+  b2156054c93e26e329ed29120d78e1a240be0adf8bed7e78a68818a4c3964490
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
-  5b86295bf5e71d210f16057964d607641cb5cd069d9f7886e966859132ed24c3
+  9d2e25cb6b00167c7ae56ade4231c75373947dd60d04d4d6b97341664b0b3501
 require_function_sha256 kpm/r0lab.c r0lab_control0 \
-  9903cf12e8e001abb5c6783103ab73d57b32926ca5d6a95805c8091b9bf23c94
+  80b4397d6eea5e686aeb3e9e3284e1a048082de598e4308558f5e0586f8aca37
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  628a08a8ba80ad853ca2854410e1c007baf60b33f3169d954f9181baa9fe9951
+  169868b0e52e74586a59572e78250139a58277a236ed6c04ac0a9539c73b1b02
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
-  eec884ef3d6c4062dcfb5df48f7d1616939328c325b3e57b4986593720665dac
+  f173c0bef59ec953583c2c25c8b3838e119229505de2c0b57d0120f5874d44be
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   Java_dev_r0hook_lab_MainActivity_nativeControl \
-  7bf728a45cc924ff06eb30ecf6edaa28e0897f293401810592a97f390c9cd1aa
+  7598a835ff0f16b85a75c3fbb54f388cdd6ed65309ac55e183d7c7307f35a3c4
 require_text "$F46_D4_R3J_PLAN" 'wxshadow F4.6 D4-R3j Adjacent Inflight-Accounting Plan'
-require_text "$F46_D4_R3J_PLAN" 'Status: plan and static-contract packet only; source locked.'
+require_text "$F46_D4_R3J_PLAN" 'Status: source implemented and host verified; device row pending.'
 require_text "$F46_D4_R3J_PLAN" '65679740eb5253c2779bbd0a0c4dce89ebdd5529'
 require_text "$F46_D4_R3J_PLAN" '7714473555eaecb40dcb28351b4986894d4d06bcd36a0480b54d645f778b9938'
 require_text "$F46_D4_R3J_PLAN" '0a73bd18-ba4a-4bdf-87c6-a99f98d9d039'
@@ -1161,6 +1163,16 @@ require_text "$F46_D4_R3J_PLAN" 'Both stable and unstable terminal paths preserv
 require_text "$F46_D4_R3J_PLAN" 'No D4-R3j source symbol, Lab command, or device script may exist'
 require_text "$F46_D4_R3J_PLAN" 'scripts/verify_d4_r3j_plan_packet.sh'
 require_text "$F46_D4_R3J_PLAN" 'rejects every changed path outside the'
+require_text "$F46_D4_R3J_PLAN" '## Source Implementation Checkpoint'
+require_text "$F46_D4_R3J_PLAN" 'increment=1'
+require_text "$F46_D4_R3J_PLAN" 'decrement=1'
+require_text "$F46_D4_R3J_PLAN" 'counter_stores=2'
+require_text "$F46_D4_R3J_PLAN" 'hardware_barriers=0'
+require_text "$F46_D4_R3J_PLAN" 'kpm_sha256=018c8e96023692102f2941f4884b5be36913047ab80a59fe96f8e5458c775cfc'
+require_text "$F46_D4_R3J_PLAN" 'apk_lib_entry_sha256=f927140d79d9298d8c55a22cecd2021d664c320557ec74854eb39a90af1e37cb'
+require_text "$F46_D4_R3J_PLAN" 'apk_dex_entry_sha256=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text "$F46_D4_R3J_PLAN" 'source_tag=wxshadow-v2-f46-d4-r3j-inflight-accounting-source-20260724'
+require_text "$F46_D4_R3J_PLAN" 'device_access=not_run'
 require_text scripts/verify_d4_r3j_plan_packet.sh \
   'D4_R3J_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1168,14 +1180,136 @@ require_text scripts/verify_v1_contract.sh \
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
   e6b888f79dd63507885374ef3bf1014d2346c940a496d2dcb96d2e8f5ab06bfc
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
-  d6c72f5f79884661e8637cda3711aabb1031baff5da3281b0303bc1fafbff09b
-reject_text kpm/r0lab.c 'abort-inflight'
-reject_text kpm/r0lab.c 'abort_inflight'
-reject_text kpm/r0lab.c 'r0lab_raw_before_abort_inflight_passthrough'
-reject_text lab-app/src/main/cpp/labprobe.c 'abort-inflight'
-reject_text lab-app/src/main/cpp/labprobe.c 'abort_inflight'
-[ ! -e "$ROOT/scripts/test_raw_abort_inflight_passthrough_device.sh" ] ||
-  fail 'D4-R3j device script exists before the source gate opens'
+  7d2f5b770ebac3677e9573b31b00798b267cd9e5b466311fbb509a5e943ef01a
+require_file scripts/test_raw_abort_inflight_passthrough_device.sh
+require_file scripts/verify_d4_r3j_disassembly.sh
+require_text kpm/r0lab.c 'bool abort_hook_inflight;'
+require_text kpm/r0lab.c 'raw slot arm abort-inflight '
+require_function_sha256 kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough \
+  7d0c9a27c5bc7df460496d665ab62fde01f990ed2d119ed5dde0cbabb64d1a51
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough \
+  'current_mm = g_get_task_mm(current);'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'flags = r0lab_lock();'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough '++g_raw_inflight;'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'barrier();'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough '--g_raw_inflight;'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_unlock(flags);'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'g_mmput(current_mm);'
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'g_get_task_mm(' 1
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_lock(' 1
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough '++g_raw_inflight;' 1
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'barrier();' 1
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough '--g_raw_inflight;' 1
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_unlock(' 1
+require_function_count kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'g_mmput(' 1
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'args->'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'udata->'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'g_session'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_current_tgid'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'r0lab_record'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'skip_origin'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'pte'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'atomic'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'READ_ONCE'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_before_abort_inflight_passthrough 'WRITE_ONCE'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  'if (inflight)'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  'return r0lab_raw_before_abort_inflight_passthrough;'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
+  'inflight = page->abort_hook_inflight;'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
+  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight);'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  '(inflight_abort_hook ? 1U : 0U)'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'active->abort_hook_inflight'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'slot->abort_hook_inflight = inflight_abort_hook;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_inflight = page->abort_hook_inflight;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_lock=%u abort_hook_inflight=%u'
+require_line_before kpm/r0lab.c \
+  '    if (!strncmp(args, "raw slot arm abort-inflight ", 28)) {' \
+  '    if (!strncmp(args, "raw slot arm ", 13)) {'
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_abort_inflight \
+  a30ceb9aca7ae76078b2d4f619c4f1bb6a5537b0b30cfc39911bb1438f7c2552
+require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold abort-inflight '
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw mode=raw-hold-abort-inflight failures=%d'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'error=abort-inflight hold requires source single'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'abort_hook_inflight[index] != 1'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'g_r0lab_m5_hold.mode = inflight_abort_hook ? 18 :'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_abort_inflight \
+  'false, false, false, false, true);'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'RAW_ABORT_INFLIGHT_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'EXPECTED_KPM_SHA=018c8e96023692102f2941f4884b5be36913047ab80a59fe96f8e5458c775cfc'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'EXPECTED_LABPROBE_SHA=f927140d79d9298d8c55a22cecd2021d664c320557ec74854eb39a90af1e37cb'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'raw raw-hold abort-inflight $TOKEN'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'abort_hook_lock=0'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'abort_hook_inflight=1'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'D4-R3j-source-uxn-abort-inflight-stable'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'D4-R3j-source-uxn-abort-inflight-unstable'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'D4-R3j-setup-blocked'
+require_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  poll_adb_transport 'adb_device get-state'
+reject_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  poll_adb_transport 'adb_device shell getprop'
+reject_function_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  poll_adb_transport 'module unload'
+require_text scripts/verify_d4_r3j_disassembly.sh \
+  'D4-R3j disassembly passed: increment=1 decrement=1 stores=2 hardware_barriers=0'
+require_text scripts/verify_d4_r3j_disassembly.sh \
+  "grep -Eq '[[:space:]](dmb|dsb|isb)([[:space:]]|$)'"
 require_text kpm/r0lab.c 'bool abort_hook_lock;'
 require_text kpm/r0lab.c 'static bool g_raw_abort_hook_transitioning;'
 require_text kpm/r0lab.c 'raw slot arm abort-lock '
@@ -1235,9 +1369,9 @@ require_function_text kpm/r0lab.c \
   'if (page->hook_installed)'
 require_function_text kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
-  'page->abort_hook_lock);'
+  'page->abort_hook_lock, page->abort_hook_inflight);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  'page->abort_hook_lock);'
+  'page->abort_hook_lock, page->abort_hook_inflight);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
   'installed_callback = r0lab_raw_abort_hook_installed_callback_locked();'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
@@ -1261,7 +1395,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'g_raw_abort_hook_transitioning = false;'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock);'
+  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'r0lab_hook_detach(g_do_mem_abort, callback, NULL);'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
@@ -1294,13 +1428,13 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
   'abort_hook_lock[index] != 1'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  'g_r0lab_m5_hold.mode = lock_abort_hook ? 17 :'
+  'lock_abort_hook ? 17 :'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
   'snprintf(args, sizeof(args), "source single 0x%llx"'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
-  'false, false, false, true);'
+  'false, false, false, true, false);'
 require_line_before lab-app/src/main/cpp/labprobe.c \
   '    if (!strncmp(args, "raw raw-hold abort-lock ", 24)) {' \
   '    if (!strncmp(args, "raw exit hook hold ", 19)) {'
@@ -1417,8 +1551,9 @@ require_text "$DEVELOPMENT_SEQUENCE" '7714473555eaecb40dcb28351b4986894d4d06bcd3
 require_text "$DEVELOPMENT_SEQUENCE" '0a73bd18-ba4a-4bdf-87c6-a99f98d9d039'
 require_text "$DEVELOPMENT_SEQUENCE" 'wxshadow-v2-f46-d4-r3i-lock-exposure-stable-20260724'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3j | Adjacent inflight-accounting diagnostic'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3j adjacent inflight accounting | Plan/contract only; source locked'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3j adjacent inflight accounting | Source implemented; host verified; device pending'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md'
+require_text "$DEVELOPMENT_SEQUENCE" 'scripts/verify_d4_r3j_disassembly.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3h-mm-reference-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
@@ -1666,7 +1801,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
   'result = hook_wrap3(g_do_mem_abort, callback, NULL, NULL);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'callback = r0lab_raw_abort_hook_callback(passthrough, mmget, lock);'
+  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight);'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
   'active->abort_hook_passthrough'
 require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
