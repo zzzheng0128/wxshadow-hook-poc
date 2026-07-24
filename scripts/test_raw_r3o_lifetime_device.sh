@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
-SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage2-fieldfix-candidate-20260724}
+SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage3-entry-candidate-20260724}
 STAGE=${R3O_STAGE:-}
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3o.kpm
@@ -169,6 +169,12 @@ require_empty_status() {
 require_resident_callbacks_status() {
   status=$1
   require_contains "$status" 'raw_abort_resident=1'
+  require_contains "$status" 'raw_exit_resident=1'
+}
+
+require_exit_only_callbacks_status() {
+  status=$1
+  require_contains "$status" 'raw_abort_resident=0'
   require_contains "$status" 'raw_exit_resident=1'
 }
 
@@ -435,7 +441,7 @@ case "$STAGE" in
     STATUS=$(run_app_command status) ||
       fail "stage 2 final status timed out"
     require_empty_status "$STATUS"
-    require_resident_callbacks_status "$STATUS"
+    require_exit_only_callbacks_status "$STATUS"
     printf '%s\n%s\n%s\n%s\n' "$ARM" "$HOLD" "$CLEAR" "$STATUS" \
       >> "$EVIDENCE"
     finish_log_window
@@ -460,7 +466,7 @@ case "$STAGE" in
     STATUS=$(run_app_command status) ||
       fail "stage 3 initial status timed out"
     require_empty_status "$STATUS"
-    require_resident_callbacks_status "$STATUS"
+    require_exit_only_callbacks_status "$STATUS"
     ARM=$(run_app_command "arm $TOKEN_3") ||
       fail "stage 3 session arm timed out"
     HOLD=$(run_app_command "raw raw-hold abort-iabt-transition $TOKEN_3") ||
