@@ -146,6 +146,13 @@ validate_new_log() {
     grep -F -- 'result=classified' "$path"
   )
   case "$terminal" in
+    *"result=classified paired_run=$expected_run sample_index=$expected_sample variant=$expected_variant live_walk=$expected_live_walk active_hold=1 cleanup=not_run"*)
+      ;;
+    *)
+      fail "terminal evidence metadata mismatch in $path: $terminal"
+      ;;
+  esac
+  case "$terminal" in
     *"classification=$stable_classification "*)
       printf '%s\n' stable
       ;;

@@ -178,12 +178,25 @@ run_rejected_case duplicate-terminal 'expected one evidence row' \
   "$reject_dir/run1.log" "$reject_dir/run2.log" \
   "$reject_dir/run3.log" "$reject_dir/run4.log"
 
-write_new_log "$reject_dir/run1.log" 1 unstable
+write_new_log "$reject_dir/run1-non-sample.log" 1 unstable
 printf '%s\n' \
   'classification=D4-R3e-L3-setup-blocked result=classified' \
-  >> "$reject_dir/run1.log"
+  >> "$reject_dir/run1-non-sample.log"
 run_rejected_case non-sample 'rejected evidence is present' \
-  "$reject_dir/run1.log" "$reject_dir/run2.log" \
+  "$reject_dir/run1-non-sample.log" "$reject_dir/run2.log" \
+  "$reject_dir/run3.log" "$reject_dir/run4.log"
+
+write_new_log "$reject_dir/run1-terminal-source.log" 1 unstable
+awk '
+  /result=classified/ {
+    sub("paired_run=1", "paired_run=2")
+  }
+  { print }
+' "$reject_dir/run1-terminal-source.log" \
+  > "$reject_dir/run1-terminal-mismatch.log"
+run_rejected_case terminal-metadata-mismatch \
+  'terminal evidence metadata mismatch' \
+  "$reject_dir/run1-terminal-mismatch.log" "$reject_dir/run2.log" \
   "$reject_dir/run3.log" "$reject_dir/run4.log"
 
 real_historical=skipped
@@ -191,7 +204,7 @@ if [ -f "$ROOT/build/evidence/raw-hold-lifetime-matrix-20260724-071931.log" ] &&
    [ -f "$ROOT/build/evidence/raw-live-pte-snapshot-20260724-080322.log" ]; then
   output=$(
     "$CLASSIFIER" \
-      "$reject_dir/run1.log" "$reject_dir/run2.log" \
+      "$reject_dir/run1-non-sample.log" "$reject_dir/run2.log" \
       "$reject_dir/run3.log" "$reject_dir/run4.log" 2>&1 || true
   )
   case "$output" in
@@ -200,5 +213,5 @@ if [ -f "$ROOT/build/evidence/raw-hold-lifetime-matrix-20260724-071931.log" ] &&
   esac
 fi
 
-printf 'raw_observer_aggregate_host=pass valid_cases=4 rejected_cases=3 real_historical=%s result=pass\n' \
+printf 'raw_observer_aggregate_host=pass valid_cases=4 rejected_cases=4 real_historical=%s result=pass\n' \
   "$real_historical"

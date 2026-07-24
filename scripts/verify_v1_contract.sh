@@ -801,7 +801,8 @@ require_text "$F46_D4_R3E_L3_PLAN" 'accepted historical harness artifact'
 require_text "$F46_D4_R3E_L3_PLAN" 'scripts/classify_raw_observer_perturbation_evidence.sh'
 require_text "$F46_D4_R3E_L3_PLAN" 'scripts/test_raw_observer_aggregate_host.sh'
 require_text "$F46_D4_R3E_L3_PLAN" 'The local host test passes all four valid aggregate classifications'
-require_text "$F46_D4_R3E_L3_PLAN" 'three rejected-input cases'
+require_text "$F46_D4_R3E_L3_PLAN" 'four rejected-input cases'
+require_text "$F46_D4_R3E_L3_PLAN" 'metadata-mismatch rejection cases'
 require_text "$F46_D4_R3E_L3_PLAN" 'real historical anchors'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
@@ -989,6 +990,10 @@ require_text scripts/classify_raw_observer_perturbation_evidence.sh \
 require_text scripts/classify_raw_observer_perturbation_evidence.sh \
   'D4-R3e-L3-B1-live-pte-mismatch'
 require_text scripts/classify_raw_observer_perturbation_evidence.sh \
+  'terminal evidence metadata mismatch'
+require_text scripts/classify_raw_observer_perturbation_evidence.sh \
+  'result=classified paired_run=$expected_run sample_index=$expected_sample variant=$expected_variant live_walk=$expected_live_walk active_hold=1 cleanup=not_run'
+require_text scripts/classify_raw_observer_perturbation_evidence.sh \
   'majority_vote=not_used'
 require_line_before scripts/classify_raw_observer_perturbation_evidence.sh \
   '  classification=D4-R3e-L3-observer-correlated' \
@@ -1018,9 +1023,11 @@ require_text scripts/test_raw_observer_aggregate_host.sh \
 require_text scripts/test_raw_observer_aggregate_host.sh \
   "run_rejected_case non-sample 'rejected evidence is present'"
 require_text scripts/test_raw_observer_aggregate_host.sh \
+  'run_rejected_case terminal-metadata-mismatch'
+require_text scripts/test_raw_observer_aggregate_host.sh \
   'real_historical=anchors-valid'
 require_text scripts/test_raw_observer_aggregate_host.sh \
-  'raw_observer_aggregate_host=pass valid_cases=4 rejected_cases=3 real_historical=%s result=pass'
+  'raw_observer_aggregate_host=pass valid_cases=4 rejected_cases=4 real_historical=%s result=pass'
 reject_text scripts/test_raw_observer_aggregate_host.sh 'adb'
 reject_text scripts/test_raw_observer_aggregate_host.sh 'supercmd'
 reject_text scripts/test_raw_observer_aggregate_host.sh 'module load'
