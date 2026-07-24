@@ -120,6 +120,8 @@ require_text "$PLAN" 'before the first source-UXN PTE transition'
 require_text "$PLAN" '__get_free_pages(GFP_KERNEL, 0)'
 require_text "$PLAN" 'synchronizes the full page after the initial copy/seed'
 require_text "$PLAN" 'the final full-abort callback resident'
+require_text "$PLAN" 'ordinary owner-process DABTs'
+require_text "$PLAN" 'R3O_STAGE4_HOLD_SECONDS'
 require_text "$PLAN" 'raw raw-hold clear <token>'
 require_text "$PLAN" 'r0lab-r3o:'
 require_text "$PLAN" 'scripts/test_raw_r3o_lifetime_device.sh'
@@ -177,7 +179,21 @@ require_function_text "$KPM_SOURCE" r0lab_raw_exit_hook_release \
 reject_function_text "$KPM_SOURCE" r0lab_raw_exit_hook_release \
   'r0lab_hook_detach'
 require_function_text "$KPM_SOURCE" r0lab_raw_abort_hook_release \
-  'callback != r0lab_raw_before_abort'
+  'callback != r0lab_raw_before_abort_compact;'
+require_function_text "$KPM_SOURCE" r0lab_raw_abort_hook_callback \
+  'return r0lab_raw_before_abort_compact;'
+require_function_text "$KPM_SOURCE" r0lab_raw_before_abort_compact \
+  'r0lab_raw_before_abort_full_iabt(args, udata);'
+require_function_text "$KPM_SOURCE" r0lab_raw_before_abort_compact \
+  'r0lab_raw_dabt_route_armed_unlocked()'
+require_function_text "$KPM_SOURCE" r0lab_raw_before_abort_compact \
+  'r0lab_raw_before_abort(args, udata);'
+require_function_text "$KPM_SOURCE" r0lab_raw_dabt_route_armed_unlocked \
+  'page->abort_read_cycle_armed'
+require_function_text "$KPM_SOURCE" r0lab_raw_dabt_route_armed_unlocked \
+  'page->abort_write_release_armed'
+require_function_text "$KPM_SOURCE" r0lab_raw_dabt_route_armed_unlocked \
+  'page->abort_probe_armed'
 require_function_text "$KPM_SOURCE" r0lab_raw_before_abort \
   '!g_initialized'
 require_function_text "$KPM_SOURCE" r0lab_raw_exit_mmap_before \
@@ -244,6 +260,12 @@ require_text "$DEVICE_SCRIPT" 'require_exit_only_callbacks_status'
 require_text "$DEVICE_SCRIPT" 'raw_abort_resident=0'
 require_text "$DEVICE_SCRIPT" 'raw raw-hold clear $TOKEN_3'
 require_text "$DEVICE_SCRIPT" 'raw raw-hold clear $TOKEN_4'
+require_text "$DEVICE_SCRIPT" 'STAGE4_HOLD_SECONDS=${R3O_STAGE4_HOLD_SECONDS:-60}'
+require_text "$DEVICE_SCRIPT" 'poll_runtime_continuity "$STAGE4_HOLD_SECONDS"'
+require_text "$DEVICE_SCRIPT" 'system_server PID changed during runtime poll'
+require_text "$DEVICE_SCRIPT" 'Lab PID changed during runtime poll'
+require_text "$DEVICE_SCRIPT" \
+  'crash buffer became non-empty during active raw hold'
 require_text "$DEVICE_SCRIPT" 'exit_restore_begin slot='
 require_text "$DEVICE_SCRIPT" 'count_contains "$EVENTS" '\''op=34 result=0'\'' 2'
 require_text "$DEVICE_SCRIPT" 'unload_module || fail "stage 6 first unload failed"'
@@ -284,4 +306,4 @@ done
   fail "KPM does not provide the cache-sync bridge"
 
 printf '%s\n' \
-  'D4-R3o reference-lifetime host verification passed: ownership, hook order, direct shadow page, cache sync, BBM, bounded logs, Lab clear, staged ladder, builds, sections, and symbols'
+  'D4-R3o reference-lifetime host verification passed: ownership, hook order, compact IABT/DABT admission, direct shadow page, cache sync, BBM, bounded logs, 60-second PID/crash gate, Lab clear, staged ladder, builds, sections, and symbols'

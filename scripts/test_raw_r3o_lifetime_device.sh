@@ -14,6 +14,7 @@ TOKEN_2=${R3O_TOKEN_2:-0x7293a2}
 TOKEN_3=${R3O_TOKEN_3:-0x7293a3}
 TOKEN_4=${R3O_TOKEN_4:-0x7293a4}
 TOKEN_5=${R3O_TOKEN_5:-0x7293a5}
+STAGE4_HOLD_SECONDS=${R3O_STAGE4_HOLD_SECONDS:-60}
 KEYSTORE=${R0LAB_DEBUG_KEYSTORE:-$ROOT/lab-app/debug.keystore}
 EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd
 EVIDENCE_DIR="$ROOT/build/evidence"
@@ -134,6 +135,17 @@ read_warn_count() {
     LC_ALL=C tr -d '\r'
 }
 
+read_pid() {
+  process=$1
+  adb_device shell pidof "$process" |
+    LC_ALL=C tr -d '\r'
+}
+
+read_crash_buffer() {
+  adb_device logcat -b crash -d -v threadtime -t 200 |
+    LC_ALL=C tr -d '\r'
+}
+
 module_list() {
   supercmd module list 2>&1 | LC_ALL=C tr -d '\r'
 }
@@ -237,6 +249,37 @@ poll_transport() {
   done
 }
 
+poll_runtime_continuity() {
+  seconds=$1
+  expected_system_server_pid=$2
+  expected_lab_pid=$3
+  elapsed=0
+
+  while [ "$elapsed" -lt "$seconds" ]; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    state=$(adb_device get-state 2>&1 || true)
+    state=$(printf '%s' "$state" | LC_ALL=C tr -d '\r')
+    system_server_pid=$(read_pid system_server 2>/dev/null || true)
+    lab_pid=$(read_pid "$PACKAGE" 2>/dev/null || true)
+    printf 'runtime_poll=%s/%s adb_state=%s system_server_pid=%s lab_pid=%s\n' \
+      "$elapsed" "$seconds" "$state" "$system_server_pid" "$lab_pid" \
+      >> "$EVIDENCE"
+    [ "$state" = device ] ||
+      fail "ADB transport changed during runtime poll $elapsed/$seconds"
+    [ "$system_server_pid" = "$expected_system_server_pid" ] ||
+      fail "system_server PID changed during runtime poll $elapsed/$seconds: expected=$expected_system_server_pid actual=$system_server_pid"
+    [ "$lab_pid" = "$expected_lab_pid" ] ||
+      fail "Lab PID changed during runtime poll $elapsed/$seconds: expected=$expected_lab_pid actual=$lab_pid"
+  done
+
+  CRASH_BUFFER=$(read_crash_buffer 2>&1 || true)
+  printf 'crash_buffer_begin\n%s\ncrash_buffer_end\n' "$CRASH_BUFFER" \
+    >> "$EVIDENCE"
+  [ -z "$CRASH_BUFFER" ] ||
+    fail "crash buffer became non-empty during active raw hold"
+}
+
 write_state() {
   next_stage=$1
   tmp="$STATE_FILE.tmp"
@@ -318,6 +361,8 @@ capture_failure() {
       "$(module_list 2>&1 || true)" >> "$EVIDENCE"
     printf 'failure_r3o_dmesg_begin\n%s\nfailure_r3o_dmesg_end\n' \
       "$(r3o_dmesg)" >> "$EVIDENCE"
+    printf 'failure_crash_buffer_begin\n%s\nfailure_crash_buffer_end\n' \
+      "$(read_crash_buffer 2>&1 || true)" >> "$EVIDENCE"
     printf 'failure_pstore_list_begin\n%s\nfailure_pstore_list_end\n' \
       "$(adb_device shell su -c ls -l /sys/fs/pstore 2>&1 || true)" \
       >> "$EVIDENCE"
@@ -333,6 +378,13 @@ case "$STAGE" in
   1 | 2 | 3 | 4 | 5 | 6) ;;
   *) fail "R3O_STAGE=1..6 is required" ;;
 esac
+case "$STAGE4_HOLD_SECONDS" in
+  '' | *[!0-9]*)
+    fail "R3O_STAGE4_HOLD_SECONDS must be an integer of at least 60"
+    ;;
+esac
+[ "$STAGE4_HOLD_SECONDS" -ge 60 ] ||
+  fail "R3O_STAGE4_HOLD_SECONDS must be an integer of at least 60"
 [ -n "$SERIAL" ] ||
   fail "ANDROID_SERIAL=$EXPECTED_SERIAL is required"
 [ "$SERIAL" = "$EXPECTED_SERIAL" ] ||
@@ -518,6 +570,17 @@ case "$STAGE" in
     require_exit_only_callbacks_status "$STATUS"
     ARM=$(run_app_command "arm $TOKEN_4") ||
       fail "stage 4 session arm timed out"
+    STAGE4_SYSTEM_SERVER_PID=$(read_pid system_server) ||
+      fail "stage 4 system_server PID read failed"
+    STAGE4_LAB_PID=$(read_pid "$PACKAGE") ||
+      fail "stage 4 Lab PID read failed"
+    [ -n "$STAGE4_SYSTEM_SERVER_PID" ] ||
+      fail "stage 4 system_server PID is empty"
+    [ -n "$STAGE4_LAB_PID" ] ||
+      fail "stage 4 Lab PID is empty"
+    printf 'stage4_pid_baseline system_server_pid=%s lab_pid=%s hold_seconds=%s\n' \
+      "$STAGE4_SYSTEM_SERVER_PID" "$STAGE4_LAB_PID" \
+      "$STAGE4_HOLD_SECONDS" >> "$EVIDENCE"
     HOLD=$(run_app_command "raw raw-hold lifetime shadow double $TOKEN_4") ||
       fail "stage 4 two-page hold timed out"
     for field in \
@@ -537,7 +600,8 @@ case "$STAGE" in
       require_contains "$HOLD" "$field"
     done
     printf '%s\n%s\n' "$ARM" "$HOLD" >> "$EVIDENCE"
-    poll_transport 15
+    poll_runtime_continuity "$STAGE4_HOLD_SECONDS" \
+      "$STAGE4_SYSTEM_SERVER_PID" "$STAGE4_LAB_PID"
     CLEAR=$(run_app_command "raw raw-hold clear $TOKEN_4") ||
       fail "stage 4 explicit clear timed out"
     require_contains "$CLEAR" 'raw mode=raw-hold-clear failures=0'
