@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
-SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage3-entry-candidate-20260724}
+SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage4-entry-candidate-20260724}
 STAGE=${R3O_STAGE:-}
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3o.kpm
@@ -500,7 +500,7 @@ case "$STAGE" in
     STATUS=$(run_app_command status) ||
       fail "stage 3 final status timed out"
     require_empty_status "$STATUS"
-    require_resident_callbacks_status "$STATUS"
+    require_exit_only_callbacks_status "$STATUS"
     printf '%s\n%s\n' "$CLEAR" "$STATUS" >> "$EVIDENCE"
     finish_log_window
     require_contains "$R3O_STAGE_LOGS" 'exit_protection_ready slot=0'
@@ -515,7 +515,7 @@ case "$STAGE" in
     STATUS=$(run_app_command status) ||
       fail "stage 4 initial status timed out"
     require_empty_status "$STATUS"
-    require_resident_callbacks_status "$STATUS"
+    require_exit_only_callbacks_status "$STATUS"
     ARM=$(run_app_command "arm $TOKEN_4") ||
       fail "stage 4 session arm timed out"
     HOLD=$(run_app_command "raw raw-hold lifetime shadow double $TOKEN_4") ||
