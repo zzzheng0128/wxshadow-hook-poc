@@ -1169,27 +1169,27 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_before_abort_lock_passthrough \
   be53f3e27caa976d597375ce599bd626404c10e9aad630240acb5e4e4c11aa92
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_callback \
-  48d3bb2de62fe7eaa1e3e4ddcb69abc74665d9e67630c4abe1a9e4be15d841eb
+  b9b2dd65e8500a853635593af9e64518c3bddced78fb99149793919f3700eb90
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
-  28192353f7cb843a1977b28655e6f6342498a8e93313b41c00b0326b4913013f
+  fce34ba3a2790efc72dba00a0b8a0aff2ad5e9e445fba9f08078707f981c5e9e
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  02669b06fecd2d43c0866a29b384ff761c77774df66e8e958bc3302ad0911da1
+  050186876234d63db16ea2edfdf8e22ca07d499be338196c6b5a55e162523e3e
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
-  b2156054c93e26e329ed29120d78e1a240be0adf8bed7e78a68818a4c3964490
+  eee34a6e7d4dfa71a93d2ce15e16fe207b41fb2cb7745e5b3ee6bf8605e0c19f
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
-  9d2e25cb6b00167c7ae56ade4231c75373947dd60d04d4d6b97341664b0b3501
+  b4d7ccd0fbec0d89001fc27006b9e71b72d8e850b86d1fa079a6d93833effc46
 require_function_sha256 kpm/r0lab.c r0lab_control0 \
-  80b4397d6eea5e686aeb3e9e3284e1a048082de598e4308558f5e0586f8aca37
+  e20ab06101e5bdd375f66b8d6d8f35973884cf63923e47b64a8de41f854d9105
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  169868b0e52e74586a59572e78250139a58277a236ed6c04ac0a9539c73b1b02
+  ba8fb96ca8d9f4eeed7436fcfcacb7302a0220b4a6c419b3b407da29c8c2f929
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
-  f173c0bef59ec953583c2c25c8b3838e119229505de2c0b57d0120f5874d44be
+  351913cd4e7e14b8c8c24d4e2c030cc7b985ab991fba404235aa35212d2b3772
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   Java_dev_r0hook_lab_MainActivity_nativeControl \
-  7598a835ff0f16b85a75c3fbb54f388cdd6ed65309ac55e183d7c7307f35a3c4
+  1a67cb7478ac2fa7bc4714c1b0633082ff74cc2d074a20ad1ad40a1ac0233e84
 require_text "$F46_D4_R3J_PLAN" 'wxshadow F4.6 D4-R3j Adjacent Inflight-Accounting Plan'
 require_text "$F46_D4_R3J_PLAN" 'Status: device row stable and physical-reboot closure verified.'
 require_text "$F46_D4_R3J_PLAN" '65679740eb5253c2779bbd0a0c4dce89ebdd5529'
@@ -1300,7 +1300,16 @@ require_text scripts/verify_d4_r3k_plan_packet.sh \
 require_text scripts/verify_v1_contract.sh \
   'D4-R3k plan packet contains a forbidden changed path'
 require_text "$F46_D4_R3L_PLAN" 'wxshadow F4.6 D4-R3l Read-Only IABT Admission And Route Plan'
-require_text "$F46_D4_R3L_PLAN" 'Status: plan locked; source implementation pending.'
+require_text "$F46_D4_R3L_PLAN" 'Status: source implemented and host-verified; device row pending.'
+require_text "$F46_D4_R3L_PLAN" 'source_tag=wxshadow-v2-f46-d4-r3l-readonly-iabt-route-source-20260724'
+require_text "$F46_D4_R3L_PLAN" 'device_access=not_run'
+require_text "$F46_D4_R3L_PLAN" 'contract_script_count=55'
+require_text "$F46_D4_R3L_PLAN" 'kpm_sha256=a424b2aa99e2808d1bcefde1efa553a11ef6d3bdfd29848c54bceaaceb4d69bf'
+require_text "$F46_D4_R3L_PLAN" 'kpm_object_sha256=cfb9cca1be9ba59506d5f1932a7ecc28a685e927ee52988f3382654c579ef33b'
+require_text "$F46_D4_R3L_PLAN" 'apk_lib_entry_sha256=673d4a54aed6f2c0c68969d3d9cff5bdd7d311bc902f7af967a76d08da0063e8'
+require_text "$F46_D4_R3L_PLAN" 'apk_dex_entry_sha256=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text "$F46_D4_R3L_PLAN" 'signer_cert_sha256=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
+require_text "$F46_D4_R3L_PLAN" 'hardware_barriers:0'
 require_text "$F46_D4_R3L_PLAN" 'D4-R3l-global-abort-readonly-iabt-route'
 require_text "$F46_D4_R3L_PLAN" 'abort_hook_iabt_route'
 require_text "$F46_D4_R3L_PLAN" 'raw slot arm abort-iabt-route <token> <slot> <page>'
@@ -1312,6 +1321,10 @@ require_text "$F46_D4_R3L_PLAN" 'call `r0lab_raw_hook_route_reject_locked()`'
 require_text "$F46_D4_R3L_PLAN" 'increment `route_hits`, `route_rejects`, or any other counter'
 require_text "$F46_D4_R3L_PLAN" 'matched token release with clear_transition=false'
 require_text "$F46_D4_R3L_PLAN" 'page_address <= regs->pc < page_address + R0LAB_RAW_PAGE_SIZE'
+require_text "$F46_D4_R3L_PLAN" '## Compiler Witness'
+require_text "$F46_D4_R3L_PLAN" 'r0lab_raw_iabt_route_compiler_witness(page, generation, pc)'
+require_text "$F46_D4_R3L_PLAN" 'empty `asm volatile` with page pointer, generation, and'
+require_text "$F46_D4_R3L_PLAN" 'A plain local boolean,'
 require_text "$F46_D4_R3L_PLAN" 'It never sets'
 require_text "$F46_D4_R3L_PLAN" '`args->skip_origin`'
 require_text "$F46_D4_R3L_PLAN" 'No older diagnostic command or mode may change semantics.'
@@ -1327,10 +1340,191 @@ require_text scripts/verify_d4_r3l_plan_packet.sh \
   'D4_R3L_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
   'D4-R3l plan packet contains a forbidden changed path'
+require_file scripts/test_raw_abort_iabt_route_device.sh
+require_file scripts/verify_d4_r3l_disassembly.sh
+require_text kpm/r0lab.c 'bool abort_hook_iabt_route;'
+require_text kpm/r0lab.c 'raw slot arm abort-iabt-route '
+require_function_sha256 kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  f94e6f0b68312093a3b853261ebd6c648dcdaa3fd67c5754bbc470fd9cc73588
+require_function_sha256 kpm/r0lab.c \
+  r0lab_raw_iabt_route_compiler_witness \
+  e7b4a45526d6cfeec9c5167ecfa7f19f9db93fc19df6e33331dc5b8482faa115
+require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  809efa85e1b112511370d0910f7dadc14e2f12ac19667acebc8dcf6790bc188b
+require_function_sha256 kpm/r0lab.c r0lab_raw_arm \
+  0a799555b31355fb4514ee1850e2955a0f36dc3d28b666a88d76250b9772875f
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime \
+  8b70c17f7b65fdf556953b984fb4d944e584e5b0f6a484da24e72b11e2365648
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_live_pte \
+  858d1ea7257323bd066d8ddce8069a76f84b7c649eade9b986e7e9a13613365b
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_no_abort \
+  676de7cecc706b403644cb1914bedd65a76884498914a1fbb49cae17a626e309
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_abort_passthrough \
+  dafd910dcfd1c016ab4914d4b7052c1c84f9e686ec31593f327d6e080403c025
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_abort_mmget \
+  ffbcdfb18c4913e0a75f7be36ffafc603dd7ffcaeecdc445302e2174dc12cb57
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_abort_iabt_route \
+  245bd9a480bb6152468b6d6365a838ab06a47a460a98da57df935e0188b2d829
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  '(route_flags & R0LAB_RAW_HOOK_ROUTE_MUTATING)'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  'page = r0lab_raw_page_find_by_mm_addr_locked(mm, address);'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  'if (!page->abort_hook_iabt_route)'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  'if (page->transitioning)'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  'token->generation = page->generation;'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  'r0lab_raw_hook_route_reject_locked'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked 'route_hits'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked 'route_rejects'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked \
+  'page->transitioning ='
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_readonly_locked 'r0lab_record'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_iabt_route_compiler_witness \
+  'asm volatile("" : : "r"(page), "r"(generation), "r"(pc) : "memory");'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'far = (unsigned long)args->arg0;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'esr = (unsigned int)args->arg1;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'regs = (struct pt_regs *)(unsigned long)args->arg2;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'g_session.owner_tgid == r0lab_current_tgid()'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_raw_hook_page_token_acquire_readonly_locked('
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_raw_iabt_route_compiler_witness('
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  '&route_token, false);'
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'g_get_task_mm(' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'g_mmput(' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_lock();' 2
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_unlock(flags);' 2
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  '++g_raw_inflight;' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  '--g_raw_inflight;' 1
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_raw_hook_page_token_acquire_locked('
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_raw_hook_route_reject_locked'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'transitioning ='
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_raw_begin_'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_raw_finish_'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'r0lab_record'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'skip_origin'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
+  'R0LAB_M3_ESR_EC_DABT_LOW'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  'if (iabt_route)'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  'return r0lab_raw_before_abort_iabt_route;'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_abort_hook_installed_callback_locked \
+  'page->abort_hook_iabt_route);'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
+  'page->abort_hook_iabt_route);'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
+  'iabt_route = page->abort_hook_iabt_route;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  '(iabt_route_abort_hook ? 1U : 0U)'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'active->abort_hook_iabt_route'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'slot->abort_hook_iabt_route = iabt_route_abort_hook;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_iabt_route = page->abort_hook_iabt_route;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_inflight=%u abort_hook_iabt_route=%u'
+require_line_before kpm/r0lab.c \
+  '    if (!strncmp(args, "raw slot arm abort-iabt-route ", 30)) {' \
+  '    if (!strncmp(args, "raw slot arm ", 13)) {'
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw raw-hold abort-iabt-route '
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw mode=raw-hold-abort-iabt-route failures=%d'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'error=abort-iabt-route hold requires source single'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  '(iabt_route_abort_hook ? 1U : 0U)'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'abort_hook_iabt_route[index] != 1'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'g_r0lab_m5_hold.mode = iabt_route_abort_hook ? 19 :'
+require_line_before lab-app/src/main/cpp/labprobe.c \
+  '    if (!strncmp(args, "raw raw-hold abort-iabt-route ", 30)) {' \
+  '    if (!strncmp(args, "raw exit hook hold ", 19)) {'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'RAW_ABORT_IABT_ROUTE_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'EXPECTED_SERIAL=32250DLH2000Z3'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'IDLE_SECONDS=15'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'EXPECTED_KPM_SHA=a424b2aa99e2808d1bcefde1efa553a11ef6d3bdfd29848c54bceaaceb4d69bf'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'EXPECTED_LABPROBE_SHA=673d4a54aed6f2c0c68969d3d9cff5bdd7d311bc902f7af967a76d08da0063e8'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'wxshadow-v2-f46-d4-r3l-readonly-iabt-route-source-20260724'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'raw raw-hold abort-iabt-route $TOKEN'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'D4-R3l-source-uxn-abort-iabt-route-stable'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'D4-R3l-source-uxn-abort-iabt-route-unstable'
+require_text scripts/test_raw_abort_iabt_route_device.sh \
+  'D4-R3l-setup-blocked'
+require_function_text scripts/test_raw_abort_iabt_route_device.sh \
+  poll_adb_transport 'state=$(adb_device get-state 2>&1)'
+reject_function_text scripts/test_raw_abort_iabt_route_device.sh \
+  poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_abort_iabt_route_device.sh \
+  poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_abort_iabt_route_device.sh \
+  poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_abort_iabt_route_device.sh \
+  poll_adb_transport 'adb_device shell getprop'
+require_text scripts/verify_d4_r3l_disassembly.sh \
+  'D4-R3l disassembly passed: frame_loads=3 increment=1 decrement=1 nonstack_stores=2 indirect_calls=7 hardware_barriers=0'
+require_text scripts/verify_d4_r3l_disassembly.sh \
+  "grep -Eq '[[:space:]](dmb|dsb|isb|dc|ic)([[:space:]]|$)'"
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
   e6b888f79dd63507885374ef3bf1014d2346c940a496d2dcb96d2e8f5ab06bfc
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
-  7d2f5b770ebac3677e9573b31b00798b267cd9e5b466311fbb509a5e943ef01a
+  b1a525bb8c85c6300a8ed36d65ae658c1f4c214015459914795637165082028a
 require_file scripts/test_raw_abort_inflight_passthrough_device.sh
 require_file scripts/verify_d4_r3j_disassembly.sh
 require_text kpm/r0lab.c 'bool abort_hook_inflight;'
@@ -1392,7 +1586,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'inflight = page->abort_hook_inflight;'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight);'
+  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
   '(inflight_abort_hook ? 1U : 0U)'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
@@ -1408,7 +1602,7 @@ require_line_before kpm/r0lab.c \
   '    if (!strncmp(args, "raw slot arm ", 13)) {'
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_inflight \
-  a30ceb9aca7ae76078b2d4f619c4f1bb6a5537b0b30cfc39911bb1438f7c2552
+  cc3f31be93904817393378ee29f01f5dca291a5434dd56a68e9438ad2240eed6
 require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold abort-inflight '
 require_text lab-app/src/main/cpp/labprobe.c \
   'raw mode=raw-hold-abort-inflight failures=%d'
@@ -1420,10 +1614,10 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
   'abort_hook_inflight[index] != 1'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  'g_r0lab_m5_hold.mode = inflight_abort_hook ? 18 :'
+  'inflight_abort_hook ? 18 :'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_inflight \
-  'false, false, false, false, true);'
+  'false, false, false, false, true,'
 require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
   'RAW_ABORT_INFLIGHT_CLEAN_BOOT_CONFIRMED'
 require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
@@ -1569,9 +1763,9 @@ require_function_text kpm/r0lab.c \
   'if (page->hook_installed)'
 require_function_text kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
-  'page->abort_hook_lock, page->abort_hook_inflight);'
+  'page->abort_hook_lock, page->abort_hook_inflight,'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  'page->abort_hook_lock, page->abort_hook_inflight);'
+  'page->abort_hook_lock, page->abort_hook_inflight,'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
   'installed_callback = r0lab_raw_abort_hook_installed_callback_locked();'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
@@ -1595,7 +1789,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'g_raw_abort_hook_transitioning = false;'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight);'
+  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'r0lab_hook_detach(g_do_mem_abort, callback, NULL);'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
@@ -1634,7 +1828,7 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
   'snprintf(args, sizeof(args), "source single 0x%llx"'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
-  'false, false, false, true, false);'
+  'false, false, false, true, false,'
 require_line_before lab-app/src/main/cpp/labprobe.c \
   '    if (!strncmp(args, "raw raw-hold abort-lock ", 24)) {' \
   '    if (!strncmp(args, "raw exit hook hold ", 19)) {'
@@ -1764,7 +1958,9 @@ require_text "$DEVELOPMENT_SEQUENCE" 'Complete/classified stable; reboot closed.
 require_text "$DEVELOPMENT_SEQUENCE" 'Exact source `45880fe`'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3k-visible-inflight-lifetime-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3l | Read-only IABT admission and route'
-require_text "$DEVELOPMENT_SEQUENCE" 'Plan locked; source pending.'
+require_text "$DEVELOPMENT_SEQUENCE" 'Source implemented and host-verified; device row pending.'
+require_text "$FINAL_ROADMAP" 'Source and host gates are'
+require_text "$REFERENCE_COVERAGE" 'R3l source now implements read-only IABT admission'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3l-readonly-iabt-route-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'dedicated no-accounting token acquire/validate/release path'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md'
@@ -2024,7 +2220,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
   'result = hook_wrap3(g_do_mem_abort, callback, NULL, NULL);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight);'
+  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
   'active->abort_hook_passthrough'
 require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
@@ -2568,6 +2764,8 @@ scripts/verify_d4_r3k_plan_packet.sh
 scripts/verify_d4_r3l_plan_packet.sh
 scripts/test_raw_abort_visible_inflight_device.sh
 scripts/verify_d4_r3k_disassembly.sh
+scripts/test_raw_abort_iabt_route_device.sh
+scripts/verify_d4_r3l_disassembly.sh
 scripts/test_v1_device.sh
 '
 
