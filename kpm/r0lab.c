@@ -360,6 +360,7 @@ struct r0lab_raw_shadow_page {
     bool hook_installed;
     bool abort_hook_suppressed;
     bool abort_hook_passthrough;
+    bool abort_hook_mmget;
     bool target_exiting;
     bool monitor_running;
     bool transitioning;
@@ -4062,6 +4063,20 @@ static void r0lab_raw_before_abort_passthrough(hook_fargs3_t *args, void *udata)
     (void)udata;
 }
 
+static void r0lab_raw_before_abort_mmget_passthrough(hook_fargs3_t *args,
+                                                     void *udata)
+{
+    struct mm_struct *current_mm;
+
+    (void)args;
+    (void)udata;
+    if (!g_get_task_mm || !g_mmput)
+        return;
+    current_mm = g_get_task_mm(current);
+    if (current_mm)
+        g_mmput(current_mm);
+}
+
 static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
 {
     const unsigned long far = (unsigned long)args->arg0;
@@ -5847,6 +5862,16 @@ static unsigned int r0lab_raw_abort_hook_users_locked(void)
     return count;
 }
 
+static hook_chain3_callback
+r0lab_raw_abort_hook_callback(bool passthrough, bool mmget)
+{
+    if (mmget)
+        return r0lab_raw_before_abort_mmget_passthrough;
+    if (passthrough)
+        return r0lab_raw_before_abort_passthrough;
+    return r0lab_raw_before_abort;
+}
+
 static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
 {
     hook_chain3_callback callback;
@@ -5856,9 +5881,8 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
 
     if (!page)
         return R0LAB_EINVAL;
-    callback = page->abort_hook_passthrough ?
-                   r0lab_raw_before_abort_passthrough :
-                   r0lab_raw_before_abort;
+    callback = r0lab_raw_abort_hook_callback(
+        page->abort_hook_passthrough, page->abort_hook_mmget);
     flags = r0lab_lock();
     if (page->hook_installed) {
         r0lab_unlock(flags);
@@ -5890,6 +5914,7 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
 static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
 {
     hook_chain3_callback callback;
+    bool mmget = false;
     bool passthrough = false;
     bool installed = false;
     bool should_detach = false;
@@ -5899,6 +5924,7 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
         return;
     flags = r0lab_lock();
     if (page->hook_installed) {
+        mmget = page->abort_hook_mmget;
         passthrough = page->abort_hook_passthrough;
         page->hook_installed = false;
         installed = true;
@@ -5908,8 +5934,7 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
 
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
-    callback = passthrough ? r0lab_raw_before_abort_passthrough :
-                             r0lab_raw_before_abort;
+    callback = r0lab_raw_abort_hook_callback(passthrough, mmget);
     if (should_detach)
         r0lab_hook_detach(g_do_mem_abort, callback, NULL);
     if (installed)
@@ -6435,7 +6460,8 @@ static int r0lab_raw_parse_slot_id(uint64_t slot_value, uint16_t *slot_id)
 static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
                                uint64_t page_address,
                                bool suppress_abort_hook,
-                               bool passthrough_abort_hook, bool legacy_reply,
+                               bool passthrough_abort_hook,
+                               bool mmget_abort_hook, bool legacy_reply,
                                char __user *out_msg, int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
@@ -6447,7 +6473,10 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
 
     if (result)
         goto record;
-    if (suppress_abort_hook && passthrough_abort_hook) {
+    if ((suppress_abort_hook ? 1U : 0U) +
+            (passthrough_abort_hook ? 1U : 0U) +
+            (mmget_abort_hook ? 1U : 0U) >
+        1U) {
         result = R0LAB_EINVAL;
         goto record;
     }
@@ -6486,8 +6515,10 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
         if (!r0lab_raw_page_slot_owned_locked(active))
             continue;
         if (suppress_abort_hook || passthrough_abort_hook ||
+            mmget_abort_hook ||
             active->abort_hook_suppressed ||
-            active->abort_hook_passthrough) {
+            active->abort_hook_passthrough ||
+            active->abort_hook_mmget) {
             r0lab_unlock(flags);
             g_mmput(mm);
             result = R0LAB_EBUSY;
@@ -6516,6 +6547,7 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
     slot->record.state = R0LAB_PAGE_RECORD_PREPARING;
     slot->abort_hook_suppressed = suppress_abort_hook;
     slot->abort_hook_passthrough = passthrough_abort_hook;
+    slot->abort_hook_mmget = mmget_abort_hook;
     slot->reserving = true;
     g_raw_page_table.selected_slot = slot_id;
     r0lab_unlock(flags);
@@ -6543,7 +6575,7 @@ static long r0lab_raw_arm(uint64_t token, uint64_t page_address,
                           char __user *out_msg, int outlen)
 {
     return r0lab_raw_slot_arm(token, R0LAB_RAW_PRIMARY_SLOT, page_address,
-                              false, false, true, out_msg, outlen);
+                              false, false, false, true, out_msg, outlen);
 }
 
 static long r0lab_raw_ready(uint64_t token, char __user *out_msg, int outlen)
@@ -6668,6 +6700,7 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     uint8_t record_backend;
     uint8_t record_state;
     bool abort_hook_installed;
+    bool abort_hook_mmget;
     bool abort_hook_suppressed;
     bool abort_hook_passthrough;
     int result = r0lab_validate_owner(token);
@@ -6698,11 +6731,12 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     record_backend = page->record.backend;
     record_state = page->record.state;
     abort_hook_installed = page->hook_installed;
+    abort_hook_mmget = page->abort_hook_mmget;
     abort_hook_suppressed = page->abort_hook_suppressed;
     abort_hook_passthrough = page->abort_hook_passthrough;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u\n",
+             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u\n",
              (unsigned int)slot_id, (uint64_t)address,
              (unsigned long long)generation, source_pfn & 0xffffUL,
              shadow_pfn & 0xffffUL,
@@ -6710,7 +6744,8 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
              r0lab_page_record_state_name(record_state),
              abort_hook_installed ? 1U : 0U,
              abort_hook_suppressed ? 1U : 0U,
-             abort_hook_passthrough ? 1U : 0U);
+             abort_hook_passthrough ? 1U : 0U,
+             abort_hook_mmget ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -10848,7 +10883,7 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, true, false,
-                                  false, out_msg, outlen);
+                                  false, false, out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm abort-passthrough ", 31)) {
         value = args + 31;
@@ -10857,7 +10892,16 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, true,
-                                  false, out_msg, outlen);
+                                  false, false, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot arm abort-mmget ", 25)) {
+        value = args + 25;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &page_address) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
+                                  true, false, out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm ", 13)) {
         value = args + 13;
@@ -10866,7 +10910,7 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
-                                  false, out_msg, outlen);
+                                  false, false, out_msg, outlen);
     }
     if (!strncmp(args, "raw slot ready ", 15)) {
         value = args + 15;
