@@ -8629,7 +8629,8 @@ finish:
 
 static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
                                           size_t output_size,
-                                          bool snapshot_live_pte)
+                                          bool snapshot_live_pte,
+                                          bool suppress_abort_hook)
 {
     struct sigaction action = {0};
     struct sigaction previous_action = {0};
@@ -8662,6 +8663,8 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
     int normal_value[2] = {-1, -1};
     int shadow_value[2] = {-1, -1};
     int inspect_ok[2] = {0, 0};
+    int abort_hook_installed[2] = {-1, -1};
+    int abort_hook_suppressed[2] = {-1, -1};
     int live_match = 0;
     int handler_installed = 0;
     int failures = 0;
@@ -8710,6 +8713,11 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
                  "rc=-22 error=live pte snapshot requires source single");
         return -1;
     }
+    if (suppress_abort_hook && (want_shadow || slot_count != 1)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=no-abort hold requires source single");
+        return -1;
+    }
     page_size = (size_t)sysconf(_SC_PAGESIZE);
     if (page_size != R0LAB_M3_PAGE_SIZE) {
         snprintf(output, output_size,
@@ -8746,7 +8754,10 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
     }
 
     for (index = 0; index < slot_count; ++index) {
-        snprintf(command, sizeof(command), "raw slot arm 0x%llx %u 0x%llx",
+        snprintf(command, sizeof(command),
+                 suppress_abort_hook ?
+                     "raw slot arm no-abort 0x%llx %u 0x%llx" :
+                     "raw slot arm 0x%llx %u 0x%llx",
                  (unsigned long long)token, index,
                  (unsigned long long)(uintptr_t)pages[index]);
         arm_rc[index] = r0lab_control_raw(command, reply, sizeof(reply));
@@ -8761,6 +8772,16 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
             r0lab_raw_parse_slot_generation(ready[index], "raw_slot_ready",
                                             index, &generation[index]))
             goto finish;
+        abort_hook_installed[index] =
+            strstr(ready[index], "abort_hook_installed=0") ? 0 :
+            strstr(ready[index], "abort_hook_installed=1") ? 1 : -1;
+        abort_hook_suppressed[index] =
+            strstr(ready[index], "abort_hook_suppressed=1") ? 1 :
+            strstr(ready[index], "abort_hook_suppressed=0") ? 0 : -1;
+        if (suppress_abort_hook &&
+            (abort_hook_installed[index] != 0 ||
+             abort_hook_suppressed[index] != 1))
+            ++failures;
         word_after_arm[index] = readable[index][0];
     }
 
@@ -8858,8 +8879,9 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
     if (want_shadow && g_r0lab_raw_handler_faults)
         ++failures;
 
-    if ((!snapshot_live_pte && !failures) ||
-        (snapshot_live_pte && arm_rc[0] >= 0 && ready_rc[0] >= 0)) {
+    if ((!snapshot_live_pte && !suppress_abort_hook && !failures) ||
+        ((snapshot_live_pte || suppress_abort_hook) &&
+         arm_rc[0] >= 0 && ready_rc[0] >= 0)) {
         g_r0lab_m5_hold.source_page = pages[0];
         g_r0lab_m5_hold.clone_page = slot_count == 2 ? pages[1] : NULL;
         g_r0lab_m5_hold.page_size = page_size;
@@ -8891,7 +8913,24 @@ finish:
                 munmap(pages[index], page_size);
         }
     }
-    if (snapshot_live_pte) {
+    if (suppress_abort_hook) {
+        snprintf(output, output_size,
+                 "raw mode=raw-hold-no-abort failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d abort_hook_installed=%d abort_hook_suppressed=%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
+                 failures, target_state, slot_count, slot_count, slot_count,
+                 normal_value[0], normal_value[1], shadow_value[0],
+                 shadow_value[1], activations[0], activations[1], states[0],
+                 states[1], inspect_ok[0], inspect_ok[1],
+                 abort_hook_installed[0], abort_hook_suppressed[0],
+                 arm_rc[0], arm_rc[1], ready_rc[0], ready_rc[1],
+                 observed_rc[0], observed_rc[1], inspect_rc[0], inspect_rc[1],
+                 (int)g_r0lab_raw_handler_faults,
+                 (unsigned long long)(uintptr_t)pages[0],
+                 (unsigned long long)(uintptr_t)pages[1],
+                 (unsigned long long)generation[0],
+                 (unsigned long long)generation[1], word_before[0],
+                 word_before[1], word_after_arm[0], word_after_arm[1],
+                 word_shadow[0], word_shadow[1]);
+    } else if (snapshot_live_pte) {
         snprintf(output, output_size,
                  "raw mode=raw-hold-live-pte failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u activations=%u/%u states=%lu/%lu snapshot_stage=after_arm live_match=%d normal=%d/%d shadow=%d/%d inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld live_pte_rc=%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x %s",
                  failures, target_state, slot_count, slot_count, slot_count,
@@ -8933,7 +8972,8 @@ finish:
 static int r0lab_raw_hold_lifetime(const char *args, char *output,
                                    size_t output_size)
 {
-    return r0lab_raw_hold_lifetime_common(args, output, output_size, false);
+    return r0lab_raw_hold_lifetime_common(args, output, output_size, false,
+                                          false);
 }
 
 static int r0lab_raw_hold_live_pte(const char *token_text, char *output,
@@ -8949,7 +8989,25 @@ static int r0lab_raw_hold_live_pte(const char *token_text, char *output,
     }
     snprintf(args, sizeof(args), "source single 0x%llx",
              (unsigned long long)token);
-    return r0lab_raw_hold_lifetime_common(args, output, output_size, true);
+    return r0lab_raw_hold_lifetime_common(args, output, output_size, true,
+                                          false);
+}
+
+static int r0lab_raw_hold_no_abort(const char *token_text, char *output,
+                                   size_t output_size)
+{
+    char args[96];
+    uint64_t token;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw hold no-abort token");
+        return -1;
+    }
+    snprintf(args, sizeof(args), "source single 0x%llx",
+             (unsigned long long)token);
+    return r0lab_raw_hold_lifetime_common(args, output, output_size, false,
+                                          true);
 }
 
 static int r0lab_raw_fault_data_probe_run(const char *token_text,
@@ -10815,6 +10873,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw raw-hold live-pte ", 22)) {
         r0lab_raw_hold_live_pte(args + 22, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw raw-hold no-abort ", 22)) {
+        r0lab_raw_hold_no_abort(args + 22, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

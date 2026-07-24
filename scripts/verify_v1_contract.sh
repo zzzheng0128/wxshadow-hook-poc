@@ -96,6 +96,7 @@ F46_D4_R3D_PLAN=docs/wxshadow-f4.6-d4-r3d-status-transport-split-plan.md
 F46_D4_R3E_PLAN=docs/wxshadow-f4.6-d4-r3e-raw-hold-lifetime-plan.md
 F46_D4_R3E_L2_PLAN=docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md
 F46_D4_R3E_L3_PLAN=docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md
+F46_D4_R3F_PLAN=docs/wxshadow-f4.6-d4-r3f-abort-hook-exposure-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
@@ -127,6 +128,7 @@ require_file "$F46_D4_R3D_PLAN"
 require_file "$F46_D4_R3E_PLAN"
 require_file "$F46_D4_R3E_L2_PLAN"
 require_file "$F46_D4_R3E_L3_PLAN"
+require_file "$F46_D4_R3F_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
@@ -146,6 +148,7 @@ require_file scripts/test_raw_live_pte_snapshot_device.sh
 require_file scripts/test_raw_observer_perturbation_device.sh
 require_file scripts/classify_raw_observer_perturbation_evidence.sh
 require_file scripts/test_raw_observer_aggregate_host.sh
+require_file scripts/test_raw_abort_hook_exposure_device.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -624,7 +627,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3b Lab App-only raw-hold split | 
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3c status-reader split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | B0-S2, B1-S2, and B0-S3 captured; B1-S3 remains'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Complete/classified postmortem'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3f abort-hook exposure | Source packet in progress'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-P | Plan/docs/contract only'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-L1 | Raw-hold idle diagnostic script only'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md'
@@ -638,8 +642,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3b-post-hold-status-reader-unstable'
 require_text "$DEVELOPMENT_SEQUENCE" 'Fixed Next Work Queue'
 require_text "$DEVELOPMENT_SEQUENCE" 'classify_status_after_raw_hold()'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
-require_text "$DEVELOPMENT_SEQUENCE" 'diagnostic gate is F4.6-D4-R3e'
-require_text "$DEVELOPMENT_SEQUENCE" 'must not modify KPM behavior'
+require_text "$DEVELOPMENT_SEQUENCE" 'current slice is F4.6-D4-R3f'
+require_text "$DEVELOPMENT_SEQUENCE" 'PTE/TLB/cache/restore/monitor behavior remains unchanged.'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_exit_hook_raw_hold_idle_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw-exit-hook-raw-hold-idle-20260724-065137.log'
 require_text "$DEVELOPMENT_SEQUENCE" 'classification is `D4-R3d-raw-hold-self-unstable`'
@@ -767,8 +771,8 @@ require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-stable'
 require_text "$F46_D4_R3E_L2_PLAN" 'repeat/lower-intrusion observation'
 require_text "$F46_D4_R3E_L2_PLAN" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
 require_text "$F46_D4_R3E_L3_PLAN" 'wxshadow F4.6 D4-R3e-L3 Observer Perturbation Plan'
-require_text "$F46_D4_R3E_L3_PLAN" 'Status: the L3-A single-variant device harness and offline aggregate classifier'
-require_text "$F46_D4_R3E_L3_PLAN" 'are implemented and host-verified.'
+require_text "$F46_D4_R3E_L3_PLAN" 'Status: all four L3-A device attempts are captured.'
+require_text "$F46_D4_R3E_L3_PLAN" 'postmortem-recovered unstable row'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-observer-perturbation'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B0-baseline-unstable'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-external-snapshot-stable'
@@ -782,7 +786,6 @@ require_text "$F46_D4_R3E_L3_PLAN" 'RAW_OBSERVER_PAIRED_RUN=1..4'
 require_text "$F46_D4_R3E_L3_PLAN" 'scripts/test_raw_observer_perturbation_device.sh'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-live-pte-walk-failed'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-live-pte-mismatch'
-require_text "$F46_D4_R3E_L3_PLAN" 'B0-S2 and B1-S2 are unstable'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B0-baseline-unstable'
 require_text "$F46_D4_R3E_L3_PLAN" 'raw-observer-perturbation-run1-baseline-20260724-095302.log'
 require_text "$F46_D4_R3E_L3_PLAN" 'poll 12 returned `device not found`'
@@ -795,7 +798,12 @@ require_text "$F46_D4_R3E_L3_PLAN" 'raw-observer-perturbation-run3-baseline-2026
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B0-baseline-stable'
 require_text "$F46_D4_R3E_L3_PLAN" 'all 15 transport-only polls returned `device`'
 require_text "$F46_D4_R3E_L3_PLAN" '5e90385beec75fcf916284bf88d79f28228762cdaf1b549123b1d4028898b84f'
-require_text "$F46_D4_R3E_L3_PLAN" 'The next row is B1-S3'
+require_text "$F46_D4_R3E_L3_PLAN" 'raw-observer-perturbation-run4-external-20260724-101821.log'
+require_text "$F46_D4_R3E_L3_PLAN" '6188f0ed62ee0cf31a0fc35365229a1c81fb8dbfd31898109a6c963868362c5e'
+require_text "$F46_D4_R3E_L3_PLAN" 'Attempted to kill init'
+require_text "$F46_D4_R3E_L3_PLAN" 'The runtime classification is'
+require_text "$F46_D4_R3E_L3_PLAN" 'strict offline classifier intentionally continues to reject'
+require_text "$F46_D4_R3E_L3_PLAN" 'docs/wxshadow-f4.6-d4-r3f-abort-hook-exposure-plan.md'
 require_text "$F46_D4_R3E_L3_PLAN" 'R0LAB_DEBUG_KEYSTORE='
 require_text scripts/build_lab_app.sh 'R0LAB_DEBUG_KEYSTORE'
 require_text scripts/build_lab_app.sh 'explicit Lab keystore is missing'
@@ -813,6 +821,17 @@ require_text "$F46_D4_R3E_L3_PLAN" 'The local host test passes all four valid ag
 require_text "$F46_D4_R3E_L3_PLAN" 'four rejected-input cases'
 require_text "$F46_D4_R3E_L3_PLAN" 'metadata-mismatch rejection cases'
 require_text "$F46_D4_R3E_L3_PLAN" 'real historical anchors'
+require_text "$F46_D4_R3F_PLAN" 'wxshadow F4.6 D4-R3f Abort-Hook Exposure Plan'
+require_text "$F46_D4_R3F_PLAN" 'D4-R3f-global-abort-hook-exposure'
+require_text "$F46_D4_R3F_PLAN" 'raw slot arm no-abort <token> <slot> <page>'
+require_text "$F46_D4_R3F_PLAN" 'raw raw-hold no-abort <token>'
+require_text "$F46_D4_R3F_PLAN" 'abort_hook_installed=0 abort_hook_suppressed=1'
+require_text "$F46_D4_R3F_PLAN" 'scripts/test_raw_abort_hook_exposure_device.sh'
+require_text "$F46_D4_R3F_PLAN" 'D4-R3f-source-uxn-no-abort-stable'
+require_text "$F46_D4_R3F_PLAN" 'D4-R3f-source-uxn-no-abort-unstable'
+require_text "$F46_D4_R3F_PLAN" 'This is a causality split, not a production fix.'
+require_text "$F46_D4_R3F_PLAN" 'PTE descriptor bits or replacement ordering'
+require_text "$F46_D4_R3F_PLAN" 'Every stable or unstable row requires a separate physical reboot'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-raw-hold-self-unstable'
@@ -821,7 +840,8 @@ require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-A'
 require_text "$DEVELOPMENT_SEQUENCE" 'Lab App-only lifetime matrix'
 require_text "$DEVELOPMENT_SEQUENCE" 'slot count and retained PTE state'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | B0-S2, B1-S2, and B0-S3 captured; B1-S3 remains'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Complete/classified postmortem'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3f abort-hook exposure | Source packet in progress'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'three valid samples per variant'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L3-A-L | Script-only local implementation'
@@ -844,15 +864,15 @@ require_text "$FINAL_ROADMAP" 'raw raw-hold live-pte <token>'
 require_text "$FINAL_ROADMAP" 'raw-live-pte-snapshot-20260724-080322.log'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
 require_text "$FINAL_ROADMAP" 'strict 3/3 baseline instability versus 3/3 external-snapshot'
-require_text "$FINAL_ROADMAP" 'paired B0/B1 repeat matrix'
+require_text "$FINAL_ROADMAP" 'Both variants now contain stable and unstable rows'
 require_text "$FINAL_ROADMAP" 'scripts/test_raw_observer_perturbation_device.sh'
 require_text "$FINAL_ROADMAP" 'B0-S2, B1-S2, B0-S3, and B1-S3'
 require_text "$FINAL_ROADMAP" 'offline classifier validates strict historical anchors'
 require_text "$FINAL_ROADMAP" 'host test passes all'
 require_text "$FINAL_ROADMAP" 'non-sample rejection'
-require_text "$FINAL_ROADMAP" 'queue item 17 now has'
-require_text "$FINAL_ROADMAP" 'B0-S2, B1-S2, and B0-S3 evidence'
-require_text "$FINAL_ROADMAP" 'B0-S2 and B1-S2 are unstable while B0-S3 is stable'
+require_text "$FINAL_ROADMAP" '17 of 19 items complete'
+require_text "$FINAL_ROADMAP" 'planned D4-R3f global abort-hook exposure split'
+require_text "$FINAL_ROADMAP" 'postmortem-recovered B1-S3 panic row'
 reject_text "$FINAL_ROADMAP" 'four clean-boot rows remain deferred'
 require_text "$DEVELOPMENT_SEQUENCE" 'B1-S2 is'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L3-B1-external-snapshot-unstable'
@@ -968,6 +988,68 @@ require_line_before scripts/test_raw_observer_perturbation_device.sh \
 require_line_before scripts/test_raw_observer_perturbation_device.sh \
   'case "$PAIRED_RUN" in' 'ensure_clean_source'
 require_line_before scripts/test_raw_observer_perturbation_device.sh \
+  'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
+require_text kpm/r0lab.c 'bool abort_hook_suppressed;'
+require_text kpm/r0lab.c 'raw slot arm no-abort '
+require_function_text kpm/r0lab.c r0lab_raw_arm_worker \
+  'if (!page->abort_hook_suppressed)'
+require_function_text kpm/r0lab.c r0lab_raw_arm_worker \
+  'r0lab_raw_abort_hook_acquire(page)'
+require_function_text kpm/r0lab.c r0lab_raw_arm_worker \
+  'r0lab_raw_arm_source_uxn(&page->raw)'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'if (suppress_abort_hook || active->abort_hook_suppressed)'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_installed=%u abort_hook_suppressed=%u'
+require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_hold_no_abort'
+require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold no-abort '
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=raw-hold-no-abort failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c \
+  '"raw slot arm no-abort 0x%llx %u 0x%llx"'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'RAW_ABORT_EXPOSURE_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_abort_hook_exposure_device.sh 'IDLE_SECONDS=15'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'git -C "$ROOT" status --porcelain --untracked-files=no'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'raw raw-hold no-abort $TOKEN'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'abort_hook_installed=0'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'abort_hook_suppressed=1'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'D4-R3f-source-uxn-no-abort-stable'
+require_text scripts/test_raw_abort_hook_exposure_device.sh \
+  'D4-R3f-source-uxn-no-abort-unstable'
+require_function_text scripts/test_raw_abort_hook_exposure_device.sh cleanup \
+  'if [ "$HOLD_ACTIVE" -eq 1 ]; then'
+require_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'adb_device get-state'
+require_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport \
+  'preserve_active_hold 1 D4-R3f-source-uxn-no-abort-unstable'
+require_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport \
+  'preserve_active_hold 0 D4-R3f-source-uxn-no-abort-stable'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'capture_pstore'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'wait-for-device'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'adb_device shell getprop'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'raw slot clear'
+reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
+  poll_adb_transport 'module unload'
+require_line_before scripts/test_raw_abort_hook_exposure_device.sh \
+  'case "$CLEAN_BOOT_CONFIRMED" in' 'ensure_clean_source'
+require_line_before scripts/test_raw_abort_hook_exposure_device.sh \
   'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
 require_text scripts/classify_raw_observer_perturbation_evidence.sh \
   'RAW_OBSERVER_HISTORICAL_BASELINE_LOG'
@@ -1135,7 +1217,7 @@ require_text "$FINAL_ROADMAP" 'scripts/test_raw_exit_hook_raw_hold_split_device.
 require_text "$FINAL_ROADMAP" 'F4.6-D4-R3b'
 require_text "$FINAL_ROADMAP" 'delayed `exit_mmap` wrapper'
 require_text "$FINAL_ROADMAP" 'quiet hold, shell/getprop, optional Lab'
-require_text "$FINAL_ROADMAP" 'active gate is'
+require_text "$FINAL_ROADMAP" 'The current D4-R3f packet'
 require_text "$FINAL_ROADMAP" 'same reader ladder without arming `exit_mmap`'
 require_text "$FINAL_ROADMAP" 'D4-R3b-raw-hold-anchor-too-strong'
 require_text "$FINAL_ROADMAP" 'exit_hook_installed=not_queried/not_queried'
@@ -1218,7 +1300,7 @@ require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-matrix-f
 require_text "$REPLICA_PLAN" 'two fixed anonymous'
 require_text "$REPLICA_PLAN" 'Two-slot `exit_mmap` owner-exit acceptance is not'
 require_text "$REPLICA_PLAN" 'exact 141-function review coverage'
-require_text "$FINAL_ROADMAP" '16 of 19 items complete'
+require_text "$FINAL_ROADMAP" '17 of 19 items complete'
 require_text "$FINAL_ROADMAP" 'This is queue progress, not release completion'
 require_text "$FINAL_ROADMAP" 'Reference Completeness Gate'
 require_text "$FINAL_ROADMAP" 'all 141 annotated reference functions'
@@ -1226,8 +1308,8 @@ require_text "$FINAL_ROADMAP" 'two fixed Lab-owned raw shadow pages'
 require_text "$FINAL_ROADMAP" 'lifecycle acceptance, not general hook'
 require_text "$FINAL_ROADMAP" 'F4.6 two-slot owner-exit cleanup remains the active blocker'
 require_text "$DEVELOPMENT_SEQUENCE" 'The current slice is'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3-A-D'
-require_text "$DEVELOPMENT_SEQUENCE" 'four device-only rows'
+require_text "$DEVELOPMENT_SEQUENCE" '| 17 | D4-R3e-L3-A-D |'
+require_text "$DEVELOPMENT_SEQUENCE" 'Four clean-boot device rows'
 require_text "$DEVELOPMENT_SEQUENCE" 'accounts for all 141'
 require_text "$FOLKPATCH_REFERENCE" 'https://github.com/LyraVoid/FolkPatch.git'
 require_text "$FOLKPATCH_REFERENCE" '5da126b92af481bd226eb161183ddacdfadb3987'

@@ -358,6 +358,7 @@ struct r0lab_raw_shadow_page {
     bool armed;
     bool clearing;
     bool hook_installed;
+    bool abort_hook_suppressed;
     bool target_exiting;
     bool monitor_running;
     bool transitioning;
@@ -6215,9 +6216,11 @@ static int r0lab_raw_arm_worker(void *opaque)
     if (result)
         goto fail;
 
-    result = r0lab_raw_abort_hook_acquire(page);
-    if (result)
-        goto fail_free_shadow;
+    if (!page->abort_hook_suppressed) {
+        result = r0lab_raw_abort_hook_acquire(page);
+        if (result)
+            goto fail_free_shadow;
+    }
 
     if (!r0lab_target_mm_live(owner_tgid, mm))
         goto target_exit;
@@ -6414,7 +6417,8 @@ static int r0lab_raw_parse_slot_id(uint64_t slot_value, uint16_t *slot_id)
 }
 
 static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
-                               uint64_t page_address, bool legacy_reply,
+                               uint64_t page_address,
+                               bool suppress_abort_hook, bool legacy_reply,
                                char __user *out_msg, int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
@@ -6460,6 +6464,12 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
 
         if (!r0lab_raw_page_slot_owned_locked(active))
             continue;
+        if (suppress_abort_hook || active->abort_hook_suppressed) {
+            r0lab_unlock(flags);
+            g_mmput(mm);
+            result = R0LAB_EBUSY;
+            goto record;
+        }
         if (active->raw.mm != mm) {
             r0lab_unlock(flags);
             g_mmput(mm);
@@ -6481,6 +6491,7 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
     slot->record.generation = slot->generation;
     slot->record.backend = R0LAB_PAGE_RECORD_RAW_TWO_PFN;
     slot->record.state = R0LAB_PAGE_RECORD_PREPARING;
+    slot->abort_hook_suppressed = suppress_abort_hook;
     slot->reserving = true;
     g_raw_page_table.selected_slot = slot_id;
     r0lab_unlock(flags);
@@ -6508,7 +6519,7 @@ static long r0lab_raw_arm(uint64_t token, uint64_t page_address,
                           char __user *out_msg, int outlen)
 {
     return r0lab_raw_slot_arm(token, R0LAB_RAW_PRIMARY_SLOT, page_address,
-                              true, out_msg, outlen);
+                              false, true, out_msg, outlen);
 }
 
 static long r0lab_raw_ready(uint64_t token, char __user *out_msg, int outlen)
@@ -6632,6 +6643,8 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     uint64_t generation;
     uint8_t record_backend;
     uint8_t record_state;
+    bool abort_hook_installed;
+    bool abort_hook_suppressed;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -6659,14 +6672,18 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     generation = page->generation;
     record_backend = page->record.backend;
     record_state = page->record.state;
+    abort_hook_installed = page->hook_installed;
+    abort_hook_suppressed = page->abort_hook_suppressed;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s\n",
+             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u\n",
              (unsigned int)slot_id, (uint64_t)address,
              (unsigned long long)generation, source_pfn & 0xffffUL,
              shadow_pfn & 0xffffUL,
              r0lab_page_record_backend_name(record_backend),
-             r0lab_page_record_state_name(record_state));
+             r0lab_page_record_state_name(record_state),
+             abort_hook_installed ? 1U : 0U,
+             abort_hook_suppressed ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -10797,13 +10814,22 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             return R0LAB_EINVAL;
         return r0lab_m4_cleared(token, out_msg, outlen);
     }
+    if (!strncmp(args, "raw slot arm no-abort ", 22)) {
+        value = args + 22;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &page_address) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_slot_arm(token, slot_id, page_address, true, false,
+                                  out_msg, outlen);
+    }
     if (!strncmp(args, "raw slot arm ", 13)) {
         value = args + 13;
         if (r0lab_parse_u64_triplet(value, &token, &slot_value,
                                     &page_address) ||
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
-        return r0lab_raw_slot_arm(token, slot_id, page_address, false,
+        return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
                                   out_msg, outlen);
     }
     if (!strncmp(args, "raw slot ready ", 15)) {
