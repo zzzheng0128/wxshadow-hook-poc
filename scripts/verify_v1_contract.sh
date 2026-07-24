@@ -99,6 +99,8 @@ F46_D4_R3E_L3_PLAN=docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
+REFERENCE_COVERAGE=docs/wxshadow-reference-function-coverage.md
+REFERENCE_INVENTORY=docs/wxshadow-reference-function-inventory.txt
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -128,7 +130,11 @@ require_file "$F46_D4_R3E_L3_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
+require_file "$REFERENCE_COVERAGE"
+require_file "$REFERENCE_INVENTORY"
 require_file scripts/verify_wxshadow_reference_source.sh
+require_file scripts/verify_wxshadow_reference_inventory.sh
+require_file scripts/test_wxshadow_reference_inventory_host.sh
 require_file scripts/test_raw_exit_hook_routing_device.sh
 require_file scripts/test_raw_exit_hook_routing_diagnostics_device.sh
 require_file scripts/test_raw_exit_hook_cleanup_isolation_device.sh
@@ -1164,16 +1170,36 @@ require_text "$REFERENCE_REVIEW" '1024 page-local patch records per armed slot'
 require_text "$REFERENCE_REVIEW" 'F4.6 owner-exit acceptance remains blocked'
 require_text "$REFERENCE_REVIEW" 'Runtime structure-offset scanning and raw TLB fallbacks'
 require_text "$REFERENCE_REVIEW" 'scripts/verify_wxshadow_reference_source.sh'
+require_text "$REFERENCE_REVIEW" 'scripts/verify_wxshadow_reference_inventory.sh'
 require_text scripts/verify_wxshadow_reference_source.sh 'EXPECTED_LINES=7124'
 require_text scripts/verify_wxshadow_reference_source.sh 'EXPECTED_FUNCTION_BLOCKS=141'
 require_text scripts/verify_wxshadow_reference_source.sh '2b2fb7ade7e572fd5aea8a79f39bd9c743b1ee1dc57552449209612e69903191'
+require_text "$REFERENCE_COVERAGE" 'annotated function count: 141'
+require_text "$REFERENCE_COVERAGE" '`fork-exit-routing`'
+require_text "$REFERENCE_COVERAGE" 'No F5,'
+require_text "$REFERENCE_INVENTORY" 'shadow_page_switch_mapping|pte-transaction'
+require_text "$REFERENCE_INVENTORY" 'exit_mmap_before_hook|fork-exit-routing'
+require_text "$REFERENCE_INVENTORY" 'scan_mm_struct_offsets|layout-scanning'
+require_text scripts/verify_wxshadow_reference_inventory.sh 'EXPECTED_FUNCTIONS=141'
+require_text scripts/verify_wxshadow_reference_inventory.sh 'EXPECTED_FAMILIES=14'
+require_text scripts/test_wxshadow_reference_inventory_host.sh 'duplicate-function'
+require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-function'
+require_text scripts/test_wxshadow_reference_inventory_host.sh 'unknown-family'
+require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-matrix-family'
 require_text "$REPLICA_PLAN" 'two fixed anonymous'
 require_text "$REPLICA_PLAN" 'Two-slot `exit_mmap` owner-exit acceptance is not'
+require_text "$REPLICA_PLAN" 'exact 141-function review coverage'
 require_text "$FINAL_ROADMAP" '16 of 19 items complete'
 require_text "$FINAL_ROADMAP" 'This is queue progress, not release completion'
+require_text "$FINAL_ROADMAP" 'Reference Completeness Gate'
+require_text "$FINAL_ROADMAP" 'all 141 annotated reference functions'
+require_text "$FINAL_ROADMAP" 'two fixed Lab-owned raw shadow pages'
+require_text "$FINAL_ROADMAP" 'lifecycle acceptance, not general hook'
+require_text "$FINAL_ROADMAP" 'F4.6 two-slot owner-exit cleanup remains the active blocker'
 require_text "$DEVELOPMENT_SEQUENCE" 'The current slice is'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3-A-D'
 require_text "$DEVELOPMENT_SEQUENCE" 'four device-only rows'
+require_text "$DEVELOPMENT_SEQUENCE" 'accounts for all 141'
 require_text "$FOLKPATCH_REFERENCE" 'https://github.com/LyraVoid/FolkPatch.git'
 require_text "$FOLKPATCH_REFERENCE" '5da126b92af481bd226eb161183ddacdfadb3987'
 require_text "$FOLKPATCH_REFERENCE" 'FolkPatch reports `50ac6,d01`'
@@ -1187,6 +1213,8 @@ SCRIPTS='
 scripts/build_kpm.sh
 scripts/build_lab_app.sh
 scripts/verify_wxshadow_reference_source.sh
+scripts/verify_wxshadow_reference_inventory.sh
+scripts/test_wxshadow_reference_inventory_host.sh
 scripts/test_m0_environment_device.sh
 scripts/test_m0_device.sh
 scripts/test_m1_isolation_device.sh
