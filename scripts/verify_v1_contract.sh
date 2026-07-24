@@ -121,6 +121,18 @@ require_function_sha256() {
     fail "function SHA-256 mismatch for $path $function_name: expected=$expected actual=$actual"
 }
 
+require_tag_target() {
+  tag=$1
+  expected=$2
+
+  actual=$(
+    git -C "$ROOT" rev-parse --verify "refs/tags/${tag}^{commit}" 2>/dev/null
+  ) ||
+    fail "required Git tag is missing or does not resolve to a commit: $tag"
+  [ "$actual" = "$expected" ] ||
+    fail "Git tag target mismatch for $tag: expected=$expected actual=$actual"
+}
+
 require_line_before() {
   path=$1
   first=$2
@@ -167,6 +179,7 @@ F46_D4_R3E_L3_PLAN=docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md
 F46_D4_R3F_PLAN=docs/wxshadow-f4.6-d4-r3f-abort-hook-exposure-plan.md
 F46_D4_R3G_PLAN=docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md
 F46_D4_R3H_PLAN=docs/wxshadow-f4.6-d4-r3h-mm-reference-plan.md
+F46_D4_R3I_PLAN=docs/wxshadow-f4.6-d4-r3i-lock-exposure-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
@@ -201,6 +214,7 @@ require_file "$F46_D4_R3E_L3_PLAN"
 require_file "$F46_D4_R3F_PLAN"
 require_file "$F46_D4_R3G_PLAN"
 require_file "$F46_D4_R3H_PLAN"
+require_file "$F46_D4_R3I_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
@@ -968,6 +982,80 @@ require_text "$F46_D4_R3H_PLAN" 'bf7480aaf387e051007906bb70d4d9a1fe4c89263dde976
 require_text "$F46_D4_R3H_PLAN" 'All 15 transport-only polls returned `device`.'
 require_text "$F46_D4_R3H_PLAN" 'active_hold=1'
 require_text "$F46_D4_R3H_PLAN" 'not a measured number of callback'
+require_text "$F46_D4_R3I_PLAN" 'wxshadow F4.6 D4-R3i Abort-Lock Exposure Plan'
+require_text "$F46_D4_R3I_PLAN" 'Status: plan and static-contract packet only.'
+require_text "$F46_D4_R3I_PLAN" 'bbdfa6382fae716e486fbcb7b76430352ea6df23'
+require_text "$F46_D4_R3I_PLAN" 'bf7480aaf387e051007906bb70d4d9a1fe4c89263dde976c032351e738ef888c'
+require_text "$F46_D4_R3I_PLAN" 'wxshadow-v2-f46-d4-r3h-mm-reference-stable-20260724'
+require_text "$F46_D4_R3I_PLAN" 'physical_reboot_confirmed=1'
+require_text "$F46_D4_R3I_PLAN" 'post_reboot_boot_id=c5084d25-1e0f-4de4-9042-a972cd0170a8'
+require_text "$F46_D4_R3I_PLAN" 'folkpatch_module_list=empty'
+require_text "$F46_D4_R3I_PLAN" 'result_tag_target=e6ee7c080ec5760f4b2c43bb0062724009ab440f'
+require_tag_target wxshadow-v2-f46-d4-r3h-mm-reference-stable-20260724 \
+  e6ee7c080ec5760f4b2c43bb0062724009ab440f
+require_text "$F46_D4_R3I_PLAN" 'D4-R3i-global-abort-r0lab-lock-exposure'
+require_text "$F46_D4_R3I_PLAN" 'raw slot arm abort-lock <token> <slot> <page>'
+require_text "$F46_D4_R3I_PLAN" 'raw raw-hold abort-lock <token>'
+require_text "$F46_D4_R3I_PLAN" 'r0lab_raw_before_abort_lock_passthrough'
+require_text "$F46_D4_R3I_PLAN" 'g_get_task_mm(current)'
+require_text "$F46_D4_R3I_PLAN" 'call `g_mmput()` exactly once'
+require_text "$F46_D4_R3I_PLAN" 'call `r0lab_lock()` exactly once'
+require_text "$F46_D4_R3I_PLAN" 'immediately call `r0lab_unlock(flags)`'
+require_text "$F46_D4_R3I_PLAN" 'do not use trylock, retry, timeout, logging, counters, atomics, or events'
+require_text "$F46_D4_R3I_PLAN" 'do not dereference hook arguments'
+require_text "$F46_D4_R3I_PLAN" 'do not read `g_session`, owner tgid'
+require_text "$F46_D4_R3I_PLAN" 'do not increment `g_raw_inflight`'
+require_text "$F46_D4_R3I_PLAN" 'route a page, mutate `skip_origin`'
+require_text "$F46_D4_R3I_PLAN" 'reject mixing normal, suppressed, pure-passthrough, mmget-passthrough, and'
+require_text "$F46_D4_R3I_PLAN" 'store the requested callback mode in the reserved page slot before its arm'
+require_text "$F46_D4_R3I_PLAN" 'select the callback pointer exactly once from that immutable mode'
+require_text "$F46_D4_R3I_PLAN" 'use the same pointer for `hook_wrap3()` and rollback detach'
+require_text "$F46_D4_R3I_PLAN" 'compare the requested'
+require_text "$F46_D4_R3I_PLAN" 'reject a mismatch before sharing the wrapper'
+require_text "$F46_D4_R3I_PLAN" 'commit only `hook_installed` after global wrapper installation succeeds'
+require_text "$F46_D4_R3I_PLAN" 'capture the immutable requested mode before clearing'
+require_text "$F46_D4_R3I_PLAN" 'detach the exact callback'
+require_text "$F46_D4_R3I_PLAN" 'PTE/TLB/cache behavior'
+require_text "$F46_D4_R3I_PLAN" 'abort_hook_lock=1'
+require_text "$F46_D4_R3I_PLAN" 'scripts/test_raw_abort_lock_passthrough_device.sh'
+require_text "$F46_D4_R3I_PLAN" 'RAW_ABORT_LOCK_CLEAN_BOOT_CONFIRMED=1'
+require_text "$F46_D4_R3I_PLAN" 'separately confirmed physical reboot after D4-R3h'
+require_text "$F46_D4_R3I_PLAN" 'fixed to source/single with no'
+require_text "$F46_D4_R3I_PLAN" 'UXN execution after arm'
+require_text "$F46_D4_R3I_PLAN" 'After the hold is active, the script may run only 15 bounded'
+require_text "$F46_D4_R3I_PLAN" 'must not issue post-hold status'
+require_text "$F46_D4_R3I_PLAN" 'D4-R3i-source-uxn-abort-lock-stable'
+require_text "$F46_D4_R3I_PLAN" 'D4-R3i-source-uxn-abort-lock-unstable'
+require_text "$F46_D4_R3I_PLAN" 'Every stable or unstable row requires a separate physical reboot'
+require_text "$F46_D4_R3I_PLAN" 'it does not prove unique root cause'
+require_text "$F46_D4_R3I_PLAN" 'not a measured invocation count'
+require_text "$F46_D4_R3I_PLAN" 'No D4-R3i source symbol, Lab command, or device script may exist'
+require_text "$F46_D4_R3I_PLAN" 'function SHA-256 guards'
+reject_text kpm/r0lab.c 'abort-lock'
+reject_text kpm/r0lab.c 'abort_lock'
+reject_text kpm/r0lab.c 'r0lab_raw_before_abort_lock_passthrough'
+reject_text lab-app/src/main/cpp/labprobe.c 'abort-lock'
+reject_text lab-app/src/main/cpp/labprobe.c 'abort_lock'
+[ ! -e "$ROOT/scripts/test_raw_abort_lock_passthrough_device.sh" ] ||
+  fail 'D4-R3i device script exists before the source gate opens'
+require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_mmget_passthrough \
+  780ffc1e7ea492813c8776aed6ff5ee5530c425f4e89316b42ca0806f8155e7c
+require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  af10811197f9bbde3d6958217ea6addf78081545a32f5fc86c33a555698816d1
+require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
+  4b29a7cdae2b81bcee89ccb8d57b891230ce7f6373ff59bebaf476db814cb700
+require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
+  d1564261289df6e10201d63a9187a8c6af9380a3a2a3250e140d3d0b6ed84470
+require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
+  3961c2afd1d4fef3fbd9b8e5621693d347fde4e7d0344b6f4b9bf34d7cbd02fd
+require_function_sha256 kpm/r0lab.c r0lab_control0 \
+  bb96ba902fd08f00615cb9eee70cc57b125b3096904bda6c9b961a2020a0d0ed
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  0f8fde1f926dfb25b6406b2ec8a4ec894b7c51208840d8fcfb2d44ba8dfdccae
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  Java_dev_r0hook_lab_MainActivity_nativeControl \
+  3f5d50baea6b502f10fec0cf34c07bdacddb971701c4e46c0ba38a7cace8c256
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-raw-hold-self-unstable'
@@ -979,9 +1067,13 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device 
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Complete/classified postmortem'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3f abort-hook exposure | Complete/classified stable'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3g passthrough abort wrapper | Complete/classified stable'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3h global MM reference | Device evidence captured/classified stable; reboot pending'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3h global MM reference | Complete/classified stable'
+require_text "$DEVELOPMENT_SEQUENCE" 'c5084d25-1e0f-4de4-9042-a972cd0170a8'
+require_text "$DEVELOPMENT_SEQUENCE" 'wxshadow-v2-f46-d4-r3h-mm-reference-stable-20260724'
 require_text "$DEVELOPMENT_SEQUENCE" '| 20 | D4-R3g |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 21 | D4-R3h |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 22 | D4-R3i |'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3i abort-lock exposure | Plan/contract only; source locked'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3h-mm-reference-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
@@ -1012,7 +1104,8 @@ require_text "$FINAL_ROADMAP" 'B0-S2, B1-S2, B0-S3, and B1-S3'
 require_text "$FINAL_ROADMAP" 'offline classifier validates strict historical anchors'
 require_text "$FINAL_ROADMAP" 'host test passes all'
 require_text "$FINAL_ROADMAP" 'non-sample rejection'
-require_text "$FINAL_ROADMAP" '21 of 21 items executed'
+require_text "$FINAL_ROADMAP" '21 of 22 items executed'
+require_text "$FINAL_ROADMAP" 'D4-R3i is queue item 22'
 require_text "$FINAL_ROADMAP" 'D4-R3f-source-uxn-no-abort-stable'
 require_text "$FINAL_ROADMAP" 'D4-R3g as queue item 20'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md'
@@ -1693,7 +1786,7 @@ require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-matrix-f
 require_text "$REPLICA_PLAN" 'two fixed anonymous'
 require_text "$REPLICA_PLAN" 'Two-slot `exit_mmap` owner-exit acceptance is not'
 require_text "$REPLICA_PLAN" 'exact 141-function review coverage'
-require_text "$FINAL_ROADMAP" '21 of 21 items executed'
+require_text "$FINAL_ROADMAP" '21 of 22 items executed'
 require_text "$FINAL_ROADMAP" 'progress, not release completion'
 require_text "$FINAL_ROADMAP" 'Reference Completeness Gate'
 require_text "$FINAL_ROADMAP" 'all 141 annotated reference functions'
