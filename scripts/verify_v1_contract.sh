@@ -3560,11 +3560,28 @@ require_text "$FINAL_ROADMAP" \
   'build/evidence/s4-descriptor-negative-20260725-002527.log'
 require_text "$FINAL_ROADMAP" \
   'BRK/step/PTE side effects'
+require_text "$F6_BRK_STEP_PLAN" \
+  'F6-D5 is now device-verified with the targeted S4 refresh'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/s4-abi-20260725-003130.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/s4-descriptor-negative-20260725-003341.log'
+require_text "$F6_BRK_STEP_PLAN" \
+  'build/evidence/v1-device-20260724T163408Z/manifest.log'
+require_text "$FINAL_ROADMAP" \
+  'F6-D5 evidence:'
+require_text "$FINAL_ROADMAP" \
+  'build/evidence/s4-descriptor-routing-20260725-003319.log'
+require_text "$FINAL_ROADMAP" \
+  'build/evidence/v1-device-20260724T163408Z/manifest.log'
 require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 32 | F6-D1 | BRK/step descriptor scaffold |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 33 | F6-D2 | Slot-0 S4 descriptor compatibility migration |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 34 | F6-D3 | Two-slot S4 descriptor routing |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 35 | F6-D4 | Negative descriptor controls |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 36 | F6-D5 | Targeted S4 and full-runner refresh |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  '29 `status=pass evidence=` phase rows'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'arbitrary register/value mutation remains rejected'
 require_text "$REFERENCE_COVERAGE" \
@@ -3573,6 +3590,12 @@ require_text "$REFERENCE_COVERAGE" \
   'F6-D3 is device-verified for routing two Lab raw slots through independent descriptors'
 require_text "$REFERENCE_COVERAGE" \
   'F6-D4 is device-verified for rejecting bad offsets'
+require_text "$REFERENCE_COVERAGE" \
+  'F6-D5 refreshed S4 ABI'
+require_text "$KPM_COMPAT_MATRIX" \
+  'F6-D5 full runner preserves `warn_count=3`'
+require_text "$KPM_COMPAT_MATRIX" \
+  'build/evidence/v1-device-20260724T163408Z/manifest.log'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
@@ -3604,9 +3627,17 @@ require_text "$VERIFICATION" \
 require_text "$VERIFICATION" \
   'F6-D4 is now device-verified with:'
 require_text "$VERIFICATION" \
+  'F6-D5 is now device-verified with a fresh targeted S4 refresh'
+require_text "$VERIFICATION" \
   'build/evidence/s4-descriptor-routing-20260724-235331.log'
 require_text "$VERIFICATION" \
   'build/evidence/s4-descriptor-negative-20260725-002527.log'
+require_text "$VERIFICATION" \
+  'build/evidence/s4-descriptor-negative-20260725-003341.log'
+require_text "$VERIFICATION" \
+  'build/evidence/v1-device-20260724T163408Z/manifest.log'
+require_text "$VERIFICATION" \
+  '29 status=pass evidence= phase rows'
 require_text "$VERIFICATION" \
   'reject_checks=11 state_intact=1'
 require_text "$VERIFICATION" \
