@@ -45,6 +45,24 @@ reject_function_text() {
   fi
 }
 
+require_line_before() {
+  path=$1
+  first=$2
+  second=$3
+  first_line=$(
+    grep -n -F -x -- "$first" "$ROOT/$path" | sed -n '1s/:.*//p'
+  )
+  second_line=$(
+    grep -n -F -x -- "$second" "$ROOT/$path" | sed -n '1s/:.*//p'
+  )
+  [ -n "$first_line" ] ||
+    fail "required ordered line is missing from $path: $first"
+  [ -n "$second_line" ] ||
+    fail "required ordered line is missing from $path: $second"
+  [ "$first_line" -lt "$second_line" ] ||
+    fail "required line order is invalid in $path: $first before $second"
+}
+
 CONTRACT=docs/r0lab-v1-contract.md
 VERIFICATION=docs/r0lab-v1-verification.md
 SHADOW_PLAN=docs/shadow-page-transition-plan.md
@@ -106,6 +124,7 @@ require_file scripts/test_raw_exit_hook_raw_hold_split_device.sh
 require_file scripts/test_raw_exit_hook_raw_hold_idle_device.sh
 require_file scripts/test_raw_hold_lifetime_matrix_device.sh
 require_file scripts/test_raw_live_pte_snapshot_device.sh
+require_file scripts/test_raw_observer_perturbation_device.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -584,7 +603,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3b Lab App-only raw-hold split | 
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3c status-reader split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Plan locked; device/source work deferred'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | L3-A harness implemented locally; device rows deferred'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-P | Plan/docs/contract only'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-L1 | Raw-hold idle diagnostic script only'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md'
@@ -727,7 +746,7 @@ require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-stable'
 require_text "$F46_D4_R3E_L2_PLAN" 'repeat/lower-intrusion observation'
 require_text "$F46_D4_R3E_L2_PLAN" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
 require_text "$F46_D4_R3E_L3_PLAN" 'wxshadow F4.6 D4-R3e-L3 Observer Perturbation Plan'
-require_text "$F46_D4_R3E_L3_PLAN" 'Status: planning checkpoint only.'
+require_text "$F46_D4_R3E_L3_PLAN" 'Status: the L3-A single-variant device harness is implemented locally.'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-observer-perturbation'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B0-baseline-unstable'
 require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-external-snapshot-stable'
@@ -736,7 +755,12 @@ require_text "$F46_D4_R3E_L3_PLAN" 'No majority vote is allowed.'
 require_text "$F46_D4_R3E_L3_PLAN" 'snapshot_stage=after_set_same_pte_lock'
 require_text "$F46_D4_R3E_L3_PLAN" 'inline_walk=0 extra_pte_lock=0'
 require_text "$F46_D4_R3E_L3_PLAN" 'No KPM or Lab source is allowed in L3-A.'
-require_text "$F46_D4_R3E_L3_PLAN" 'No device action is part of this planning checkpoint.'
+require_text "$F46_D4_R3E_L3_PLAN" 'RAW_OBSERVER_CLEAN_BOOT_CONFIRMED=1'
+require_text "$F46_D4_R3E_L3_PLAN" 'RAW_OBSERVER_PAIRED_RUN=1..4'
+require_text "$F46_D4_R3E_L3_PLAN" 'scripts/test_raw_observer_perturbation_device.sh'
+require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-live-pte-walk-failed'
+require_text "$F46_D4_R3E_L3_PLAN" 'D4-R3e-L3-B1-live-pte-mismatch'
+require_text "$F46_D4_R3E_L3_PLAN" 'No device action was performed by the L3-A local implementation checkpoint.'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-raw-hold-self-unstable'
@@ -745,9 +769,11 @@ require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-A'
 require_text "$DEVELOPMENT_SEQUENCE" 'Lab App-only lifetime matrix'
 require_text "$DEVELOPMENT_SEQUENCE" 'slot count and retained PTE state'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Plan locked; device/source work deferred'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | L3-A harness implemented locally; device rows deferred'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'three valid samples per variant'
+require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L3-A-L | Script-only local implementation'
+require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L3-A-D | Four clean-boot device rows'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw raw-hold lifetime source|shadow single|double <token>'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L2-P'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L1-single-source-uxn-unstable'
@@ -764,6 +790,8 @@ require_text "$FINAL_ROADMAP" 'raw-live-pte-snapshot-20260724-080322.log'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
 require_text "$FINAL_ROADMAP" 'strict 3/3 baseline instability versus 3/3 external-snapshot'
 require_text "$FINAL_ROADMAP" 'paired B0/B1 repeat matrix'
+require_text "$FINAL_ROADMAP" 'scripts/test_raw_observer_perturbation_device.sh'
+require_text "$FINAL_ROADMAP" 'B0-S2, B1-S2, B0-S3, and B1-S3'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw-hold idle stability'
 require_text "$DEVELOPMENT_SEQUENCE" 'Activity/Logcat status transport'
 require_text "$DEVELOPMENT_SEQUENCE" 'KPM status supercall'
@@ -845,6 +873,38 @@ reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_trans
 reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport '/proc/'
 reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'getprop'
 reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'raw slot clear'
+require_text scripts/test_raw_observer_perturbation_device.sh 'RAW_OBSERVER_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_observer_perturbation_device.sh 'RAW_OBSERVER_PAIRED_RUN'
+require_text scripts/test_raw_observer_perturbation_device.sh 'git -C "$ROOT" status --porcelain --untracked-files=no'
+require_text scripts/test_raw_observer_perturbation_device.sh "RAW_COMMAND='raw raw-hold lifetime source single'"
+require_text scripts/test_raw_observer_perturbation_device.sh "RAW_COMMAND='raw raw-hold live-pte'"
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-B0-baseline-stable'
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-B0-baseline-unstable'
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-B1-external-snapshot-stable'
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-B1-external-snapshot-unstable'
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-B1-live-pte-walk-failed'
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-B1-live-pte-mismatch'
+require_text scripts/test_raw_observer_perturbation_device.sh 'D4-R3e-L3-setup-blocked'
+require_text scripts/test_raw_observer_perturbation_device.sh 'post_hold_status=not_used boot_id_reader=not_used proc_maps=not_used'
+require_text scripts/test_raw_observer_perturbation_device.sh 'preserving module: active raw hold remains and cleanup reentry is forbidden'
+require_function_text scripts/test_raw_observer_perturbation_device.sh cleanup 'if [ "$HOLD_ACTIVE" -eq 1 ]; then'
+require_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'adb_device get-state'
+require_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'preserve_active_hold 1 "$UNSTABLE_CLASSIFICATION"'
+require_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'preserve_active_hold 0 "$STABLE_CLASSIFICATION"'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'capture_pstore'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'wait-for-device'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'getprop'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'raw slot clear'
+reject_function_text scripts/test_raw_observer_perturbation_device.sh poll_adb_transport 'module unload'
+require_line_before scripts/test_raw_observer_perturbation_device.sh \
+  'case "$CLEAN_BOOT_CONFIRMED" in' 'ensure_clean_source'
+require_line_before scripts/test_raw_observer_perturbation_device.sh \
+  'case "$PAIRED_RUN" in' 'ensure_clean_source'
+require_line_before scripts/test_raw_observer_perturbation_device.sh \
+  'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
 require_text scripts/test_raw_exit_hook_device.sh 'command_timeout command=%s wait_ms=10000'
 require_text scripts/test_raw_exit_hook_device.sh '*"command=$command"*'
 require_text scripts/test_raw_exit_hook_device.sh 'LC_ALL=C grep -F -- "$needle"'
@@ -1634,4 +1694,4 @@ require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records s
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' 'v1_contract=pass scripts=44 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' 'v1_contract=pass scripts=45 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
