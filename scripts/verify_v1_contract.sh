@@ -8,6 +8,35 @@ fail() {
   exit 1
 }
 
+verify_d4_r3j_plan_packet_paths() {
+  changed=$(
+    (
+      git -C "$ROOT" diff --name-only
+      git -C "$ROOT" diff --cached --name-only
+      git -C "$ROOT" ls-files --others --exclude-standard
+    ) | LC_ALL=C sort -u
+  ) || fail "could not enumerate D4-R3j plan-packet changes"
+
+  for path in $changed; do
+    case "$path" in
+      docs/wxshadow-development-sequence.md | \
+      docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md | \
+      docs/wxshadow-final-experiment-roadmap.md | \
+      docs/wxshadow-reference-function-coverage.md | \
+      scripts/verify_d4_r3j_plan_packet.sh | \
+      scripts/verify_v1_contract.sh)
+        ;;
+      *)
+        fail "D4-R3j plan packet contains a forbidden changed path: $path"
+        ;;
+    esac
+  done
+}
+
+if [ "${D4_R3J_PLAN_PACKET_STRICT:-0}" = 1 ]; then
+  verify_d4_r3j_plan_packet_paths
+fi
+
 require_file() {
   path=$1
   [ -f "$ROOT/$path" ] || fail "required file is missing: $path"
@@ -180,6 +209,7 @@ F46_D4_R3F_PLAN=docs/wxshadow-f4.6-d4-r3f-abort-hook-exposure-plan.md
 F46_D4_R3G_PLAN=docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md
 F46_D4_R3H_PLAN=docs/wxshadow-f4.6-d4-r3h-mm-reference-plan.md
 F46_D4_R3I_PLAN=docs/wxshadow-f4.6-d4-r3i-lock-exposure-plan.md
+F46_D4_R3J_PLAN=docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
@@ -215,6 +245,7 @@ require_file "$F46_D4_R3F_PLAN"
 require_file "$F46_D4_R3G_PLAN"
 require_file "$F46_D4_R3H_PLAN"
 require_file "$F46_D4_R3I_PLAN"
+require_file "$F46_D4_R3J_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
@@ -237,6 +268,7 @@ require_file scripts/test_raw_observer_aggregate_host.sh
 require_file scripts/test_raw_abort_hook_exposure_device.sh
 require_file scripts/test_raw_abort_mmget_passthrough_device.sh
 require_file scripts/test_raw_abort_lock_passthrough_device.sh
+require_file scripts/verify_d4_r3j_plan_packet.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -1090,6 +1122,60 @@ require_function_sha256 lab-app/src/main/cpp/labprobe.c \
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   Java_dev_r0hook_lab_MainActivity_nativeControl \
   7bf728a45cc924ff06eb30ecf6edaa28e0897f293401810592a97f390c9cd1aa
+require_text "$F46_D4_R3J_PLAN" 'wxshadow F4.6 D4-R3j Adjacent Inflight-Accounting Plan'
+require_text "$F46_D4_R3J_PLAN" 'Status: plan and static-contract packet only; source locked.'
+require_text "$F46_D4_R3J_PLAN" '65679740eb5253c2779bbd0a0c4dce89ebdd5529'
+require_text "$F46_D4_R3J_PLAN" '7714473555eaecb40dcb28351b4986894d4d06bcd36a0480b54d645f778b9938'
+require_text "$F46_D4_R3J_PLAN" '0a73bd18-ba4a-4bdf-87c6-a99f98d9d039'
+require_text "$F46_D4_R3J_PLAN" '6ca72573234f38b4006f58789d8a5af8ca742062460ef8693185bed64b7d9ee2'
+require_text "$F46_D4_R3J_PLAN" 'wxshadow-v2-f46-d4-r3i-lock-exposure-stable-20260724'
+require_text "$F46_D4_R3J_PLAN" 'result_tag_target=5d7ec82d926c30856ffd650376dd4df00c9bee04'
+require_text "$F46_D4_R3J_PLAN" 'closure_commit=ef991c20d57783dc2a8fc654ec52f42625343350'
+require_text "$F46_D4_R3J_PLAN" 'atomic_add_wrapper()'
+require_text "$F46_D4_R3J_PLAN" 'atomic_sub_wrapper()'
+require_text "$F46_D4_R3J_PLAN" 'D4-R3j-global-abort-adjacent-inflight-accounting'
+require_text "$F46_D4_R3J_PLAN" 'raw slot arm abort-inflight <token> <slot> <page>'
+require_text "$F46_D4_R3J_PLAN" 'raw raw-hold abort-inflight <token>'
+require_text "$F46_D4_R3J_PLAN" 'r0lab_raw_before_abort_inflight_passthrough'
+require_text "$F46_D4_R3J_PLAN" 'increment `g_raw_inflight` exactly once'
+require_text "$F46_D4_R3J_PLAN" 'call compiler-only `barrier()` exactly once'
+require_text "$F46_D4_R3J_PLAN" 'immediately decrement `g_raw_inflight` exactly once'
+require_text "$F46_D4_R3J_PLAN" 'exactly one lock/unlock pair remains'
+require_text "$F46_D4_R3J_PLAN" 'no unlocked interval exposes a nonzero count'
+require_text "$F46_D4_R3J_PLAN" 'preserve the local lock-protected counter model'
+require_text "$F46_D4_R3J_PLAN" 'do not use atomics, exclusive-load/store loops, hardware memory barriers'
+require_text "$F46_D4_R3J_PLAN" 'do not use `READ_ONCE`, `WRITE_ONCE`, volatile counter casts'
+require_text "$F46_D4_R3J_PLAN" 'do not emit `dmb`, `dsb`, or `isb`'
+require_text "$F46_D4_R3J_PLAN" 'optimized arm64 KPM callback disassembly'
+require_text "$F46_D4_R3J_PLAN" 'without it, Clang removes both adjacent operations'
+require_text "$F46_D4_R3J_PLAN" 'empty volatile compiler barrier with a memory clobber'
+require_text "$F46_D4_R3J_PLAN" 'do not add a callback invocation counter'
+require_text "$F46_D4_R3J_PLAN" 'abort_hook_inflight=1'
+require_text "$F46_D4_R3J_PLAN" 'abort_hook_lock=0'
+require_text "$F46_D4_R3J_PLAN" 'scripts/test_raw_abort_inflight_passthrough_device.sh'
+require_text "$F46_D4_R3J_PLAN" 'RAW_ABORT_INFLIGHT_CLEAN_BOOT_CONFIRMED=1'
+require_text "$F46_D4_R3J_PLAN" 'After the hold is active, the script may run only 15 bounded'
+require_text "$F46_D4_R3J_PLAN" 'D4-R3j-source-uxn-abort-inflight-stable'
+require_text "$F46_D4_R3J_PLAN" 'D4-R3j-source-uxn-abort-inflight-unstable'
+require_text "$F46_D4_R3J_PLAN" 'Both stable and unstable terminal paths preserve `active_hold=1`.'
+require_text "$F46_D4_R3J_PLAN" 'No D4-R3j source symbol, Lab command, or device script may exist'
+require_text "$F46_D4_R3J_PLAN" 'scripts/verify_d4_r3j_plan_packet.sh'
+require_text "$F46_D4_R3J_PLAN" 'rejects every changed path outside the'
+require_text scripts/verify_d4_r3j_plan_packet.sh \
+  'D4_R3J_PLAN_PACKET_STRICT=1'
+require_text scripts/verify_v1_contract.sh \
+  'D4-R3j plan packet contains a forbidden changed path'
+require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
+  e6b888f79dd63507885374ef3bf1014d2346c940a496d2dcb96d2e8f5ab06bfc
+require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
+  d6c72f5f79884661e8637cda3711aabb1031baff5da3281b0303bc1fafbff09b
+reject_text kpm/r0lab.c 'abort-inflight'
+reject_text kpm/r0lab.c 'abort_inflight'
+reject_text kpm/r0lab.c 'r0lab_raw_before_abort_inflight_passthrough'
+reject_text lab-app/src/main/cpp/labprobe.c 'abort-inflight'
+reject_text lab-app/src/main/cpp/labprobe.c 'abort_inflight'
+[ ! -e "$ROOT/scripts/test_raw_abort_inflight_passthrough_device.sh" ] ||
+  fail 'D4-R3j device script exists before the source gate opens'
 require_text kpm/r0lab.c 'bool abort_hook_lock;'
 require_text kpm/r0lab.c 'static bool g_raw_abort_hook_transitioning;'
 require_text kpm/r0lab.c 'raw slot arm abort-lock '
@@ -1330,7 +1416,9 @@ require_text "$DEVELOPMENT_SEQUENCE" 'raw-abort-lock-passthrough-20260724-132524
 require_text "$DEVELOPMENT_SEQUENCE" '7714473555eaecb40dcb28351b4986894d4d06bcd36a0480b54d645f778b9938'
 require_text "$DEVELOPMENT_SEQUENCE" '0a73bd18-ba4a-4bdf-87c6-a99f98d9d039'
 require_text "$DEVELOPMENT_SEQUENCE" 'wxshadow-v2-f46-d4-r3i-lock-exposure-stable-20260724'
-require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3j | Matched inflight-accounting diagnostic plan'
+require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3j | Adjacent inflight-accounting diagnostic'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3j adjacent inflight accounting | Plan/contract only; source locked'
+require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3h-mm-reference-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
@@ -1361,8 +1449,12 @@ require_text "$FINAL_ROADMAP" 'B0-S2, B1-S2, B0-S3, and B1-S3'
 require_text "$FINAL_ROADMAP" 'offline classifier validates strict historical anchors'
 require_text "$FINAL_ROADMAP" 'host test passes all'
 require_text "$FINAL_ROADMAP" 'non-sample rejection'
-require_text "$FINAL_ROADMAP" '21 of 22 items executed'
+require_text "$FINAL_ROADMAP" '22 of 23 items executed'
 require_text "$FINAL_ROADMAP" 'D4-R3i is queue item 22'
+require_text "$FINAL_ROADMAP" 'D4-R3j is queue item 23'
+require_text "$FINAL_ROADMAP" '++g_raw_inflight'
+require_text "$FINAL_ROADMAP" '--g_raw_inflight'
+require_text "$FINAL_ROADMAP" 'compiler-only `barrier()`'
 require_text "$FINAL_ROADMAP" '0a73bd18-ba4a-4bdf-87c6-a99f98d9d039'
 require_text "$FINAL_ROADMAP" 'wxshadow-v2-f46-d4-r3i-lock-exposure-stable-20260724'
 require_text "$FINAL_ROADMAP" 'D4-R3f-source-uxn-no-abort-stable'
@@ -2045,7 +2137,7 @@ require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-matrix-f
 require_text "$REPLICA_PLAN" 'two fixed anonymous'
 require_text "$REPLICA_PLAN" 'Two-slot `exit_mmap` owner-exit acceptance is not'
 require_text "$REPLICA_PLAN" 'exact 141-function review coverage'
-require_text "$FINAL_ROADMAP" '21 of 22 items executed'
+require_text "$FINAL_ROADMAP" '22 of 23 items executed'
 require_text "$FINAL_ROADMAP" 'progress, not release completion'
 require_text "$FINAL_ROADMAP" 'Reference Completeness Gate'
 require_text "$FINAL_ROADMAP" 'all 141 annotated reference functions'
@@ -2113,6 +2205,7 @@ scripts/test_raw_abort_write_release_device.sh
 scripts/test_raw_exit_hook_device.sh
 scripts/test_raw_exit_hook_preclear_hold_split_device.sh
 scripts/test_raw_abort_mmget_passthrough_device.sh
+scripts/verify_d4_r3j_plan_packet.sh
 scripts/test_v1_device.sh
 '
 
