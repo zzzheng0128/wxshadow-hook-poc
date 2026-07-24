@@ -3603,7 +3603,7 @@ require_text "$KPM_COMPAT_MATRIX" \
 require_text "$F7_STRESS_PLAN" \
   'wxshadow F7 Final Lifecycle And Stress Pass Plan'
 require_text "$F7_STRESS_PLAN" \
-  'Status: F7-D1 runner implemented; device stress evidence pending.'
+  'Status: F7-D2 device stress evidence recorded.'
 require_text "$F7_STRESS_PLAN" \
   'wxshadow-v2-f6-d5-full-refresh-20260725'
 require_text "$F7_STRESS_PLAN" \
@@ -3617,11 +3617,25 @@ require_text "$F7_STRESS_PLAN" \
 require_text "$F7_STRESS_PLAN" \
   'Complete/source-only: `scripts/test_f7_lifecycle_stress_device.sh` wraps'
 require_text "$F7_STRESS_PLAN" \
+  'Complete/device-verified: `build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log`'
+require_text "$F7_STRESS_PLAN" \
   '`repeat_count=<value>`'
 require_text "$F7_STRESS_PLAN" \
   '`m0_loops=100`'
 require_text "$F7_STRESS_PLAN" \
   '`static_contract_regression`'
+require_text "$F7_STRESS_PLAN" \
+  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+require_text "$F7_STRESS_PLAN" \
+  'phase=m5_faults_1 ... status=pass'
+require_text "$F7_STRESS_PLAN" \
+  'phase=m5_lifecycle_1 ... status=pass'
+require_text "$F7_STRESS_PLAN" \
+  'phase=v1_device ... status=pass'
+require_text "$F7_STRESS_PLAN" \
+  'build/evidence/v1-device-20260724T170452Z/manifest.log'
+require_text "$F7_STRESS_PLAN" \
+  '29 status=pass evidence= phase rows'
 require_text "$F7_STRESS_PLAN" \
   'historical `scripts/test_raw_r3o_lifetime_device.sh` remains a source-tagged'
 require_text "$F7_STRESS_PLAN" \
@@ -3660,12 +3674,31 @@ require_text "$FINAL_ROADMAP" \
   'F7-D1 adds `scripts/test_f7_lifecycle_stress_device.sh` as the current-HEAD'
 require_text "$FINAL_ROADMAP" \
   'ANDROID_SERIAL=32250DLH2000Z3 scripts/test_f7_lifecycle_stress_device.sh'
+require_text "$FINAL_ROADMAP" \
+  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+require_text "$FINAL_ROADMAP" \
+  'passed all 29'
+require_text "$FINAL_ROADMAP" \
+  'ordered phases and preserved `warn_count=3`'
 require_text "$DEVELOPMENT_SEQUENCE" '| 37 | F7-D0 | Final lifecycle stress plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'not historical source-tagged R3o scripts'
 require_text "$DEVELOPMENT_SEQUENCE" '| 38 | F7-D1 | Current-HEAD lifecycle stress runner |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'Device stress evidence remains F7-D2.'
+require_text "$DEVELOPMENT_SEQUENCE" '| 39 | F7-D2 | Final lifecycle stress device evidence |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'three child `status=pass evidence=` rows'
+require_text "$KPM_COMPAT_MATRIX" \
+  'F7 lifecycle stress runner leave no module'
+require_text "$KPM_COMPAT_MATRIX" \
+  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+require_text "$VERIFICATION" \
+  'Final lifecycle stress'
+require_text "$VERIFICATION" \
+  'scripts/test_f7_lifecycle_stress_device.sh'
+require_text "$VERIFICATION" \
+  'build/evidence/v1-device-20260724T170452Z/manifest.log'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
@@ -3915,6 +3948,7 @@ scripts/test_raw_full_abort_lifecycle_device.sh
 scripts/verify_d4_r3n_disassembly.sh
 scripts/verify_d4_r3o_reference_lifetime.sh
 scripts/test_raw_r3o_lifetime_device.sh
+scripts/test_f7_lifecycle_stress_device.sh
 scripts/test_v1_device.sh
 '
 
