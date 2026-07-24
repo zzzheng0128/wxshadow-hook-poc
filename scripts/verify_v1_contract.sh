@@ -362,6 +362,7 @@ F46_D4_R3L_PLAN=docs/wxshadow-f4.6-d4-r3l-readonly-iabt-route-plan.md
 F46_D4_R3M_PLAN=docs/wxshadow-f4.6-d4-r3m-iabt-transition-restore-abi-plan.md
 F46_D4_R3N_PLAN=docs/wxshadow-f4.6-d4-r3n-full-abort-lifecycle-plan.md
 F46_D4_R3N_MM_FIX_PLAN=docs/wxshadow-f4.6-d4-r3n-owner-exit-mmput-fix-plan.md
+F46_D4_R3O_PLAN=docs/wxshadow-f4.6-d4-r3o-reference-lifetime-parity-fix-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
@@ -403,6 +404,7 @@ require_file "$F46_D4_R3L_PLAN"
 require_file "$F46_D4_R3M_PLAN"
 require_file "$F46_D4_R3N_PLAN"
 require_file "$F46_D4_R3N_MM_FIX_PLAN"
+require_file "$F46_D4_R3O_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
@@ -437,6 +439,8 @@ require_file scripts/test_raw_abort_iabt_transition_device.sh
 require_file scripts/verify_d4_r3m_disassembly.sh
 require_file scripts/test_raw_full_abort_lifecycle_device.sh
 require_file scripts/verify_d4_r3n_disassembly.sh
+require_file scripts/verify_d4_r3o_reference_lifetime.sh
+require_file scripts/test_raw_r3o_lifetime_device.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -1274,22 +1278,22 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
   d74bd88f1daf89464f7bb26a8db384ecbd6600e6ede9388c3a3f8c8f0b5a7180
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  913f535c571c71216f8e2293db433e47cf6e4197b90ca0ac357c8af50ba811b7
+  7547ebe1c19a6654cebcb7aa1ec58dce8861772f237e614bf6423b56d2e94676
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
-  2699bd6f14aeb5a031550ef51b224490fc428372519ec0d922eb13b9c286fde1
+  535ab43a49cfb04b8d239be14faf4d0a75a587e998242c385064ec64649b1702
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
-  7fa0da7880e510ee2c7b33fa8e07198788ce4ad5c04d57100a2378c96e0fa0ab
+  f116231d20d16d97d51ca27467c54cf7f61708397f8d8c75b25573a6b9641589
 require_function_sha256 kpm/r0lab.c r0lab_control0 \
   c37ba3019829afee056c4980b51d05d7dc3552123c42dcee3cb00090233869cf
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  6882598c12cf29e8a1c3ea2f7f0a48246d22c36d652d6edc6eb78314cb00a7c4
+  56ec74766dd25f01f58650aaffa7c147f21f7f46ce1050b86f0958859e882302
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
   d9b68a753737d4d3f8d6c247f1fb0f90b9edd387d3b8f88e6addf0967565a25e
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   Java_dev_r0hook_lab_MainActivity_nativeControl \
-  1078c010ca17f3b2c035a131d50da1d97e3c8c2a47761bc1d662a931b360a184
+  c9dc7e262cbf2240878270e5fedd8594874bf2ce4facd8aef6d65b2b4cd9a752
 require_text "$F46_D4_R3J_PLAN" 'wxshadow F4.6 D4-R3j Adjacent Inflight-Accounting Plan'
 require_text "$F46_D4_R3J_PLAN" 'Status: device row stable and physical-reboot closure verified.'
 require_text "$F46_D4_R3J_PLAN" '65679740eb5253c2779bbd0a0c4dce89ebdd5529'
@@ -1561,29 +1565,29 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_full_abort_locked \
   4e408d41443fae25faa27af8ba70a3e9a79db9a5c6e6c07dd94b0f7129e4fdb8
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  a78d1444fad6ae37edc413a3bdd9fcccb01dc45475cbd252e13ba2d7f918eda2
+  dfa2fef78a90a38c427a82041164acbfa3fab5b00b594976edd09d965f0fea61
 require_function_sha256 kpm/r0lab.c r0lab_raw_exit_mmap_before \
-  17f45f910a7f1fe0d52e18f861731dbf21869e4dac23e1f178f2cfe4a9d00e85
+  c93284b7ea39e8923cd5161ea1871dcdc3106d51486596496746d385088fcca3
 require_function_sha256 kpm/r0lab.c r0lab_raw_unhook_page \
   1f1fbf1e47db51d7a7665660a2857d0fe14cab14170b82d17abc95226ce03145
 require_function_sha256 kpm/r0lab.c r0lab_raw_reset_final_page \
-  0cd8a16c2e4644ee2aad4dc91123abf6c5b0d3d82b4f4c392b8ffcfb16bd7205
+  a5528dc7e0ee2e931a56faa88e750916a50d7847856d1ac4a4a09210991feaeb
 require_function_sha256 kpm/r0lab.c r0lab_raw_monitor_worker \
   a3b60e02adb98313cf591eca4b3a86fae7c3104d37ebb720074ceea2cd4917e8
 require_function_sha256 kpm/r0lab.c r0lab_raw_reset_exited_page \
-  49031e17f634b309566e2dfd353324603bfb6938eb5088132b31959af39660a6
+  29412d371baba0dd2de734292395a715d8152f99be08f7213c60d52f8c690705
 require_function_sha256 kpm/r0lab.c r0lab_raw_wait_for_owner_task_exit \
   723a423f9019563f2d6d0cda6a28d47f88383942602a99e7c70a48d92519a8db
 require_function_sha256 kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
-  9ee8da24003a783dba1578545d6cb5b18c3ae428c708cfda3be7380a3c2ece4f
+  5781bfc212b1f0d2396c605b56df57aa501af3de1748cea52e4ee2618dd8fbee
 require_function_sha256 kpm/r0lab.c r0lab_close_exited_session \
-  bf36ee85521a043f93718ffa806ce92535e8471f40256891d5269eeac98a7573
+  f8c8d6d4669cfe52fc937abf3cbfd3599c905aca10cf81da2d43b7ccbc02bf9d
 require_function_sha256 kpm/r0lab.c r0lab_status \
-  8f6792a474994d273bda17de5a8513d3545110304b839164197cf2ca19fc301a
+  39cf3adc7feff8f0f1f55c51ddfa7caf02c7002551415bc6ef01517b6b354307
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
-  290b296c9fca5e005a46a9dfeb2e2081889b0a101e0d2db9938d90e631648ca2
+  78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm_worker \
-  4dccccd0568d3ce3ae113db72bcdf2006be5937c6c057d5cb6faddf267370548
+  874f8f12422ff744204799582b402d2541eab4e5447662f0a1eb4c377ad6e9a2
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_full_abort_lifecycle_run \
   3c7edade83c1550b3a82c89cae9defe38489243e3db36263c3c2202b8aa68657
@@ -1591,7 +1595,7 @@ require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_exit_hook_routing_hold \
   5b9238169c269c21876d210041596d84b27988948a9285946ca1448fd48f3a4e
 require_function_text kpm/r0lab.c r0lab_raw_before_abort \
-  'if (!args || !g_get_task_mm || !g_mmput)'
+  'if (!g_initialized || !args || !g_get_task_mm || !g_mmput)'
 require_function_count kpm/r0lab.c r0lab_raw_before_abort \
   'g_get_task_mm(current)' 1
 require_function_count kpm/r0lab.c r0lab_raw_before_abort \
@@ -1656,24 +1660,24 @@ require_function_text_before kpm/r0lab.c r0lab_raw_reset_final_page \
   'r0lab_raw_drain_patch_buffers_page' \
   'r0lab_raw_page_slot_reset_locked'
 require_function_text_before kpm/r0lab.c r0lab_raw_reset_final_page \
-  'g_vfree(shadow_kaddr);' 'g_mmput(mm);'
-require_function_count kpm/r0lab.c r0lab_raw_reset_final_page \
-  'g_mmput(mm);' 1
+  'r0lab_raw_free_shadow_page(shadow_kaddr);' \
+  'r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);'
+reject_function_text kpm/r0lab.c r0lab_raw_reset_final_page \
+  'g_mmput(mm);'
 require_function_text kpm/r0lab.c r0lab_raw_wait_for_owner_task_exit \
   'if (!r0lab_target_task_live(owner_tgid))'
 require_function_text_before kpm/r0lab.c \
   r0lab_raw_cleanup_exited_mm \
-  'r0lab_raw_drain_patch_buffers_page' 'g_mmput(mm);'
-require_function_text_before kpm/r0lab.c \
-  r0lab_raw_cleanup_exited_mm \
-  'g_mmput(mm);' 'r0lab_raw_exit_hook_release'
+  'r0lab_raw_drain_patch_buffers_page' 'r0lab_raw_exit_hook_release'
 require_function_text_before kpm/r0lab.c \
   r0lab_raw_cleanup_exited_mm \
   'r0lab_raw_exit_hook_release' 'r0lab_raw_reset_exited_page'
-require_function_count kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
-  'g_mmput(mm);' 1
+reject_function_text kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
+  'g_mmput(mm);'
 require_function_text kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
-  'slot->exit_hook_events_before + 1U'
+  '!slot->exit_hook_events_before'
+require_function_text kpm/r0lab.c r0lab_raw_cleanup_exited_mm \
+  'page->exit_hook_events != slot->exit_hook_events_before'
 for forbidden in \
   'g_mmput' \
   'r0lab_raw_restore_original' \
@@ -1749,6 +1753,58 @@ reject_text scripts/test_raw_full_abort_lifecycle_device.sh \
   'adb_device reboot'
 require_text scripts/verify_d4_r3n_disassembly.sh \
   'D4-R3n disassembly passed: primitives=4 transition_sets=3 transition_clears=3 skip_origin_stores=2 ret_zero_stores=2 exit_restore_relocations=3 token_helper_calls=0 hardware_cache_tlb=0'
+require_text "$F46_D4_R3O_PLAN" \
+  'F4.6 D4-R3o Reference Lifetime Parity Fix Plan'
+require_text "$F46_D4_R3O_PLAN" \
+  'Status: source implementation and focused host verification pass'
+require_text "$F46_D4_R3O_PLAN" 'mmgrab(mm)'
+require_text "$F46_D4_R3O_PLAN" 'mmdrop(mm)'
+require_text "$F46_D4_R3O_PLAN" \
+  'before the first source-UXN PTE transition'
+require_text "$F46_D4_R3O_PLAN" '__get_free_pages(GFP_KERNEL, 0)'
+require_text "$F46_D4_R3O_PLAN" \
+  'synchronizes the full page after the initial copy/seed'
+require_text "$F46_D4_R3O_PLAN" \
+  'the final full-abort callback resident'
+require_text "$F46_D4_R3O_PLAN" \
+  'Owner exit relies on natural kernel `mmput()`/`exit_mmap`'
+require_text "$F46_D4_R3O_PLAN" \
+  'Only after stages 1-5 pass, run one unload/reload-without-reboot cycle.'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  '| F4.6-D4-R3o reference lifetime parity | Host implementation complete; device ladder pending |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  '| 28 | D4-R3o | Reference lifetime parity |'
+require_text "$FINAL_ROADMAP" \
+  'R3o is the active item. It implements the reference-shaped lifetime fixes'
+require_text "$FINAL_ROADMAP" \
+  'No R3o device stage has'
+require_text "$REFERENCE_COVERAGE" \
+  'one `mm_count` reference per slot'
+require_text "$REFERENCE_COVERAGE" \
+  'matched `__get_free_pages(GFP_KERNEL, 0)`/`free_pages(..., 0)` pair'
+require_text kpm/r0lab.c 'bool mm_count_owned;'
+require_text kpm/r0lab.c \
+  'raw_abort_resident=%u raw_exit_resident=%u'
+require_text kpm/r0lab.c 'mm_ref=%s exit_hook_installed=%u'
+require_text kpm/r0lab_raw.h \
+  'void r0lab_raw_mmdrop(void *mm);'
+require_text scripts/verify_d4_r3o_reference_lifetime.sh \
+  'require_function_sequence3 "$KPM_SOURCE" r0lab_raw_slot_arm'
+require_text scripts/verify_d4_r3o_reference_lifetime.sh \
+  'require_function_sequence3 "$KPM_SOURCE" r0lab_raw_arm_worker'
+require_text scripts/verify_d4_r3o_reference_lifetime.sh \
+  'require_function_sequence3 "$RAW_SOURCE" r0lab_raw_replace_locked'
+require_text scripts/verify_d4_r3o_reference_lifetime.sh \
+  'require_function_sequence3 "$LAB_SOURCE" r0lab_raw_hold_clear'
+require_text scripts/test_raw_r3o_lifetime_device.sh \
+  'R3O_STAGE=1..6 is required'
+require_text scripts/test_raw_r3o_lifetime_device.sh \
+  'raw raw-hold clear $TOKEN_4'
+require_text scripts/test_raw_r3o_lifetime_device.sh \
+  'wait_for_failure_device'
+require_text kpm/r0lab.c 'r0lab-r3o: exit_protection_ready'
+require_text kpm/r0lab.c 'r0lab-r3o: exit_restore_begin'
+require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold clear '
 require_file scripts/test_raw_abort_iabt_route_device.sh
 require_file scripts/verify_d4_r3l_disassembly.sh
 require_text kpm/r0lab.c 'bool abort_hook_iabt_route;'
@@ -1760,7 +1816,7 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_iabt_route_compiler_witness \
   e7b4a45526d6cfeec9c5167ecfa7f19f9db93fc19df6e33331dc5b8482faa115
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
-  809efa85e1b112511370d0910f7dadc14e2f12ac19667acebc8dcf6790bc188b
+  921744701a349a15a5e0f20d2d86db825ecfa39c17edd2f638a4221e3df8ce49
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm \
   d25e5b45a82d00a18b2e8cbf26e1ae62b4ab5038725564b5543e4a5e9b5f9dc3
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
@@ -1943,16 +1999,16 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
   d74bd88f1daf89464f7bb26a8db384ecbd6600e6ede9388c3a3f8c8f0b5a7180
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  913f535c571c71216f8e2293db433e47cf6e4197b90ca0ac357c8af50ba811b7
+  7547ebe1c19a6654cebcb7aa1ec58dce8861772f237e614bf6423b56d2e94676
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
-  2699bd6f14aeb5a031550ef51b224490fc428372519ec0d922eb13b9c286fde1
+  535ab43a49cfb04b8d239be14faf4d0a75a587e998242c385064ec64649b1702
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
-  7fa0da7880e510ee2c7b33fa8e07198788ce4ad5c04d57100a2378c96e0fa0ab
+  f116231d20d16d97d51ca27467c54cf7f61708397f8d8c75b25573a6b9641589
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
-  290b296c9fca5e005a46a9dfeb2e2081889b0a101e0d2db9938d90e631648ca2
+  78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  6882598c12cf29e8a1c3ea2f7f0a48246d22c36d652d6edc6eb78314cb00a7c4
+  56ec74766dd25f01f58650aaffa7c147f21f7f46ce1050b86f0958859e882302
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_iabt_transition \
   12ecd7fadde7f3f38ff129c12e5366f98f1908926c60970fb4ff6b06c97b7826
@@ -2150,9 +2206,9 @@ require_text scripts/verify_d4_r3m_disassembly.sh \
 require_file_sha256 scripts/verify_d4_r3m_disassembly.sh \
   1c4deb9a5a6b3e54e1262ac352e62234873191c07696b38315bfa2021d3872ab
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  a78d1444fad6ae37edc413a3bdd9fcccb01dc45475cbd252e13ba2d7f918eda2
+  dfa2fef78a90a38c427a82041164acbfa3fab5b00b594976edd09d965f0fea61
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
-  290b296c9fca5e005a46a9dfeb2e2081889b0a101e0d2db9938d90e631648ca2
+  78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_file scripts/test_raw_abort_inflight_passthrough_device.sh
 require_file scripts/verify_d4_r3j_disassembly.sh
 require_text kpm/r0lab.c 'bool abort_hook_inflight;'
@@ -2214,7 +2270,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'inflight = page->abort_hook_inflight;'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,'
+  'callback = r0lab_raw_abort_hook_callback('
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
   '(inflight_abort_hook ? 1U : 0U)'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
@@ -2417,7 +2473,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'g_raw_abort_hook_transitioning = false;'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,'
+  'callback = r0lab_raw_abort_hook_callback('
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'r0lab_hook_detach(g_do_mem_abort, callback, NULL);'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
@@ -2634,7 +2690,10 @@ require_text "$FINAL_ROADMAP" '`D4-R3l` restores read-only IABT frame decoding'
 require_text "$FINAL_ROADMAP" 'shared route helper writes hit/reject statistics'
 require_text "$FINAL_ROADMAP" 'docs/wxshadow-f4.6-d4-r3l-readonly-iabt-route-plan.md'
 require_text "$FINAL_ROADMAP" '`D4-R3m` restores only the IABT raw-PTE transition'
-require_text "$FINAL_ROADMAP" '`D4-R3n` restores the already isolated DABT branches'
+require_text "$FINAL_ROADMAP" \
+  '`D4-R3n` restored the full callback and passed its explicit Phase A'
+require_text "$FINAL_ROADMAP" \
+  '`D4-R3o` applies the reference lifetime corrections'
 require_text "$FINAL_ROADMAP" 'No additional callback micro-slices may be inserted'
 require_text "$FINAL_ROADMAP" 'compiler-only `barrier()`'
 require_text "$FINAL_ROADMAP" '0a73bd18-ba4a-4bdf-87c6-a99f98d9d039'
@@ -2848,7 +2907,7 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
   'result = hook_wrap3(g_do_mem_abort, callback, NULL, NULL);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
-  'r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,'
+  'callback = r0lab_raw_abort_hook_callback('
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
   'active->abort_hook_passthrough'
 require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
@@ -2918,13 +2977,13 @@ require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
 require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
   'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  a78d1444fad6ae37edc413a3bdd9fcccb01dc45475cbd252e13ba2d7f918eda2
+  dfa2fef78a90a38c427a82041164acbfa3fab5b00b594976edd09d965f0fea61
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm_worker \
-  4dccccd0568d3ce3ae113db72bcdf2006be5937c6c057d5cb6faddf267370548
+  874f8f12422ff744204799582b402d2541eab4e5447662f0a1eb4c377ad6e9a2
 require_file_sha256 kpm/r0lab_raw_compat.c \
-  7935632dcff32672aa65ee3cd24312c1a835cf234a895cd99e994dc81d440c83
+  f10fee3cc1392418e5d7889e53372c47e0490ee5a5bed959aff0bc143f9b6b88
 require_file_sha256 kpm/r0lab_raw.h \
-  c0a0af6e28b2b3467bc212a49aeefd2e019886ef3c6b97694aab9143b8b518b8
+  b8340cd245e26cdd2595231e7574e9910377eba99743670e318deeba1714d479
 require_text kpm/r0lab.c 'bool abort_hook_mmget;'
 require_text kpm/r0lab.c 'raw slot arm abort-mmget '
 require_function_text kpm/r0lab.c \
@@ -3399,6 +3458,8 @@ scripts/test_raw_abort_iabt_transition_device.sh
 scripts/verify_d4_r3m_disassembly.sh
 scripts/test_raw_full_abort_lifecycle_device.sh
 scripts/verify_d4_r3n_disassembly.sh
+scripts/verify_d4_r3o_reference_lifetime.sh
+scripts/test_raw_r3o_lifetime_device.sh
 scripts/test_v1_device.sh
 '
 
@@ -3998,4 +4059,6 @@ require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records s
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"
+"$ROOT/scripts/verify_d4_r3o_reference_lifetime.sh" >/dev/null
+
+printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked f4_r3o=reference_lifetime_host_pass_device_pending s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"

@@ -13,6 +13,7 @@
 #include <linux/mm_types.h>
 #include <linux/mmap_lock.h>
 #include <linux/pgtable.h>
+#include <linux/sched/mm.h>
 #include <linux/spinlock.h>
 
 #include <asm/pgtable.h>
@@ -22,8 +23,6 @@
 #define R0LAB_RAW_EINVAL (-22)
 #define R0LAB_RAW_ENOENT (-2)
 #define R0LAB_RAW_EAGAIN (-11)
-
-extern struct page *vmalloc_to_page(const void *addr);
 
 unsigned long r0lab_raw_abi_page_size(void)
 {
@@ -53,6 +52,23 @@ unsigned long r0lab_raw_abi_pte_user_bit(void)
 unsigned long r0lab_raw_abi_pte_valid_bit(void)
 {
     return PTE_VALID;
+}
+
+unsigned long r0lab_raw_abi_gfp_kernel(void)
+{
+    return GFP_KERNEL;
+}
+
+void r0lab_raw_mmgrab(void *mm)
+{
+    if (mm)
+        mmgrab((struct mm_struct *)mm);
+}
+
+void r0lab_raw_mmdrop(void *mm)
+{
+    if (mm)
+        mmdrop((struct mm_struct *)mm);
 }
 
 static inline pte_t r0lab_raw_pte_from_value(unsigned long value)
@@ -156,7 +172,8 @@ static unsigned long r0lab_raw_classify_live_pte(
     return R0LAB_RAW_POISONED;
 }
 
-static int r0lab_raw_replace_locked(struct mm_struct *mm,
+static int r0lab_raw_replace_locked(struct r0lab_raw_page *page,
+                                    struct mm_struct *mm,
                                     struct vm_area_struct *vma,
                                     unsigned long address, pte_t *ptep,
                                     pte_t replacement)
@@ -165,6 +182,13 @@ static int r0lab_raw_replace_locked(struct mm_struct *mm,
 
     old = ptep_get_and_clear(mm, address, ptep);
     flush_tlb_page(vma, address);
+    if (page && page->shadow_kaddr && page->shadow_pfn &&
+        pte_present(replacement) &&
+        pte_pfn(replacement) == page->shadow_pfn) {
+        r0lab_runtime_sync_icache_aliases(
+            (unsigned long)page->shadow_kaddr,
+            (unsigned long)page->shadow_kaddr + PAGE_SIZE);
+    }
     set_pte_at(mm, address, ptep, replacement);
     return r0lab_raw_pte_value(old) ? 0 : R0LAB_RAW_EAGAIN;
 }
@@ -270,7 +294,9 @@ int r0lab_raw_shadow_pfn_from_kaddr(struct r0lab_raw_page *page)
 
     if (!page || !page->shadow_kaddr)
         return R0LAB_RAW_EINVAL;
-    shadow_page = vmalloc_to_page(page->shadow_kaddr);
+    if (!virt_addr_valid(page->shadow_kaddr))
+        return R0LAB_RAW_ENOENT;
+    shadow_page = virt_to_page(page->shadow_kaddr);
     if (!shadow_page)
         return R0LAB_RAW_ENOENT;
     page->shadow_pfn = page_to_pfn(shadow_page);
@@ -313,7 +339,8 @@ static int r0lab_raw_arm_source_uxn_common(struct r0lab_raw_page *page,
                 r0lab_raw_make_shadow_rx(original, page->shadow_pfn) :
                 r0lab_raw_pte_from_value(0);
 
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, source_uxn);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      source_uxn);
     if (!result) {
         page->source_uxn_pte = r0lab_raw_pte_value(source_uxn);
         page->shadow_rx_pte = page->shadow_pfn ?
@@ -365,7 +392,8 @@ int r0lab_raw_activate_shadow(struct r0lab_raw_page *page)
         goto out_unlock_pte;
     }
     shadow_rx = r0lab_raw_pte_from_value(page->shadow_rx_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, shadow_rx);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      shadow_rx);
     if (!result) {
         page->active_pte = page->shadow_rx_pte;
         page->state = R0LAB_RAW_SHADOW_RX;
@@ -415,7 +443,7 @@ int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page)
         goto out_unlock_pte;
     }
 
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
                                       shadow_old);
     if (!result)
         page->active_pte = old_value;
@@ -454,7 +482,8 @@ int r0lab_raw_begin_stepping(struct r0lab_raw_page *page)
     }
 
     original = r0lab_raw_pte_from_value(page->original_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, original);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      original);
     if (!result) {
         page->active_pte = page->original_pte;
         page->state = R0LAB_RAW_ORIGINAL_STEP;
@@ -494,7 +523,8 @@ int r0lab_raw_finish_stepping(struct r0lab_raw_page *page)
     }
 
     shadow_rx = r0lab_raw_pte_from_value(page->shadow_rx_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, shadow_rx);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      shadow_rx);
     if (!result) {
         page->active_pte = page->shadow_rx_pte;
         page->state = R0LAB_RAW_SHADOW_RX;
@@ -537,7 +567,7 @@ int r0lab_raw_begin_read_cycle(struct r0lab_raw_page *page)
     }
 
     source_uxn = r0lab_raw_pte_from_value(page->source_uxn_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
                                       source_uxn);
     if (!result) {
         page->read_cycle_saved_pte = page->shadow_rx_pte;
@@ -588,7 +618,7 @@ int r0lab_raw_begin_fault_read_cycle(struct r0lab_raw_page *page)
     }
 
     source_uxn = r0lab_raw_pte_from_value(page->source_uxn_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
                                       source_uxn);
     if (!result) {
         page->read_cycle_saved_pte = page->shadow_rx_pte;
@@ -637,7 +667,7 @@ int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page)
     replacement_value = page->read_cycle_saved_pte ?
                         page->read_cycle_saved_pte : page->shadow_rx_pte;
     replacement = r0lab_raw_pte_from_value(replacement_value);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
                                       replacement);
     if (!result) {
         page->active_pte = replacement_value;
@@ -706,7 +736,8 @@ int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page)
     }
 
     original = r0lab_raw_pte_from_value(page->original_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, original);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      original);
     if (!result) {
         page->gup_saved_pte = page->shadow_rx_pte;
         page->gup_hide_active = 1;
@@ -752,7 +783,7 @@ int r0lab_raw_finish_gup_hide(struct r0lab_raw_page *page)
     replacement_value = page->gup_saved_pte ? page->gup_saved_pte :
                                              page->shadow_rx_pte;
     replacement = r0lab_raw_pte_from_value(replacement_value);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
                                       replacement);
     if (!result) {
         page->active_pte = replacement_value;
@@ -797,7 +828,8 @@ int r0lab_raw_begin_fork_hide(struct r0lab_raw_page *page, void *oldmm)
     }
 
     original = r0lab_raw_pte_from_value(page->original_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, original);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      original);
     if (!result) {
         page->fork_saved_pte = page->shadow_rx_pte;
         page->fork_hide_active = 1;
@@ -843,7 +875,7 @@ int r0lab_raw_finish_fork_hide(struct r0lab_raw_page *page, void *oldmm)
     replacement_value = page->fork_saved_pte ? page->fork_saved_pte :
                                               page->shadow_rx_pte;
     replacement = r0lab_raw_pte_from_value(replacement_value);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep,
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
                                       replacement);
     if (!result) {
         page->active_pte = replacement_value;
@@ -911,7 +943,8 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
     }
 
     original = r0lab_raw_pte_from_value(page->original_pte);
-    result = r0lab_raw_replace_locked(mm, vma, page->address, ptep, original);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      original);
     if (!result) {
         page->active_pte = page->original_pte;
         page->gup_saved_pte = 0;

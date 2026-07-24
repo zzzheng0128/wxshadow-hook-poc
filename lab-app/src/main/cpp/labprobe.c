@@ -9031,6 +9031,7 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
     int normal_value[2] = {-1, -1};
     int shadow_value[2] = {-1, -1};
     int inspect_ok[2] = {0, 0};
+    int exit_hook_installed[2] = {-1, -1};
     int abort_hook_installed[2] = {-1, -1};
     int abort_hook_iabt_transition[2] = {-1, -1};
     int abort_hook_iabt_route[2] = {-1, -1};
@@ -9206,6 +9207,9 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
         abort_hook_installed[index] =
             strstr(ready[index], "abort_hook_installed=0") ? 0 :
             strstr(ready[index], "abort_hook_installed=1") ? 1 : -1;
+        exit_hook_installed[index] =
+            strstr(ready[index], "exit_hook_installed=1") ? 1 :
+            strstr(ready[index], "exit_hook_installed=0") ? 0 : -1;
         abort_hook_suppressed[index] =
             strstr(ready[index], "abort_hook_suppressed=1") ? 1 :
             strstr(ready[index], "abort_hook_suppressed=0") ? 0 : -1;
@@ -9298,6 +9302,8 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
              abort_hook_iabt_transition[index] != 1))
             ++failures;
         word_after_arm[index] = readable[index][0];
+        if (exit_hook_installed[index] != 1)
+            ++failures;
     }
 
     if (snapshot_live_pte) {
@@ -9456,8 +9462,9 @@ finish:
     }
     if (iabt_transition_abort_hook) {
         snprintf(output, output_size,
-                 "raw mode=raw-hold-abort-iabt-transition failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d shadow=%d activations=%u state=%lu active_kind=%s record_state=%s inspect=%d abort_hook_installed=%d abort_hook_suppressed=%d abort_hook_passthrough=%d abort_hook_mmget=%d abort_hook_lock=%d abort_hook_inflight=%d abort_hook_iabt_route=%d abort_hook_iabt_transition=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld inspect_rc=%ld handler_faults=%d signal_fault_caught=%d restore_abi=skip_origin_ret0 source=%llx generation=%llu words_before=%08x words_after_arm=%08x words_shadow=%08x",
-                 failures, "shadow_rx", slot_count, slot_count, slot_count,
+                 "raw mode=raw-hold-abort-iabt-transition failures=%d exit_mmap_armed=0 exit_hook_installed=%d target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d shadow=%d activations=%u state=%lu active_kind=%s record_state=%s inspect=%d abort_hook_installed=%d abort_hook_suppressed=%d abort_hook_passthrough=%d abort_hook_mmget=%d abort_hook_lock=%d abort_hook_inflight=%d abort_hook_iabt_route=%d abort_hook_iabt_transition=%d arm_rc=%ld ready_rc=%ld observed_rc=%ld inspect_rc=%ld handler_faults=%d signal_fault_caught=%d restore_abi=skip_origin_ret0 source=%llx generation=%llu words_before=%08x words_after_arm=%08x words_shadow=%08x",
+                 failures, exit_hook_installed[0], "shadow_rx", slot_count,
+                 slot_count, slot_count,
                  normal_value[0], shadow_value[0], activations[0], states[0],
                  inspect_ok[0] ? "shadow_rx" : "invalid",
                  inspect_ok[0] ? "shadow_active" : "invalid",
@@ -9569,8 +9576,9 @@ finish:
                  word_shadow[0], word_shadow[1]);
     } else if (suppress_abort_hook) {
         snprintf(output, output_size,
-                 "raw mode=raw-hold-no-abort failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d abort_hook_installed=%d abort_hook_suppressed=%d abort_hook_passthrough=%d abort_hook_mmget=%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
-                 failures, target_state, slot_count, slot_count, slot_count,
+                 "raw mode=raw-hold-no-abort failures=%d exit_mmap_armed=0 exit_hook_installed=%d target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d abort_hook_installed=%d abort_hook_suppressed=%d abort_hook_passthrough=%d abort_hook_mmget=%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
+                 failures, exit_hook_installed[0], target_state, slot_count,
+                 slot_count, slot_count,
                  normal_value[0], normal_value[1], shadow_value[0],
                  shadow_value[1], activations[0], activations[1], states[0],
                  states[1], inspect_ok[0], inspect_ok[1],
@@ -9607,8 +9615,9 @@ finish:
                                      "raw_slot_live_pte absent=1");
     } else {
         snprintf(output, output_size,
-                 "raw mode=raw-hold-lifetime failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
-                 failures, target_state, slot_count, slot_count, slot_count,
+                 "raw mode=raw-hold-lifetime failures=%d exit_mmap_armed=0 exit_hook_installed=%d/%d target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
+                 failures, exit_hook_installed[0], exit_hook_installed[1],
+                 target_state, slot_count, slot_count, slot_count,
                  normal_value[0], normal_value[1], shadow_value[0],
                  shadow_value[1], activations[0], activations[1], states[0],
                  states[1], inspect_ok[0], inspect_ok[1], arm_rc[0],
@@ -9778,6 +9787,129 @@ static int r0lab_raw_hold_abort_iabt_transition(const char *token_text,
     return r0lab_raw_hold_lifetime_common(args, output, output_size, false,
                                           false, false, false, false, false,
                                           false, true);
+}
+
+static int r0lab_raw_hold_clear(const char *token_text, char *output,
+                                size_t output_size)
+{
+    struct sigaction action = {0};
+    struct sigaction previous_action = {0};
+    void *pages[2];
+    long clear_rc[2] = {-1, -1};
+    long cleared_rc[2] = {-1, -1};
+    int restored[2] = {-1, -1};
+    int restore_faults = 0;
+    uint64_t token;
+    unsigned int slot_count;
+    unsigned int index;
+    int mode;
+    int handler_installed = 0;
+    int clears_complete = 1;
+    int session_closed = 0;
+    int hold_released = 0;
+    int failures = 0;
+    long close_rc = -1;
+    long status_rc = -1;
+    char command[96];
+    char reply[256] = {0};
+    char status[512] = {0};
+    size_t page_size;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw hold clear token");
+        return -1;
+    }
+    if (!g_r0lab_m5_hold.armed || g_r0lab_m5_hold.token != token ||
+        g_r0lab_m5_hold.mode < 8 || g_r0lab_m5_hold.mode > 20 ||
+        !g_r0lab_m5_hold.source_page || !g_r0lab_m5_hold.page_size) {
+        snprintf(output, output_size,
+                 "rc=-16 error=raw hold clear state mismatch");
+        return -1;
+    }
+
+    pages[0] = g_r0lab_m5_hold.source_page;
+    pages[1] = g_r0lab_m5_hold.clone_page;
+    page_size = g_r0lab_m5_hold.page_size;
+    mode = g_r0lab_m5_hold.mode;
+    slot_count = pages[1] ? 2U : 1U;
+
+    for (index = 0; index < slot_count; ++index) {
+        r0lab_raw_slot_clear(token, index, &clear_rc[index],
+                             &cleared_rc[index]);
+        if (clear_rc[index] < 0 || cleared_rc[index] < 0)
+            clears_complete = 0;
+    }
+
+    if (clears_complete) {
+        action.sa_sigaction = r0lab_raw_signal_handler;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = SA_SIGINFO;
+        if (!sigaction(SIGSEGV, &action, &previous_action))
+            handler_installed = 1;
+        else
+            ++failures;
+
+        g_r0lab_raw_handler_faults = 0;
+        g_r0lab_raw_signal_page_size = page_size;
+        g_r0lab_raw_signal_restore_prot = PROT_READ | PROT_EXEC;
+        g_r0lab_raw_signal_jump_on_fault = 1;
+        for (index = 0; index < slot_count; ++index) {
+            if (mprotect(pages[index], page_size,
+                         PROT_READ | PROT_EXEC)) {
+                ++failures;
+                continue;
+            }
+            if (!handler_installed) {
+                ++failures;
+                continue;
+            }
+            g_r0lab_raw_signal_page = pages[index];
+            if (!sigsetjmp(g_r0lab_raw_signal_jump, 1))
+                restored[index] = ((int (*)(void))pages[index])();
+            else
+                ++restore_faults;
+            if (restored[index] != 42)
+                ++failures;
+        }
+
+        snprintf(command, sizeof(command), "close 0x%llx",
+                 (unsigned long long)token);
+        close_rc = r0lab_control_raw(command, reply, sizeof(reply));
+        status_rc = r0lab_control_raw("status", status, sizeof(status));
+        session_closed =
+            close_rc >= 0 && status_rc >= 0 &&
+            strstr(status, " active=0 ") &&
+            strstr(status, " raw_slots=0 ") &&
+            strstr(status, " raw_inflight=0 ") &&
+            strstr(status, " page_records=0 ") &&
+            strstr(status, " raw_page_table_active=0 ");
+        if (!session_closed)
+            ++failures;
+
+        if (pages[1])
+            munmap(pages[1], page_size);
+        munmap(pages[0], page_size);
+        memset(&g_r0lab_m5_hold, 0, sizeof(g_r0lab_m5_hold));
+        hold_released = 1;
+    } else {
+        ++failures;
+    }
+
+    if (handler_installed)
+        sigaction(SIGSEGV, &previous_action, NULL);
+    g_r0lab_raw_signal_page = NULL;
+    g_r0lab_raw_signal_page_size = 0;
+    g_r0lab_raw_signal_restore_prot = 0;
+    g_r0lab_raw_signal_jump_on_fault = 0;
+
+    snprintf(output, output_size,
+             "raw mode=raw-hold-clear failures=%d mode=%d slots=%u clear_rc=%ld/%ld cleared_rc=%ld/%ld restored=%d/%d restore_faults=%d close_rc=%ld status_rc=%ld session_closed=%d hold_released=%d",
+             failures, mode, slot_count, clear_rc[0], clear_rc[1],
+             cleared_rc[0], cleared_rc[1], restored[0], restored[1],
+             restore_faults, close_rc, status_rc, session_closed,
+             hold_released);
+    return failures ? -1 : 0;
 }
 
 static int r0lab_raw_fault_data_probe_run(const char *token_text,
@@ -11685,6 +11817,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     if (!strncmp(args, "raw raw-hold abort-iabt-transition ", 35)) {
         r0lab_raw_hold_abort_iabt_transition(args + 35, reply,
                                              sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw raw-hold clear ", 19)) {
+        r0lab_raw_hold_clear(args + 19, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

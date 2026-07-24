@@ -365,6 +365,8 @@ struct r0lab_raw_shadow_page {
     bool abort_hook_inflight;
     bool abort_hook_iabt_route;
     bool abort_hook_iabt_transition;
+    bool mm_count_owned;
+    bool mm_users_owned;
     bool target_exiting;
     bool monitor_running;
     bool transitioning;
@@ -504,6 +506,11 @@ typedef bool (*r0lab_kthread_should_stop_fn_t)(void);
 typedef void (*r0lab_msleep_fn_t)(unsigned int milliseconds);
 typedef struct mm_struct *(*r0lab_get_task_mm_fn_t)(struct task_struct *task);
 typedef void (*r0lab_mmput_fn_t)(struct mm_struct *mm);
+typedef void (*r0lab_mmdrop_fn_t)(struct mm_struct *mm);
+typedef unsigned long (*r0lab_get_free_pages_fn_t)(unsigned int gfp_mask,
+                                                   unsigned int order);
+typedef void (*r0lab_free_pages_fn_t)(unsigned long address,
+                                      unsigned int order);
 typedef void *(*r0lab_vmalloc_fn_t)(unsigned long size);
 typedef void (*r0lab_vfree_fn_t)(const void *addr);
 typedef void *(*r0lab_vmalloc_to_page_fn_t)(const void *addr);
@@ -556,6 +563,9 @@ static r0lab_kthread_should_stop_fn_t g_kthread_should_stop;
 static r0lab_msleep_fn_t g_msleep;
 static r0lab_get_task_mm_fn_t g_get_task_mm;
 static r0lab_mmput_fn_t g_mmput;
+static r0lab_mmdrop_fn_t g_mmdrop;
+static r0lab_get_free_pages_fn_t g_get_free_pages;
+static r0lab_free_pages_fn_t g_free_pages;
 static r0lab_vmalloc_fn_t g_vmalloc;
 static r0lab_vfree_fn_t g_vfree;
 static r0lab_vmalloc_to_page_fn_t g_vmalloc_to_page;
@@ -609,6 +619,9 @@ static bool g_workers_started;
 static bool g_workers_shutdown_requested;
 static unsigned int g_workers_live;
 static bool g_raw_abort_hook_transitioning;
+static hook_chain3_callback g_raw_abort_resident_callback;
+static bool g_raw_exit_hook_resident;
+static bool g_raw_exit_hook_transitioning;
 
 int64_t memstart_addr;
 unsigned long cpu_hwcaps[R0LAB_RAW_HWCAP_WORDS];
@@ -653,6 +666,19 @@ void __sync_icache_dcache(unsigned long pte)
 {
     if (g_sync_icache_dcache)
         g_sync_icache_dcache(pte);
+}
+
+void __mmdrop(struct mm_struct *mm)
+{
+    if (g_mmdrop)
+        g_mmdrop(mm);
+}
+
+void r0lab_runtime_sync_icache_aliases(unsigned long start,
+                                      unsigned long end)
+{
+    if (g_sync_icache_aliases)
+        g_sync_icache_aliases(start, end);
 }
 
 void mte_sync_tags(unsigned long old_pte, unsigned long new_pte)
@@ -701,7 +727,6 @@ static uint64_t r0lab_record_values(enum r0lab_event_op op, int result,
 static int r0lab_raw_wait_for_callbacks(void);
 static unsigned int r0lab_raw_syscall_hook_users_locked(void);
 static unsigned int r0lab_raw_prctl_hook_users_locked(void);
-static unsigned int r0lab_raw_exit_hook_users_locked(void);
 static void r0lab_raw_reset(struct mm_struct *mm);
 static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation);
 static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page);
@@ -1450,6 +1475,8 @@ static long r0lab_status(char __user *out_msg, int outlen)
     uint32_t hwbp_return_events;
     unsigned int workers_live;
     bool workers_shutdown;
+    bool raw_abort_resident;
+    bool raw_exit_resident;
     int current_cpu;
     struct r0lab_raw_shadow_page *raw_selected;
 
@@ -1504,15 +1531,19 @@ static long r0lab_status(char __user *out_msg, int outlen)
     hwbp_return_events = g_hwbp_return_events;
     workers_live = g_workers_live;
     workers_shutdown = g_workers_shutdown_requested;
+    raw_abort_resident = g_raw_abort_resident_callback != NULL;
+    raw_exit_resident = g_raw_exit_hook_resident;
     r0lab_unlock(flags);
     current_cpu = (int)g_current_cpu();
 
     snprintf(reply, sizeof(reply),
-             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u raw_inflight=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
+             "version=5 lab_uid=%u active=%u owner_tgid=%d next_seq=%llu last_summary_seq=%llu hwbp_slots=%u hwbp_entry_events=%u hwbp_return_events=%u m3_slots=%u m3_fault_events=%u m4_slots=%u m4_redirect_events=%u raw_slots=%u raw_activation_events=%u raw_inflight=%u raw_abort_resident=%u raw_exit_resident=%u s4_slots=%u s4_brk_events=%u s4_step_events=%u s4_state=%s page_records=%u page_backend=%s page_state=%s raw_page_table_slots=%u raw_page_table_active=%u raw_selected_slot=%u raw_slot_backend=%s raw_slot_state=%s raw_slot_source=%llx raw_slot_source_pfn=%llx raw_slot_shadow_pfn=%llx workers_live=%u workers_shutdown=%u cpu_id=%d clock=sched_clock\n",
              g_session.lab_uid, active, owner_tgid, next_seq, last_summary_seq,
              hwbp_slots, hwbp_entry_events, hwbp_return_events, m3_slots,
              m3_fault_events, m4_slots, m4_redirect_events, raw_slots,
-             raw_activation_events, raw_inflight, s4_slots, s4_brk_events,
+             raw_activation_events, raw_inflight,
+             raw_abort_resident ? 1U : 0U,
+             raw_exit_resident ? 1U : 0U, s4_slots, s4_brk_events,
              s4_step_events,
              r0lab_s4_state_name(s4_state), page_records,
              r0lab_page_record_backend_name(page_backend),
@@ -1999,6 +2030,7 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
     if (raw_step_mode) {
         r0lab_raw_page_slot_reset_locked(&g_raw_page, R0LAB_RAW_PRIMARY_SLOT);
         g_raw_page.raw.mm = raw_mm;
+        g_raw_page.mm_users_owned = true;
         g_raw_page.raw.address = (unsigned long)target_address;
         g_raw_page.generation = ++g_raw_generation;
         g_raw_page.record.source_address = g_raw_page.raw.address;
@@ -2019,7 +2051,6 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
     g_s4_brk.reg_value = raw_reg_mode ? R0LAB_S4_RAW_REG_VALUE : 0;
     g_s4_brk.reserving = true;
     r0lab_unlock(flags);
-
     if (raw_step_mode) {
         result = r0lab_raw_prepare_shadow(&g_raw_page);
         if (!result)
@@ -4275,7 +4306,7 @@ static void r0lab_raw_before_abort_iabt_route(hook_fargs3_t *args,
     unsigned long flags;
 
     (void)udata;
-    if (!args || !g_get_task_mm || !g_mmput)
+    if (!g_initialized || !args || !g_get_task_mm || !g_mmput)
         return;
     far = (unsigned long)args->arg0;
     esr = (unsigned int)args->arg1;
@@ -4445,7 +4476,7 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     int abort_read_cycle_result = R0LAB_EINVAL;
 
     (void)udata;
-    if (!args || !g_get_task_mm || !g_mmput)
+    if (!g_initialized || !args || !g_get_task_mm || !g_mmput)
         return;
     far = (unsigned long)args->arg0;
     esr = (unsigned int)args->arg1;
@@ -5627,7 +5658,7 @@ static void r0lab_raw_exit_mmap_before(hook_fargs1_t *args, void *udata)
     unsigned int index;
 
     (void)udata;
-    if (!args)
+    if (!args || !g_initialized)
         return;
     mm = (void *)(unsigned long)args->arg0;
     flags = r0lab_lock();
@@ -5661,9 +5692,17 @@ static void r0lab_raw_exit_mmap_before(hook_fargs1_t *args, void *udata)
 
         if (!page)
             continue;
+        pr_info("r0lab-r3o: exit_restore_begin slot=%u generation=%llu mm=%px va=%lx state=%u\n",
+                (unsigned int)page->slot_id,
+                (unsigned long long)tokens[index].generation, mm,
+                page->raw.address, (unsigned int)page->raw.state);
         results[index] =
             page->raw.state == R0LAB_RAW_RESTORED ?
                 0 : r0lab_raw_restore_original(&page->raw);
+        pr_info("r0lab-r3o: exit_restore_end slot=%u generation=%llu result=%d state=%u\n",
+                (unsigned int)page->slot_id,
+                (unsigned long long)tokens[index].generation,
+                results[index], (unsigned int)page->raw.state);
     }
 
     flags = r0lab_lock();
@@ -6077,23 +6116,63 @@ static void r0lab_raw_prctl_unhook(void)
         (void)r0lab_raw_wait_for_callbacks();
 }
 
-static unsigned int r0lab_raw_exit_hook_users_locked(void)
+static int r0lab_raw_exit_hook_acquire(
+    struct r0lab_raw_shadow_page *page)
 {
-    unsigned int index;
-    unsigned int count = 0;
+    bool attached = false;
+    unsigned long flags;
+    int result;
 
-    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
-        if (g_raw_page_table.slots[index].exit_hook_installed)
-            ++count;
+    if (!page || !g_exit_mmap)
+        return R0LAB_ENOSYS;
+    flags = r0lab_lock();
+    if (page->exit_hook_installed) {
+        r0lab_unlock(flags);
+        return 0;
     }
-    return count;
+    if (!page->raw.mm || !page->mm_count_owned ||
+        !r0lab_raw_page_slot_owned_locked(page)) {
+        r0lab_unlock(flags);
+        return R0LAB_ESRCH;
+    }
+    if (g_raw_exit_hook_resident) {
+        page->exit_hook_installed = true;
+        page->exit_hook_events = 0;
+        page->exit_hook_failures = 0;
+        r0lab_unlock(flags);
+        return 0;
+    }
+    if (g_raw_exit_hook_transitioning) {
+        r0lab_unlock(flags);
+        return R0LAB_EBUSY;
+    }
+    g_raw_exit_hook_transitioning = true;
+    r0lab_unlock(flags);
+
+    result = hook_wrap1(g_exit_mmap, r0lab_raw_exit_mmap_before,
+                        NULL, NULL);
+    attached = result == 0;
+    flags = r0lab_lock();
+    if (!result && page->raw.mm && page->mm_count_owned &&
+        r0lab_raw_page_slot_owned_locked(page)) {
+        g_raw_exit_hook_resident = true;
+        page->exit_hook_installed = true;
+        page->exit_hook_events = 0;
+        page->exit_hook_failures = 0;
+    } else if (!result) {
+        result = R0LAB_EAGAIN;
+    }
+    g_raw_exit_hook_transitioning = false;
+    r0lab_unlock(flags);
+    if (result && attached)
+        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+    return result;
 }
 
 static void r0lab_raw_exit_hook_release(
     struct r0lab_raw_shadow_page *page)
 {
     bool installed = false;
-    bool should_detach = false;
     unsigned long flags;
 
     if (!page)
@@ -6102,48 +6181,21 @@ static void r0lab_raw_exit_hook_release(
     if (page->exit_hook_installed) {
         page->exit_hook_installed = false;
         installed = true;
-        should_detach = r0lab_raw_exit_hook_users_locked() == 0;
     }
     r0lab_unlock(flags);
 
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-    if (should_detach)
-        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
 }
 
 static void r0lab_raw_exit_unhook(void)
 {
-    bool installed;
-    unsigned long flags = r0lab_lock();
-
-    installed = g_raw_page.exit_hook_installed;
-    g_raw_page.exit_hook_installed = false;
-    r0lab_unlock(flags);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-    if (installed)
-        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
+    r0lab_raw_exit_hook_release(&g_raw_page);
 }
 
 static void r0lab_raw_exit_unhook_primary_legacy(void)
 {
-    bool installed;
-    unsigned long flags = r0lab_lock();
-
-    installed = g_raw_page.exit_hook_installed;
-    g_raw_page.exit_hook_installed = false;
-    r0lab_unlock(flags);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
-    if (installed)
-        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
-    if (installed)
-        (void)r0lab_raw_wait_for_callbacks();
+    r0lab_raw_exit_hook_release(&g_raw_page);
 }
 
 static unsigned int r0lab_raw_gup_hook_users_locked(void)
@@ -6263,6 +6315,8 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
         return R0LAB_EBUSY;
     }
     installed_callback = r0lab_raw_abort_hook_installed_callback_locked();
+    if (!installed_callback)
+        installed_callback = g_raw_abort_resident_callback;
     if (installed_callback && installed_callback != callback) {
         r0lab_unlock(flags);
         return R0LAB_EBUSY;
@@ -6290,6 +6344,7 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
     flags = r0lab_lock();
     if (page->raw.mm) {
         page->hook_installed = true;
+        g_raw_abort_resident_callback = callback;
         g_raw_abort_hook_transitioning = false;
     } else {
         result = R0LAB_ESRCH;
@@ -6308,7 +6363,7 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
 
 static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
 {
-    hook_chain3_callback callback;
+    hook_chain3_callback callback = NULL;
     bool iabt_transition = false;
     bool iabt_route = false;
     bool inflight = false;
@@ -6329,9 +6384,14 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
         lock = page->abort_hook_lock;
         mmget = page->abort_hook_mmget;
         passthrough = page->abort_hook_passthrough;
+        callback = r0lab_raw_abort_hook_callback(
+            passthrough, mmget, lock, inflight, iabt_route,
+            iabt_transition);
         page->hook_installed = false;
         installed = true;
-        should_detach = r0lab_raw_abort_hook_users_locked() == 0;
+        should_detach =
+            r0lab_raw_abort_hook_users_locked() == 0 &&
+            callback != r0lab_raw_before_abort;
         if (should_detach)
             g_raw_abort_hook_transitioning = true;
     }
@@ -6339,15 +6399,14 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
 
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
-    callback =
-        r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,
-                                      iabt_route, iabt_transition);
     if (should_detach)
         r0lab_hook_detach(g_do_mem_abort, callback, NULL);
     if (installed)
         (void)r0lab_raw_wait_for_callbacks();
     if (should_detach) {
         flags = r0lab_lock();
+        if (g_raw_abort_resident_callback == callback)
+            g_raw_abort_resident_callback = NULL;
         g_raw_abort_hook_transitioning = false;
         r0lab_unlock(flags);
     }
@@ -6368,10 +6427,38 @@ static void r0lab_raw_unhook_page(struct r0lab_raw_shadow_page *page,
         r0lab_raw_exit_hook_release(page);
 }
 
+static void r0lab_raw_free_shadow_page(void *shadow_kaddr)
+{
+    if (shadow_kaddr && g_free_pages) {
+        pr_info("r0lab-r3o: shadow_free kaddr=%px order=0\n",
+                shadow_kaddr);
+        g_free_pages((unsigned long)shadow_kaddr, 0);
+    }
+}
+
+static void r0lab_raw_release_mm_ref(struct mm_struct *mm,
+                                     bool mm_count_owned,
+                                     bool mm_users_owned)
+{
+    if (!mm)
+        return;
+    if (mm_count_owned) {
+        pr_info("r0lab-r3o: mm_release mm=%px ref=mm_count op=mmdrop\n",
+                mm);
+        r0lab_raw_mmdrop(mm);
+    } else if (mm_users_owned) {
+        pr_info("r0lab-r3o: mm_release mm=%px ref=mm_users op=mmput\n",
+                mm);
+        g_mmput(mm);
+    }
+}
+
 static void r0lab_raw_reset_page(struct r0lab_raw_shadow_page *page,
                                  struct mm_struct *mm)
 {
     void *shadow_kaddr = NULL;
+    bool mm_count_owned = false;
+    bool mm_users_owned = false;
     bool should_reset = false;
     uint16_t slot_id = 0;
     unsigned long flags;
@@ -6396,14 +6483,15 @@ static void r0lab_raw_reset_page(struct r0lab_raw_shadow_page *page,
         uint64_t generation = page->generation;
 
         shadow_kaddr = page->raw.shadow_kaddr;
+        mm_count_owned = page->mm_count_owned;
+        mm_users_owned = page->mm_users_owned;
         r0lab_raw_page_slot_reset_locked(page, slot_id);
         page->generation = generation;
         page->monitor_running = monitor_running;
     }
     r0lab_unlock(flags);
-    if (shadow_kaddr && g_vfree)
-        g_vfree(shadow_kaddr);
-    g_mmput(mm);
+    r0lab_raw_free_shadow_page(shadow_kaddr);
+    r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);
 }
 
 static void r0lab_raw_reset(struct mm_struct *mm)
@@ -6416,6 +6504,8 @@ static void r0lab_raw_reset_final_page(struct r0lab_raw_shadow_page *page,
                                        uint64_t generation)
 {
     void *shadow_kaddr = NULL;
+    bool mm_count_owned = false;
+    bool mm_users_owned = false;
     bool should_reset = false;
     uint16_t slot_id = 0;
     unsigned long flags;
@@ -6437,12 +6527,13 @@ static void r0lab_raw_reset_final_page(struct r0lab_raw_shadow_page *page,
     flags = r0lab_lock();
     if (page->raw.mm == mm && page->generation == generation) {
         shadow_kaddr = page->raw.shadow_kaddr;
+        mm_count_owned = page->mm_count_owned;
+        mm_users_owned = page->mm_users_owned;
         r0lab_raw_page_slot_reset_locked(page, slot_id);
     }
     r0lab_unlock(flags);
-    if (shadow_kaddr && g_vfree)
-        g_vfree(shadow_kaddr);
-    g_mmput(mm);
+    r0lab_raw_free_shadow_page(shadow_kaddr);
+    r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);
 }
 
 static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
@@ -6454,7 +6545,10 @@ static void r0lab_raw_reset_exited_page(
     struct r0lab_raw_exit_cleanup_slot *cleanup)
 {
     struct r0lab_raw_shadow_page *page;
+    struct mm_struct *mm = NULL;
     void *shadow_kaddr = NULL;
+    bool mm_count_owned = false;
+    bool mm_users_owned = false;
     unsigned long flags;
     uint16_t slot_id;
 
@@ -6465,14 +6559,17 @@ static void r0lab_raw_reset_exited_page(
     if (page->generation == cleanup->generation &&
         page->target_exiting && page->clearing) {
         slot_id = page->slot_id;
+        mm = (struct mm_struct *)page->raw.mm;
         shadow_kaddr = page->raw.shadow_kaddr;
+        mm_count_owned = page->mm_count_owned;
+        mm_users_owned = page->mm_users_owned;
         r0lab_raw_page_slot_reset_locked(page, slot_id);
     } else if (!cleanup->result) {
         cleanup->result = R0LAB_EAGAIN;
     }
     r0lab_unlock(flags);
-    if (shadow_kaddr && g_vfree)
-        g_vfree(shadow_kaddr);
+    r0lab_raw_free_shadow_page(shadow_kaddr);
+    r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);
 }
 
 static int r0lab_raw_wait_for_owner_task_exit(
@@ -6553,9 +6650,6 @@ static int r0lab_raw_cleanup_exited_mm(struct mm_struct *mm,
             slot->page, mm, slot->generation, true);
     }
 
-    for (index = 0; index < count; ++index)
-        g_mmput(mm);
-
     flags = r0lab_lock();
     for (index = 0; index < count; ++index) {
         struct r0lab_raw_exit_cleanup_slot *slot = &cleanup[index];
@@ -6565,8 +6659,8 @@ static int r0lab_raw_cleanup_exited_mm(struct mm_struct *mm,
             continue;
         if (page->generation != slot->generation ||
             page->raw.state != R0LAB_RAW_RESTORED ||
-            page->exit_hook_events !=
-                slot->exit_hook_events_before + 1U) {
+            !slot->exit_hook_events_before ||
+            page->exit_hook_events != slot->exit_hook_events_before) {
             if (!slot->result)
                 slot->result = R0LAB_EFAULT;
         }
@@ -6697,14 +6791,18 @@ static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page)
     source_kaddr = r0lab_raw_source_kernel_address(&page->raw);
     if (!source_kaddr)
         return R0LAB_ENOENT;
-    page->raw.shadow_kaddr = g_vmalloc(R0LAB_RAW_PAGE_SIZE);
+    page->raw.shadow_kaddr = (void *)g_get_free_pages(
+        (unsigned int)r0lab_raw_abi_gfp_kernel(), 0);
     if (!page->raw.shadow_kaddr)
         return R0LAB_ENOMEM;
     memcpy(page->raw.shadow_kaddr, source_kaddr, R0LAB_RAW_PAGE_SIZE);
     r0lab_raw_apply_seed_range(page, 0, R0LAB_RAW_PAGE_SIZE);
+    r0lab_runtime_sync_icache_aliases(
+        (unsigned long)page->raw.shadow_kaddr,
+        (unsigned long)page->raw.shadow_kaddr + R0LAB_RAW_PAGE_SIZE);
     result = r0lab_raw_shadow_pfn_from_kaddr(&page->raw);
     if (result) {
-        g_vfree(page->raw.shadow_kaddr);
+        r0lab_raw_free_shadow_page(page->raw.shadow_kaddr);
         page->raw.shadow_kaddr = NULL;
         return result;
     }
@@ -6714,6 +6812,11 @@ static int r0lab_raw_prepare_shadow(struct r0lab_raw_shadow_page *page)
         page->record.shadow_pfn = page->raw.shadow_pfn;
     }
     r0lab_unlock(flags);
+    pr_info("r0lab-r3o: shadow_ready slot=%u generation=%llu mm=%px va=%lx source_pfn=%lx shadow_pfn=%lx cache_sync=full\n",
+            (unsigned int)page->slot_id,
+            (unsigned long long)page->generation, page->raw.mm,
+            page->raw.address, page->raw.source_pfn,
+            page->raw.shadow_pfn);
     return 0;
 }
 
@@ -6731,13 +6834,17 @@ static int r0lab_raw_arm_worker(void *opaque)
 
     flags = r0lab_lock();
     if (!page || !page->reserving || !page->raw.mm || !g_session.active) {
+        bool mm_count_owned = false;
+        bool mm_users_owned = false;
+
         if (page && page->raw.mm) {
             mm = (struct mm_struct *)page->raw.mm;
+            mm_count_owned = page->mm_count_owned;
+            mm_users_owned = page->mm_users_owned;
             r0lab_raw_page_slot_reset_locked(page, page->slot_id);
         }
         r0lab_unlock(flags);
-        if (mm)
-            g_mmput(mm);
+        r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);
         r0lab_record(R0LAB_EVENT_REJECT, R0LAB_ESRCH);
         return 0;
     }
@@ -6750,10 +6857,17 @@ static int r0lab_raw_arm_worker(void *opaque)
     if (result)
         goto fail;
 
+    result = r0lab_raw_exit_hook_acquire(page);
+    if (result)
+        goto fail_free_shadow;
+    pr_info("r0lab-r3o: exit_protection_ready slot=%u generation=%llu resident=%u before_source_uxn=1\n",
+            (unsigned int)page->slot_id,
+            (unsigned long long)generation, 1U);
+
     if (!page->abort_hook_suppressed) {
         result = r0lab_raw_abort_hook_acquire(page);
         if (result)
-            goto fail_free_shadow;
+            goto fail_unhook;
     }
 
     if (!r0lab_target_mm_live(owner_tgid, mm))
@@ -6762,6 +6876,10 @@ static int r0lab_raw_arm_worker(void *opaque)
     result = r0lab_raw_arm_source_uxn(&page->raw);
     if (result)
         goto fail_unhook;
+    pr_info("r0lab-r3o: source_uxn_installed slot=%u generation=%llu mm=%px va=%lx state=%u\n",
+            (unsigned int)page->slot_id,
+            (unsigned long long)generation, mm, page->raw.address,
+            (unsigned int)page->raw.state);
 
     target_gone = !r0lab_target_mm_live(owner_tgid, mm);
     flags = r0lab_lock();
@@ -6784,6 +6902,9 @@ static int r0lab_raw_arm_worker(void *opaque)
         result = r0lab_raw_start_monitor(page);
         if (result)
             goto fail_restore;
+        pr_info("r0lab-r3o: arm_complete slot=%u generation=%llu owner_tgid=%d mm=%px ref=mm_count monitor=1\n",
+                (unsigned int)page->slot_id,
+                (unsigned long long)generation, owner_tgid, mm);
         r0lab_record(R0LAB_EVENT_RAW_ARM, 0);
         return 0;
     }
@@ -6809,7 +6930,7 @@ fail_unhook:
     (void)r0lab_raw_wait_for_callbacks();
 fail_free_shadow:
     if (page->raw.shadow_kaddr) {
-        g_vfree(page->raw.shadow_kaddr);
+        r0lab_raw_free_shadow_page(page->raw.shadow_kaddr);
         page->raw.shadow_kaddr = NULL;
     }
 fail:
@@ -6838,6 +6959,8 @@ static int r0lab_raw_clear_worker(void *opaque)
     struct r0lab_raw_shadow_page *page = opaque;
     struct mm_struct *mm;
     unsigned long flags;
+    uint64_t generation;
+    uint16_t slot_id;
     int result;
 
     flags = r0lab_lock();
@@ -6847,15 +6970,22 @@ static int r0lab_raw_clear_worker(void *opaque)
         return 0;
     }
     mm = (struct mm_struct *)page->raw.mm;
+    generation = page->generation;
+    slot_id = page->slot_id;
     page->record.state = R0LAB_PAGE_RECORD_RESTORING;
     r0lab_unlock(flags);
 
+    pr_info("r0lab-r3o: clear_begin slot=%u generation=%llu mm=%px va=%lx state=%u\n",
+            (unsigned int)slot_id, (unsigned long long)generation, mm,
+            page->raw.address, (unsigned int)page->raw.state);
     result = page->raw.state == R0LAB_RAW_RESTORED ?
              0 : r0lab_raw_restore_original(&page->raw);
     r0lab_raw_unhook_page(page, true);
     if (!result)
         result = r0lab_raw_wait_for_callbacks();
     r0lab_raw_reset_page(page, mm);
+    pr_info("r0lab-r3o: clear_end slot=%u generation=%llu result=%d pte=original shadow_freed=1 mm_ref_released=1\n",
+            (unsigned int)slot_id, (unsigned long long)generation, result);
     r0lab_record(R0LAB_EVENT_RAW_CLEAR, result);
     return 0;
 }
@@ -7045,7 +7175,9 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
         }
     }
     r0lab_raw_page_slot_reset_locked(slot, slot_id);
+    r0lab_raw_mmgrab(mm);
     slot->raw.mm = mm;
+    slot->mm_count_owned = true;
     slot->raw.address = (unsigned long)page_address;
     slot->generation = ++g_raw_generation;
     slot->record.source_address = slot->raw.address;
@@ -7062,6 +7194,11 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
     slot->reserving = true;
     g_raw_page_table.selected_slot = slot_id;
     r0lab_unlock(flags);
+    g_mmput(mm);
+    pr_info("r0lab-r3o: slot_owned slot=%u generation=%llu owner_tgid=%d mm=%px va=%llx mm_ref=mm_count temp_mm_users_released=1\n",
+            (unsigned int)slot_id, (unsigned long long)slot->generation,
+            r0lab_current_tgid(), mm,
+            (unsigned long long)page_address);
 
     result = r0lab_raw_start_worker(r0lab_raw_arm_worker);
     if (result) {
@@ -7099,6 +7236,8 @@ static long r0lab_raw_ready(uint64_t token, char __user *out_msg, int outlen)
     unsigned long shadow_pfn;
     uint8_t record_backend;
     uint8_t record_state;
+    bool exit_hook_installed;
+    bool mm_count_owned;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -7117,12 +7256,16 @@ static long r0lab_raw_ready(uint64_t token, char __user *out_msg, int outlen)
     shadow_pfn = g_raw_page.raw.shadow_pfn;
     record_backend = g_raw_page.record.backend;
     record_state = g_raw_page.record.state;
+    exit_hook_installed = g_raw_page.exit_hook_installed;
+    mm_count_owned = g_raw_page.mm_count_owned;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_ready page=%llx source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s\n",
+             "raw_ready page=%llx source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s mm_ref=%s exit_hook_installed=%u\n",
              (uint64_t)address, source_pfn & 0xffffUL, shadow_pfn & 0xffffUL,
              r0lab_page_record_backend_name(record_backend),
-             r0lab_page_record_state_name(record_state));
+             r0lab_page_record_state_name(record_state),
+             mm_count_owned ? "mm_count" : "unexpected",
+             exit_hook_installed ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -7220,6 +7363,8 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     bool abort_hook_suppressed;
     bool abort_hook_passthrough;
     bool abort_hook_full;
+    bool exit_hook_installed;
+    bool mm_count_owned;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -7257,14 +7402,18 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     abort_hook_passthrough = page->abort_hook_passthrough;
     abort_hook_full =
         r0lab_raw_page_uses_full_abort_callback_locked(page);
+    exit_hook_installed = page->exit_hook_installed;
+    mm_count_owned = page->mm_count_owned;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u abort_hook_lock=%u abort_hook_inflight=%u abort_hook_iabt_route=%u abort_hook_iabt_transition=%u abort_hook_full=%u\n",
+             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s mm_ref=%s exit_hook_installed=%u abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u abort_hook_lock=%u abort_hook_inflight=%u abort_hook_iabt_route=%u abort_hook_iabt_transition=%u abort_hook_full=%u\n",
              (unsigned int)slot_id, (uint64_t)address,
              (unsigned long long)generation, source_pfn & 0xffffUL,
              shadow_pfn & 0xffffUL,
              r0lab_page_record_backend_name(record_backend),
              r0lab_page_record_state_name(record_state),
+             mm_count_owned ? "mm_count" : "unexpected",
+             exit_hook_installed ? 1U : 0U,
              abort_hook_installed ? 1U : 0U,
              abort_hook_suppressed ? 1U : 0U,
              abort_hook_passthrough ? 1U : 0U,
@@ -10147,8 +10296,6 @@ static long r0lab_raw_exit_hook_arm_common(uint64_t token, uint16_t slot_id,
     char reply[R0LAB_OUTPUT_CAPACITY];
     struct r0lab_raw_shadow_page *page;
     unsigned long flags;
-    bool installed;
-    bool should_install;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -10172,37 +10319,12 @@ static long r0lab_raw_exit_hook_arm_common(uint64_t token, uint16_t slot_id,
         result = R0LAB_EAGAIN;
         goto record;
     }
-    installed = page->exit_hook_installed;
-    should_install = !installed && r0lab_raw_exit_hook_users_locked() == 0;
     generation = page->generation;
-    if (!installed) {
-        page->exit_hook_events = 0;
-        page->exit_hook_failures = 0;
-    }
     r0lab_unlock(flags);
 
-    if (should_install) {
-        result = hook_wrap1(g_exit_mmap, r0lab_raw_exit_mmap_before,
-                            NULL, NULL);
-        if (result)
-            goto record;
-    }
-    if (!installed) {
-        flags = r0lab_lock();
-        page = r0lab_raw_page_slot_locked(slot_id);
-        if (page && page->armed && !page->clearing &&
-            page->generation == generation &&
-            page->raw.state == R0LAB_RAW_SHADOW_RX) {
-            page->exit_hook_installed = true;
-        } else {
-            result = R0LAB_EAGAIN;
-        }
-        r0lab_unlock(flags);
-        if (result && should_install) {
-            r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
-            goto record;
-        }
-    }
+    result = r0lab_raw_exit_hook_acquire(page);
+    if (result)
+        goto record;
 
     if (legacy_reply)
         snprintf(reply, sizeof(reply),
@@ -11166,9 +11288,11 @@ static int r0lab_init_raw_bridge(void)
 
     kernel_memstart = (int64_t *)kallsyms_lookup_name("memstart_addr");
     kernel_hwcaps = (unsigned long *)kallsyms_lookup_name("cpu_hwcaps");
-    if (!g_vmalloc || !g_vfree || !g_vmalloc_to_page || !g_raw_down_read ||
+    if (!g_vmalloc || !g_vfree || !g_vmalloc_to_page || !g_get_free_pages ||
+        !g_free_pages || !g_mmdrop || !g_raw_down_read ||
         !g_raw_up_read || !g_raw_spin_lock || !g_raw_spin_unlock ||
-        !g_raw_find_vma || !g_sync_icache_dcache || !g_mte_sync_tags ||
+        !g_raw_find_vma || !g_sync_icache_dcache ||
+        !g_sync_icache_aliases || !g_mte_sync_tags ||
         !kernel_memstart || !kernel_hwcaps)
         return R0LAB_ENOSYS;
 
@@ -12269,6 +12393,9 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
     g_workers_shutdown_requested = false;
     g_workers_live = 0;
     g_raw_abort_hook_transitioning = false;
+    g_raw_abort_resident_callback = NULL;
+    g_raw_exit_hook_resident = false;
+    g_raw_exit_hook_transitioning = false;
     g_clock = (r0lab_clock_fn_t)kallsyms_lookup_name("sched_clock");
     g_current_cpu = (r0lab_current_cpu_fn_t)
         kallsyms_lookup_name("bpf_get_smp_processor_id");
@@ -12292,6 +12419,12 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
     g_msleep = (r0lab_msleep_fn_t)kallsyms_lookup_name("msleep");
     g_get_task_mm = (r0lab_get_task_mm_fn_t)kallsyms_lookup_name("get_task_mm");
     g_mmput = (r0lab_mmput_fn_t)kallsyms_lookup_name("mmput");
+    g_mmdrop = (r0lab_mmdrop_fn_t)
+        r0lab_lookup_first("__mmdrop.cfi_jt", "__mmdrop");
+    g_get_free_pages = (r0lab_get_free_pages_fn_t)
+        r0lab_lookup_first("__get_free_pages.cfi_jt", "__get_free_pages");
+    g_free_pages = (r0lab_free_pages_fn_t)
+        r0lab_lookup_first("free_pages.cfi_jt", "free_pages");
     g_do_mem_abort = (void *)kallsyms_lookup_name("do_mem_abort");
     g_handle_mm_fault = r0lab_lookup_first("handle_mm_fault.cfi_jt",
                                            "handle_mm_fault");
@@ -12323,7 +12456,8 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
         !g_synchronize_rcu || !g_find_get_task || !g_put_task ||
         !g_kthread_create || !g_wake_up_process || !g_kthread_stop ||
         !g_kthread_should_stop || !g_msleep ||
-        !g_get_task_mm || !g_mmput || !g_do_mem_abort)
+        !g_get_task_mm || !g_mmput || !g_mmdrop || !g_get_free_pages ||
+        !g_free_pages || !g_do_mem_abort)
         return R0LAB_ENOSYS;
     result = r0lab_init_raw_bridge();
     if (result)
@@ -12351,6 +12485,7 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
 
 static long r0lab_exit(void *reserved)
 {
+    hook_chain3_callback abort_callback;
     unsigned long flags;
     bool active;
     bool exit_probe_armed;
@@ -12362,6 +12497,7 @@ static long r0lab_exit(void *reserved)
     unsigned int raw_slots;
     unsigned int s4_slots;
     unsigned int workers_live;
+    bool exit_hook_resident;
 
     (void)reserved;
     flags = r0lab_lock();
@@ -12386,8 +12522,20 @@ static long r0lab_exit(void *reserved)
                 workers_live);
         return R0LAB_EBUSY;
     }
-    r0lab_record(R0LAB_EVENT_UNLOAD, 0);
+    flags = r0lab_lock();
     g_initialized = false;
+    abort_callback = g_raw_abort_resident_callback;
+    exit_hook_resident = g_raw_exit_hook_resident;
+    g_raw_abort_resident_callback = NULL;
+    g_raw_exit_hook_resident = false;
+    r0lab_unlock(flags);
+    if (abort_callback)
+        r0lab_hook_detach(g_do_mem_abort, abort_callback, NULL);
+    if (exit_hook_resident)
+        r0lab_hook_detach(g_exit_mmap, r0lab_raw_exit_mmap_before, NULL);
+    if (abort_callback || exit_hook_resident)
+        (void)r0lab_raw_wait_for_callbacks();
+    r0lab_record(R0LAB_EVENT_UNLOAD, 0);
     pr_info("r0lab-m1: unloaded\n");
     return 0;
 }

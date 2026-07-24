@@ -56,7 +56,12 @@ unsigned long r0lab_raw_abi_vma_size(void);
 unsigned long r0lab_raw_abi_pte_uxn_bit(void);
 unsigned long r0lab_raw_abi_pte_user_bit(void);
 unsigned long r0lab_raw_abi_pte_valid_bit(void);
+unsigned long r0lab_raw_abi_gfp_kernel(void);
 
+void r0lab_runtime_sync_icache_aliases(unsigned long start,
+                                      unsigned long end);
+void r0lab_raw_mmgrab(void *mm);
+void r0lab_raw_mmdrop(void *mm);
 int r0lab_raw_capture(struct r0lab_raw_page *page);
 void *r0lab_raw_source_kernel_address(const struct r0lab_raw_page *page);
 int r0lab_raw_shadow_pfn_from_kaddr(struct r0lab_raw_page *page);
