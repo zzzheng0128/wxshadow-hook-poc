@@ -860,7 +860,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'slot count and retained PTE state'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3 observer perturbation | Complete/classified postmortem'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3f abort-hook exposure | Complete/classified stable'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3g passthrough abort wrapper | Planned/source locked'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3g passthrough abort wrapper | Source packet host-verified'
 require_text "$DEVELOPMENT_SEQUENCE" '| 20 | D4-R3g |'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3g-passthrough-wrapper-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md'
@@ -1021,9 +1021,9 @@ require_function_text kpm/r0lab.c r0lab_raw_arm_worker \
 require_function_text kpm/r0lab.c r0lab_raw_arm_worker \
   'r0lab_raw_arm_source_uxn(&page->raw)'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
-  'if (suppress_abort_hook || active->abort_hook_suppressed)'
+  'if (suppress_abort_hook || passthrough_abort_hook ||'
 require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
-  'abort_hook_installed=%u abort_hook_suppressed=%u'
+  'abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u'
 require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_hold_no_abort'
 require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold no-abort '
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=raw-hold-no-abort failures=%d'
@@ -1073,6 +1073,98 @@ reject_function_text scripts/test_raw_abort_hook_exposure_device.sh \
 require_line_before scripts/test_raw_abort_hook_exposure_device.sh \
   'case "$CLEAN_BOOT_CONFIRMED" in' 'ensure_clean_source'
 require_line_before scripts/test_raw_abort_hook_exposure_device.sh \
+  'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
+require_text kpm/r0lab.c 'bool abort_hook_passthrough;'
+require_text kpm/r0lab.c 'raw slot arm abort-passthrough '
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  '(void)args;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  '(void)udata;'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  'args->'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  'r0lab_lock'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  'g_get_task_mm'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  'g_raw_inflight'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  'r0lab_record'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_passthrough \
+  'skip_origin'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
+  'callback = page->abort_hook_passthrough ?'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
+  'result = hook_wrap3(g_do_mem_abort, callback, NULL, NULL);'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
+  'callback = passthrough ? r0lab_raw_before_abort_passthrough :'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'active->abort_hook_passthrough'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_passthrough = page->abort_hook_passthrough;'
+require_line_before kpm/r0lab.c \
+  '    if (!strncmp(args, "raw slot arm abort-passthrough ", 31)) {' \
+  '    if (!strncmp(args, "raw slot arm ", 13)) {'
+require_text lab-app/src/main/cpp/labprobe.c \
+  'r0lab_raw_hold_abort_passthrough'
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw raw-hold abort-passthrough '
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw mode=raw-hold-abort-passthrough failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c \
+  '"raw slot arm abort-passthrough 0x%llx %u 0x%llx"'
+require_text lab-app/src/main/cpp/labprobe.c \
+  'abort_hook_passthrough[index] != 1'
+require_line_before lab-app/src/main/cpp/labprobe.c \
+  '    if (!strncmp(args, "raw raw-hold no-abort ", 22)) {' \
+  '    if (!strncmp(args, "raw raw-hold abort-passthrough ", 31)) {'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'RAW_ABORT_PASSTHROUGH_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'IDLE_SECONDS=15'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'git -C "$ROOT" status --porcelain --untracked-files=no'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'raw raw-hold abort-passthrough $TOKEN'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'abort_hook_installed=1'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'abort_hook_suppressed=0'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'abort_hook_passthrough=1'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'D4-R3g-source-uxn-abort-passthrough-stable'
+require_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'D4-R3g-source-uxn-abort-passthrough-unstable'
+require_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  cleanup 'if [ "$HOLD_ACTIVE" -eq 1 ]; then'
+require_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'adb_device get-state'
+require_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport \
+  'preserve_active_hold 1 D4-R3g-source-uxn-abort-passthrough-unstable'
+require_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport \
+  'preserve_active_hold 0 D4-R3g-source-uxn-abort-passthrough-stable'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'capture_pstore'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'wait-for-device'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'adb_device shell getprop'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'raw slot clear'
+reject_function_text scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  poll_adb_transport 'module unload'
+require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
+  'case "$CLEAN_BOOT_CONFIRMED" in' 'ensure_clean_source'
+require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
   'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
 require_text scripts/classify_raw_observer_perturbation_evidence.sh \
   'RAW_OBSERVER_HISTORICAL_BASELINE_LOG'
