@@ -254,6 +254,10 @@ require_text "$DEVICE_SCRIPT" 'boot ID changed:'
 require_text "$DEVICE_SCRIPT" 'warn_count changed:'
 require_text "$DEVICE_SCRIPT" 'wait_for_failure_device'
 require_text "$DEVICE_SCRIPT" 'failure_pstore_console_begin'
+require_text "$DEVICE_SCRIPT" 'R3O_LOG_START_UPTIME=$(read_uptime)'
+require_text "$DEVICE_SCRIPT" \
+  'LC_ALL=C awk -v start="$R3O_LOG_START_UPTIME"'
+reject_text "$DEVICE_SCRIPT" 'R3O_LOG_BEFORE_COUNT'
 require_text "$DEVICE_SCRIPT" 'raw raw-hold clear $TOKEN_2'
 require_text "$DEVICE_SCRIPT" "'states=2/0'"
 require_text "$DEVICE_SCRIPT" 'require_exit_only_callbacks_status'

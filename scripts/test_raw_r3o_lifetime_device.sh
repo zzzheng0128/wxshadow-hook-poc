@@ -21,7 +21,7 @@ EVIDENCE_DIR="$ROOT/build/evidence"
 STATE_FILE="$EVIDENCE_DIR/r3o-device-state.env"
 EVIDENCE="$EVIDENCE_DIR/raw-r3o-stage-${STAGE:-invalid}-$(date +%Y%m%d-%H%M%S).log"
 FAIL_REASON=unexpected-exit
-R3O_LOG_BEFORE_COUNT=0
+R3O_LOG_START_UPTIME=0
 FAILURE_ADB_STATE=
 FAILURE_RECOVERY_WAIT=0
 
@@ -135,6 +135,12 @@ read_warn_count() {
     LC_ALL=C tr -d '\r'
 }
 
+read_uptime() {
+  adb_device shell cat /proc/uptime |
+    LC_ALL=C awk '{ print $1 }' |
+    LC_ALL=C tr -d '\r'
+}
+
 read_pid() {
   process=$1
   adb_device shell pidof "$process" |
@@ -157,15 +163,26 @@ r3o_dmesg() {
 }
 
 start_log_window() {
-  logs=$(r3o_dmesg)
-  R3O_LOG_BEFORE_COUNT=$(printf '%s\n' "$logs" |
-    LC_ALL=C grep -c -F 'r0lab-r3o:' || true)
+  R3O_LOG_START_UPTIME=$(read_uptime)
+  [ -n "$R3O_LOG_START_UPTIME" ] ||
+    fail "failed to establish r3o log-window uptime"
 }
 
 finish_log_window() {
   logs=$(r3o_dmesg)
-  start=$((R3O_LOG_BEFORE_COUNT + 1))
-  R3O_STAGE_LOGS=$(printf '%s\n' "$logs" | sed -n "${start},\$p")
+  R3O_STAGE_LOGS=$(
+    printf '%s\n' "$logs" |
+      LC_ALL=C awk -v start="$R3O_LOG_START_UPTIME" '
+        {
+          line = $0
+          sub(/^\[[[:space:]]*/, "", line)
+          timestamp = line
+          sub(/\].*$/, "", timestamp)
+          if ((timestamp + 0) >= (start + 0))
+            print
+        }
+      '
+  )
   printf '%s\n' "$R3O_STAGE_LOGS" >> "$EVIDENCE"
 }
 
