@@ -342,6 +342,7 @@ F6_D3_PLAN=docs/wxshadow-f6-d3-two-slot-descriptor-routing-plan.md
 F6_D4_PLAN=docs/wxshadow-f6-d4-negative-descriptor-controls-plan.md
 F7_STRESS_PLAN=docs/wxshadow-f7-final-lifecycle-stress-plan.md
 F7_STRESS_RUNNER=scripts/test_f7_lifecycle_stress_device.sh
+F8_ARTIFACT=docs/wxshadow-final-lab-artifact.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
@@ -391,6 +392,7 @@ require_file "$F6_D3_PLAN"
 require_file "$F6_D4_PLAN"
 require_file "$F7_STRESS_PLAN"
 require_file "$F7_STRESS_RUNNER"
+require_file "$F8_ARTIFACT"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
@@ -532,7 +534,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_fork_hook_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'scripts/test_raw_fork_hook_routing_device.sh'
 require_text "$DEVELOPMENT_SEQUENCE" 'file-backed RX plus shadow-PTE access-flag clear'
 require_text "$DEVELOPMENT_SEQUENCE" 'If a failed positive smoke exposes a new development gap, classify it'
-require_text "$DEVELOPMENT_SEQUENCE" 'Do not pull these behaviors into F4 source checkpoints.'
+require_text "$DEVELOPMENT_SEQUENCE" 'Do not reopen these behaviors without a new plan'
 require_text "$DEVELOPMENT_SEQUENCE" 'Development Control Loop'
 require_text "$DEVELOPMENT_SEQUENCE" 'D1 source scaffold has static/build evidence.'
 require_text "$DEVELOPMENT_SEQUENCE" 'build/evidence/raw-fork-hook-20260724-031422.log'
@@ -3399,7 +3401,7 @@ require_text scripts/verify_wxshadow_reference_source.sh 'EXPECTED_FUNCTION_BLOC
 require_text scripts/verify_wxshadow_reference_source.sh '2b2fb7ade7e572fd5aea8a79f39bd9c743b1ee1dc57552449209612e69903191'
 require_text "$REFERENCE_COVERAGE" 'annotated function count: 141'
 require_text "$REFERENCE_COVERAGE" '`fork-exit-routing`'
-require_text "$REFERENCE_COVERAGE" 'No F5,'
+require_text "$REFERENCE_COVERAGE" 'F4.7, F5-D0, F6, and F7 now pass'
 require_text "$REFERENCE_INVENTORY" 'shadow_page_switch_mapping|pte-transaction'
 require_text "$REFERENCE_INVENTORY" 'exit_mmap_before_hook|fork-exit-routing'
 require_text "$REFERENCE_INVENTORY" 'scan_mm_struct_offsets|layout-scanning'
@@ -3668,6 +3670,32 @@ require_text "$F7_STRESS_RUNNER" \
   'phase=%s modules=empty warn_count=%s'
 require_text "$F7_STRESS_RUNNER" \
   'warn_after=%s result=pass'
+require_text "$F8_ARTIFACT" \
+  'wxshadow Final Lab Artifact'
+require_text "$F8_ARTIFACT" \
+  'Status: F8 final artifact candidate for the fixed Pixel 7 Lab environment.'
+require_text "$F8_ARTIFACT" \
+  'wxshadow-final-lab-page-table-20260725'
+require_text "$F8_ARTIFACT" \
+  'sha256=2b2fb7ade7e572fd5aea8a79f39bd9c743b1ee1dc57552449209612e69903191'
+require_text "$F8_ARTIFACT" \
+  'annotated_functions=141'
+require_text "$F8_ARTIFACT" \
+  'page-owned raw slots with fixed Lab admission and generation checks'
+require_text "$F8_ARTIFACT" \
+  'S4 BRK/step descriptor routing'
+require_text "$F8_ARTIFACT" \
+  'arbitrary process, arbitrary address'
+require_text "$F8_ARTIFACT" \
+  'raw-XOM, `PTE_USER` clearing'
+require_text "$F8_ARTIFACT" \
+  'ANDROID_SERIAL=32250DLH2000Z3 scripts/test_f7_lifecycle_stress_device.sh'
+require_text "$F8_ARTIFACT" \
+  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+require_text "$F8_ARTIFACT" \
+  'build/evidence/v1-device-20260724T170452Z/manifest.log'
+require_text "$F8_ARTIFACT" \
+  'It does not prove behavior on another device'
 require_text "$FINAL_ROADMAP" \
   'docs/wxshadow-f7-final-lifecycle-stress-plan.md'
 require_text "$FINAL_ROADMAP" \
@@ -3680,6 +3708,10 @@ require_text "$FINAL_ROADMAP" \
   'passed all 29'
 require_text "$FINAL_ROADMAP" \
   'ordered phases and preserved `warn_count=3`'
+require_text "$FINAL_ROADMAP" \
+  'docs/wxshadow-final-lab-artifact.md'
+require_text "$FINAL_ROADMAP" \
+  'wxshadow-final-lab-page-table-20260725'
 require_text "$DEVELOPMENT_SEQUENCE" '| 37 | F7-D0 | Final lifecycle stress plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'not historical source-tagged R3o scripts'
@@ -3689,6 +3721,11 @@ require_text "$DEVELOPMENT_SEQUENCE" \
 require_text "$DEVELOPMENT_SEQUENCE" '| 39 | F7-D2 | Final lifecycle stress device evidence |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'three child `status=pass evidence=` rows'
+require_text "$DEVELOPMENT_SEQUENCE" '| 40 | F8 | Final Lab artifact |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'final milestone tag `wxshadow-final-lab-page-table-20260725`'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'F4.7, F5-D0, F6, and F7 are closed on the pinned Pixel 7 Lab environment'
 require_text "$KPM_COMPAT_MATRIX" \
   'F7 lifecycle stress runner leave no module'
 require_text "$KPM_COMPAT_MATRIX" \
@@ -3699,6 +3736,16 @@ require_text "$VERIFICATION" \
   'scripts/test_f7_lifecycle_stress_device.sh'
 require_text "$VERIFICATION" \
   'build/evidence/v1-device-20260724T170452Z/manifest.log'
+require_text "$VERIFICATION" \
+  'docs/wxshadow-final-lab-artifact.md'
+require_text "$REPLICA_PLAN" \
+  'current final lifecycle stress artifact'
+require_text "$REPLICA_PLAN" \
+  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+require_text "$REFERENCE_COVERAGE" \
+  'F7-D2 then refreshed current-HEAD lifecycle stress'
+require_text "$REFERENCE_COVERAGE" \
+  'F8 packages the final artifact'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
