@@ -1388,7 +1388,8 @@ require_text scripts/verify_d4_r3l_plan_packet.sh \
 require_text scripts/verify_v1_contract.sh \
   'D4-R3l plan packet contains a forbidden changed path'
 require_text "$F46_D4_R3M_PLAN" 'wxshadow F4.6 D4-R3m IABT Transition And Restore-ABI Plan'
-require_text "$F46_D4_R3M_PLAN" 'Status: first device row classified as Lab ready-buffer truncation; retry1'
+require_text "$F46_D4_R3M_PLAN" 'Status: first device row classified as Lab ready-buffer truncation and'
+require_text "$F46_D4_R3M_PLAN" 'physical-reboot closed; retry1 source is host-verified and ready for device.'
 require_text "$F46_D4_R3M_PLAN" 'D4-R3m-global-abort-iabt-transition-restore-abi'
 require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition'
 require_text "$F46_D4_R3M_PLAN" 'raw slot arm abort-iabt-transition <token> <slot> <page>'
@@ -1423,11 +1424,17 @@ require_text "$F46_D4_R3M_PLAN" 'runtime_sha256=ee3305a49f251067aad653c8369264e4
 require_text "$F46_D4_R3M_PLAN" 'classification=D4-R3m-source-uxn-iabt-transition-unstable'
 require_text "$F46_D4_R3M_PLAN" 'ready_rc=320'
 require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition=-1'
+require_text "$F46_D4_R3M_PLAN" 'physical_reboot=confirmed'
+require_text "$F46_D4_R3M_PLAN" 'post_reboot_boot_id=f5d754c7-b25c-4375-894f-b5a2e374cbf8'
+require_text "$F46_D4_R3M_PLAN" 'folkpatch_module_list=empty'
+require_text "$F46_D4_R3M_PLAN" 'reboot_evidence=build/evidence/raw-abort-iabt-transition-reboot-20260724-163522.log'
+require_text "$F46_D4_R3M_PLAN" 'reboot_evidence_sha256=9cfc5e0af0626e0caddab16d3487f890712f94ec170ec70cea5aa3dc73d66012'
 require_text "$F46_D4_R3M_PLAN" 'retry_source_tag=wxshadow-v2-f46-d4-r3m-iabt-transition-retry1-source-20260724'
 require_text "$F46_D4_R3M_PLAN" 'retry_kpm_sha256=c29b114970e94e4b6d559728a1e72dfaadc441f9333c906de67554379c121feb'
 require_text "$F46_D4_R3M_PLAN" 'retry_apk_lib_entry_sha256=48a6317362355be5e8070ecfa31179cc163f777bf46a865404986255da127a9d'
-require_text "$F46_D4_R3M_PLAN" 'retry_device_script_sha256=555ac5d539f00131e316d5ed403c16271d756c23b55086df97ce74dfe311217e'
-require_text "$F46_D4_R3M_PLAN" 'device_access=locked_pending_physical_reboot'
+require_text "$F46_D4_R3M_PLAN" 'retry_device_script_sha256=34b5edfe7081f87afefe99c06078f34f515aeb946d01d424b7ab664fd5486c02'
+require_text "$F46_D4_R3M_PLAN" 'retry_pre_hold_boot_id=f5d754c7-b25c-4375-894f-b5a2e374cbf8'
+require_text "$F46_D4_R3M_PLAN" 'device_access=ready_after_physical_reboot_closure'
 require_text scripts/verify_d4_r3m_plan_packet.sh \
   'D4_R3M_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1793,7 +1800,7 @@ require_text scripts/test_raw_abort_iabt_transition_device.sh \
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'EXPECTED_SERIAL=32250DLH2000Z3'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
-  'EXPECTED_PRE_HOLD_BOOT_ID=922ad5c1-a406-4993-8c76-8b51d6d1a546'
+  'EXPECTED_PRE_HOLD_BOOT_ID=f5d754c7-b25c-4375-894f-b5a2e374cbf8'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'IDLE_SECONDS=15'
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
@@ -1815,7 +1822,7 @@ require_text scripts/test_raw_abort_iabt_transition_device.sh \
 require_text scripts/test_raw_abort_iabt_transition_device.sh \
   'D4-R3m-setup-blocked'
 require_file_sha256 scripts/test_raw_abort_iabt_transition_device.sh \
-  555ac5d539f00131e316d5ed403c16271d756c23b55086df97ce74dfe311217e
+  34b5edfe7081f87afefe99c06078f34f515aeb946d01d424b7ab664fd5486c02
 require_function_text scripts/test_raw_abort_iabt_transition_device.sh \
   poll_adb_transport 'state=$(adb_device get-state 2>&1)'
 reject_function_text scripts/test_raw_abort_iabt_transition_device.sh \
