@@ -339,6 +339,7 @@ FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
 F5_DECISION_PLAN=docs/wxshadow-f5-hidden-read-decision-plan.md
 F6_BRK_STEP_PLAN=docs/wxshadow-f6-brk-step-descriptor-abi-plan.md
 F6_D3_PLAN=docs/wxshadow-f6-d3-two-slot-descriptor-routing-plan.md
+F6_D4_PLAN=docs/wxshadow-f6-d4-negative-descriptor-controls-plan.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
@@ -385,6 +386,7 @@ require_file "$FINAL_ROADMAP"
 require_file "$F5_DECISION_PLAN"
 require_file "$F6_BRK_STEP_PLAN"
 require_file "$F6_D3_PLAN"
+require_file "$F6_D4_PLAN"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
@@ -3519,10 +3521,33 @@ require_text "$F6_BRK_STEP_PLAN" \
   'scripts/test_s4_descriptor_routing_device.sh'
 require_text "$F6_BRK_STEP_PLAN" \
   'scripts/test_s4_descriptor_negative_device.sh'
+require_text "$F6_BRK_STEP_PLAN" \
+  'docs/wxshadow-f6-d4-negative-descriptor-controls-plan.md'
+require_text "$F6_D4_PLAN" \
+  'wxshadow F6-D4 Negative Descriptor Controls Plan'
+require_text "$F6_D4_PLAN" \
+  'Status: F6-D4-D0 plan/contract gate.'
+require_text "$F6_D4_PLAN" \
+  'wxshadow-v2-f6-d3-two-slot-descriptor-routing-20260724'
+require_text "$F6_D4_PLAN" \
+  'KPM command:     s4 descriptor negative probe <token>'
+require_text "$F6_D4_PLAN" \
+  'The real descriptor BRK and step matchers must reject descriptors whose'
+require_text "$F6_D4_PLAN" \
+  'baseline_brk_matches=2 baseline_step_matches=2'
+require_text "$F6_D4_PLAN" \
+  'reject_checks=11 state_intact=1'
+require_text "$F6_D4_PLAN" \
+  'wrong_brk_slot_rejected=1'
+require_text "$F6_D4_PLAN" \
+  'bad_register_index_rejected=1'
+require_text "$F6_D4_PLAN" \
+  'wrong_step_tid_rejected=1'
 require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 32 | F6-D1 | BRK/step descriptor scaffold |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 33 | F6-D2 | Slot-0 S4 descriptor compatibility migration |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 34 | F6-D3 | Two-slot S4 descriptor routing |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 35 | F6-D4-D0 | Negative descriptor controls plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'arbitrary register/value mutation remains rejected'
 require_text "$REFERENCE_COVERAGE" \
