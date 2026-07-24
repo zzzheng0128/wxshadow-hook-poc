@@ -349,6 +349,8 @@ struct r0lab_s4_descriptor {
     uint32_t step_offset;
     uint32_t brk_events;
     uint32_t step_events;
+    uint32_t pte_begin_events;
+    uint32_t pte_finish_events;
     uint32_t reject_events;
     uint32_t register_index;
     uint64_t register_value;
@@ -773,6 +775,8 @@ static uint64_t r0lab_now(void)
     return g_clock ? g_clock() : 0;
 }
 
+static int r0lab_s4_restore_descriptor_pages(bool final);
+
 static bool r0lab_worker_should_stop(void)
 {
     unsigned long flags;
@@ -1160,6 +1164,66 @@ static bool r0lab_s4_descriptor_step_matches_locked(
         pc >= descriptor->page_address + R0LAB_RAW_PAGE_SIZE)
         return false;
     return pc == descriptor->page_address + descriptor->step_offset;
+}
+
+static struct r0lab_raw_shadow_page *
+r0lab_s4_descriptor_find_brk_locked(unsigned long pc, uint64_t esr)
+{
+    unsigned int index;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+
+        if (r0lab_s4_descriptor_brk_matches_locked(page, pc, esr))
+            return page;
+    }
+    return NULL;
+}
+
+static struct r0lab_raw_shadow_page *
+r0lab_s4_descriptor_find_step_locked(unsigned long pc)
+{
+    unsigned int index;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+
+        if (r0lab_s4_descriptor_step_matches_locked(page, pc))
+            return page;
+    }
+    return NULL;
+}
+
+static bool r0lab_s4_descriptor_has_armed_locked(void)
+{
+    unsigned int index;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        const struct r0lab_s4_descriptor *descriptor =
+            &g_raw_page_table.slots[index].s4_descriptor;
+
+        if (r0lab_s4_descriptor_owned_locked(descriptor) &&
+            descriptor->state == R0LAB_S4_DESCRIPTOR_ARMED_SHADOW)
+            return true;
+    }
+    return false;
+}
+
+static void r0lab_s4_descriptor_clear_step_tid_locked(pid_t tid)
+{
+    unsigned int index;
+
+    if (!tid)
+        return;
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_s4_descriptor *descriptor =
+            &g_raw_page_table.slots[index].s4_descriptor;
+
+        if (descriptor->step_tid == tid)
+            descriptor->step_tid = 0;
+    }
 }
 
 static unsigned long r0lab_raw_page_base(unsigned long address)
@@ -1817,6 +1881,7 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
     bool reg_write = false;
     uint64_t raw_generation = 0;
     uint64_t reg_value = 0;
+    struct r0lab_raw_shadow_page *raw_page = NULL;
     int raw_result = 0;
 
     (void)udata;
@@ -1837,15 +1902,16 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
         event_pc = regs->pc;
         event_x0 = regs->regs[0];
         event_x30 = regs->regs[30];
-        if (step_ready && g_s4_brk.raw_step_mode) {
-            struct r0lab_s4_descriptor *descriptor =
-                &g_raw_page.s4_descriptor;
+        if (step_ready && g_s4_brk.raw_step_mode &&
+            g_s4_brk.state == R0LAB_S4_HOOKED) {
+            raw_page = r0lab_s4_descriptor_find_brk_locked(regs->pc, esr);
+            if (raw_page) {
+                struct r0lab_s4_descriptor *descriptor =
+                    &raw_page->s4_descriptor;
 
-            if (r0lab_s4_descriptor_brk_matches_locked(&g_raw_page,
-                                                       regs->pc, esr)) {
                 ++g_s4_brk.brk_events;
                 ++descriptor->brk_events;
-                g_raw_page.transitioning = true;
+                raw_page->transitioning = true;
                 raw_generation = descriptor->generation;
                 raw_begin = true;
                 matched = true;
@@ -1870,15 +1936,15 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
     r0lab_unlock(flags);
 
     if (raw_begin)
-        raw_result = r0lab_raw_begin_stepping(&g_raw_page.raw);
+        raw_result = r0lab_raw_begin_stepping(&raw_page->raw);
 
     if (raw_begin) {
         flags = r0lab_lock();
-        if (g_raw_page.generation == raw_generation) {
+        if (raw_page->generation == raw_generation) {
             struct r0lab_s4_descriptor *descriptor =
-                &g_raw_page.s4_descriptor;
+                &raw_page->s4_descriptor;
 
-            g_raw_page.transitioning = false;
+            raw_page->transitioning = false;
             if (!raw_result && g_s4_brk.armed && !g_s4_brk.clearing &&
                 g_s4_brk.raw_step_mode &&
                 g_s4_brk.state == R0LAB_S4_HOOKED &&
@@ -1893,7 +1959,8 @@ static void r0lab_s4_brk_before(hook_fargs3_t *args, void *udata)
                 descriptor->step_tid = r0lab_current_tid();
                 ++g_s4_brk.step_enable_events;
                 ++g_s4_brk.pte_begin_events;
-                g_raw_page.record.state = R0LAB_PAGE_RECORD_ORIGINAL_STEP;
+                ++descriptor->pte_begin_events;
+                raw_page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_STEP;
                 if (descriptor->mode == R0LAB_S4_DESCRIPTOR_MODE_RAW_REG) {
                     reg_value = descriptor->register_value;
                     regs->regs[descriptor->register_index] = reg_value;
@@ -1935,6 +2002,7 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
     bool raw_finish = false;
     bool raw_step_mode = false;
     uint64_t raw_generation = 0;
+    struct r0lab_raw_shadow_page *raw_page = NULL;
     int raw_result = 0;
 
     (void)udata;
@@ -1950,15 +2018,15 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
         g_session.active && g_session.owner_tgid == r0lab_current_tgid()) {
         raw_step_mode = g_s4_brk.raw_step_mode;
         if (raw_step_mode) {
-            struct r0lab_s4_descriptor *descriptor =
-                &g_raw_page.s4_descriptor;
+            if (g_s4_brk.state == R0LAB_S4_STEP_ARMED)
+                raw_page = r0lab_s4_descriptor_find_step_locked(regs->pc);
+            if (raw_page) {
+                struct r0lab_s4_descriptor *descriptor =
+                    &raw_page->s4_descriptor;
 
-            if (g_s4_brk.state == R0LAB_S4_STEP_ARMED &&
-                r0lab_s4_descriptor_step_matches_locked(&g_raw_page,
-                                                        regs->pc)) {
                 ++g_s4_brk.step_disable_events;
                 disable_step = true;
-                g_raw_page.transitioning = true;
+                raw_page->transitioning = true;
                 raw_generation = descriptor->generation;
                 raw_finish = true;
                 args->skip_origin = 1;
@@ -1980,15 +2048,15 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
     r0lab_unlock(flags);
 
     if (raw_finish)
-        raw_result = r0lab_raw_finish_stepping(&g_raw_page.raw);
+        raw_result = r0lab_raw_finish_stepping(&raw_page->raw);
 
     if (raw_finish) {
         flags = r0lab_lock();
-        if (g_raw_page.generation == raw_generation) {
+        if (raw_page->generation == raw_generation) {
             struct r0lab_s4_descriptor *descriptor =
-                &g_raw_page.s4_descriptor;
+                &raw_page->s4_descriptor;
 
-            g_raw_page.transitioning = false;
+            raw_page->transitioning = false;
             if (!raw_result && g_s4_brk.armed && !g_s4_brk.clearing &&
                 g_s4_brk.raw_step_mode &&
                 r0lab_s4_descriptor_owned_locked(descriptor) &&
@@ -2000,11 +2068,13 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
                 ++g_s4_brk.step_events;
                 ++descriptor->step_events;
                 ++g_s4_brk.pte_finish_events;
-                g_s4_brk.state = R0LAB_S4_STEP_OBSERVED;
+                ++descriptor->pte_finish_events;
                 descriptor->state =
                     R0LAB_S4_DESCRIPTOR_STEP_MATCHED_SHADOW;
                 descriptor->step_tid = 0;
-                g_raw_page.record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
+                g_s4_brk.state = r0lab_s4_descriptor_has_armed_locked() ?
+                    R0LAB_S4_HOOKED : R0LAB_S4_STEP_OBSERVED;
+                raw_page->record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
                 matched = true;
             }
         }
@@ -2017,8 +2087,7 @@ static void r0lab_s4_step_before(hook_fargs3_t *args, void *udata)
         flags = r0lab_lock();
         if (g_s4_brk.step_tid == r0lab_current_tid())
             g_s4_brk.step_tid = 0;
-        if (g_raw_page.s4_descriptor.step_tid == r0lab_current_tid())
-            g_raw_page.s4_descriptor.step_tid = 0;
+        r0lab_s4_descriptor_clear_step_tid_locked(r0lab_current_tid());
         r0lab_unlock(flags);
     }
 
@@ -2071,6 +2140,60 @@ static void r0lab_s4_unhook(void)
         (void)r0lab_s4_wait_for_callbacks();
 }
 
+static bool r0lab_s4_raw_state_needs_restore(unsigned long state)
+{
+    return state == R0LAB_RAW_SOURCE_UXN || state == R0LAB_RAW_SHADOW_RX ||
+           state == R0LAB_RAW_ORIGINAL_STEP ||
+           state == R0LAB_RAW_ORIGINAL_READ;
+}
+
+static bool r0lab_s4_raw_page_owned_locked(
+    const struct r0lab_raw_shadow_page *page)
+{
+    return r0lab_raw_page_slot_owned_locked(page) &&
+           (r0lab_s4_descriptor_owned_locked(&page->s4_descriptor) ||
+            page->s4_shadow_brk_layout || page->s4_shadow_reg_layout);
+}
+
+static void r0lab_s4_prepare_descriptor_slot_locked(
+    struct r0lab_raw_shadow_page *slot, uint16_t slot_id,
+    struct mm_struct *raw_mm, uint64_t page_address)
+{
+    r0lab_raw_page_slot_reset_locked(slot, slot_id);
+    slot->raw.mm = raw_mm;
+    slot->mm_users_owned = true;
+    slot->raw.address = (unsigned long)page_address;
+    slot->generation = ++g_raw_generation;
+    slot->record.source_address = slot->raw.address;
+    slot->record.generation = slot->generation;
+    slot->record.backend = R0LAB_PAGE_RECORD_RAW_TWO_PFN;
+    slot->record.state = R0LAB_PAGE_RECORD_PREPARING;
+    slot->s4_shadow_brk_layout = true;
+    slot->s4_shadow_reg_layout = false;
+    r0lab_s4_descriptor_prepare_locked(slot, raw_mm, false);
+    slot->reserving = true;
+}
+
+static int r0lab_s4_activate_descriptor_pages(void)
+{
+    unsigned int index;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+        int result;
+
+        result = r0lab_raw_prepare_shadow(page);
+        if (!result)
+            result = r0lab_raw_arm_source_uxn(&page->raw);
+        if (!result)
+            result = r0lab_raw_activate_shadow(&page->raw);
+        if (result)
+            return result;
+    }
+    return 0;
+}
+
 static void r0lab_s4_reset(struct mm_struct *mm)
 {
     unsigned long flags = r0lab_lock();
@@ -2114,7 +2237,6 @@ static int r0lab_s4_monitor_worker(void *opaque)
     struct mm_struct *mm;
     unsigned long flags;
     uint64_t generation;
-    uint64_t raw_generation;
     pid_t owner_tgid;
     bool raw_step_mode;
     int result;
@@ -2126,7 +2248,6 @@ static int r0lab_s4_monitor_worker(void *opaque)
         return 0;
     }
     generation = slot->generation;
-    raw_generation = g_raw_page.generation;
     raw_step_mode = slot->raw_step_mode;
     r0lab_unlock(flags);
 
@@ -2179,12 +2300,7 @@ static int r0lab_s4_monitor_worker(void *opaque)
     r0lab_s4_unhook();
     result = r0lab_s4_wait_for_callbacks();
     if (!result && raw_step_mode)
-        result = r0lab_raw_restore_original(&g_raw_page.raw);
-    if (!result && raw_step_mode)
-        result = r0lab_raw_wait_for_callbacks();
-    if (raw_step_mode)
-        r0lab_raw_reset_final((struct mm_struct *)g_raw_page.raw.mm,
-                              raw_generation);
+        result = r0lab_s4_restore_descriptor_pages(true);
     r0lab_s4_reset_final(mm, generation);
     r0lab_close_exited_session(owner_tgid);
     r0lab_record(R0LAB_EVENT_S4_CLEAR, result);
@@ -2353,15 +2469,9 @@ static long r0lab_s4_brk_arm(uint64_t token, uint64_t target_address,
     if (result) {
 fail_reserved:
         if (raw_step_mode) {
-            int restore_result = 0;
+            int restore_result = r0lab_s4_restore_descriptor_pages(false);
 
-            if (g_raw_page.raw.state == R0LAB_RAW_SOURCE_UXN ||
-                g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX ||
-                g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_STEP)
-                restore_result = r0lab_raw_restore_original(&g_raw_page.raw);
-            if (!restore_result)
-                r0lab_raw_reset(raw_mm);
-            else
+            if (restore_result)
                 result = restore_result;
         }
         r0lab_s4_reset(mm);
@@ -2372,15 +2482,9 @@ fail_reserved:
     if (result) {
         r0lab_s4_unhook();
         if (raw_step_mode) {
-            int restore_result = 0;
+            int restore_result = r0lab_s4_restore_descriptor_pages(false);
 
-            if (g_raw_page.raw.state == R0LAB_RAW_SOURCE_UXN ||
-                g_raw_page.raw.state == R0LAB_RAW_SHADOW_RX ||
-                g_raw_page.raw.state == R0LAB_RAW_ORIGINAL_STEP)
-                restore_result = r0lab_raw_restore_original(&g_raw_page.raw);
-            if (!restore_result)
-                r0lab_raw_reset(raw_mm);
-            else
+            if (restore_result)
                 result = restore_result;
         }
         r0lab_s4_reset(mm);
@@ -2409,6 +2513,219 @@ fail_reserved:
 record:
     r0lab_record(R0LAB_EVENT_REJECT, result);
     return result;
+}
+
+static long r0lab_s4_descriptor_routing_arm(uint64_t token, uint64_t page0,
+                                            uint64_t page1,
+                                            char __user *out_msg, int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct mm_struct *mm;
+    struct mm_struct *raw_mms[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {NULL, NULL};
+    uint64_t pages[R0LAB_RAW_PAGE_SLOT_CAPACITY];
+    unsigned long flags;
+    hook_err_t brk_hook_result;
+    hook_err_t step_hook_result;
+    unsigned int index;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    if (!g_s4_brk_handler || !g_s4_single_step_handler ||
+        !g_s4_user_enable_single_step || !g_s4_user_disable_single_step) {
+        result = R0LAB_ENOSYS;
+        goto record;
+    }
+    if (!page0 || !page1 || page0 == page1 ||
+        (page0 & (R0LAB_RAW_PAGE_SIZE - 1UL)) ||
+        (page1 & (R0LAB_RAW_PAGE_SIZE - 1UL))) {
+        result = R0LAB_EINVAL;
+        goto record;
+    }
+    mm = g_get_task_mm(current);
+    if (!mm) {
+        result = R0LAB_ESRCH;
+        goto record;
+    }
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        raw_mms[index] = g_get_task_mm(current);
+        if (!raw_mms[index]) {
+            while (index)
+                g_mmput(raw_mms[--index]);
+            g_mmput(mm);
+            result = R0LAB_ESRCH;
+            goto record;
+        }
+    }
+
+    pages[0] = page0;
+    pages[1] = page1;
+    flags = r0lab_lock();
+    if (!g_session.active || g_session.owner_tgid != r0lab_current_tgid() ||
+        g_session.token != token || r0lab_hwbp_slot_count_locked() ||
+        r0lab_m3_slot_count_locked() || r0lab_m4_slot_count_locked() ||
+        r0lab_raw_slot_count_locked() || r0lab_s4_slot_count_locked() ||
+        r0lab_raw_page_table_has_aux_state_locked()) {
+        r0lab_unlock(flags);
+        for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index)
+            g_mmput(raw_mms[index]);
+        g_mmput(mm);
+        result = R0LAB_EBUSY;
+        goto record;
+    }
+
+    memset(&g_s4_brk, 0, sizeof(g_s4_brk));
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index)
+        r0lab_s4_prepare_descriptor_slot_locked(
+            &g_raw_page_table.slots[index], (uint16_t)index, raw_mms[index],
+            pages[index]);
+    g_raw_page_table.selected_slot = R0LAB_RAW_PRIMARY_SLOT;
+    g_s4_brk.mm = mm;
+    g_s4_brk.target_address = (unsigned long)page0;
+    g_s4_brk.generation = ++g_s4_generation;
+    g_s4_brk.state = R0LAB_S4_PREPARING;
+    g_s4_brk.step_mode = true;
+    g_s4_brk.raw_step_mode = true;
+    g_s4_brk.reserving = true;
+    r0lab_unlock(flags);
+
+    result = r0lab_s4_activate_descriptor_pages();
+    if (result)
+        goto fail_reserved;
+
+    brk_hook_result = hook_wrap3(g_s4_brk_handler, r0lab_s4_brk_before, NULL,
+                                 NULL);
+    result = (int)brk_hook_result;
+    if (!result) {
+        step_hook_result = hook_wrap3(g_s4_single_step_handler,
+                                      r0lab_s4_step_before, NULL, NULL);
+        result = (int)step_hook_result;
+        if (result)
+            r0lab_hook_detach(g_s4_brk_handler, r0lab_s4_brk_before, NULL);
+    }
+
+    flags = r0lab_lock();
+    if (!result) {
+        g_s4_brk.reserving = false;
+        g_s4_brk.armed = true;
+        g_s4_brk.hook_installed = true;
+        g_s4_brk.step_hook_installed = true;
+        g_s4_brk.state = R0LAB_S4_HOOKED;
+        for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+            struct r0lab_raw_shadow_page *slot =
+                &g_raw_page_table.slots[index];
+
+            slot->reserving = false;
+            slot->armed = true;
+            slot->record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
+        }
+    } else {
+        for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index)
+            g_raw_page_table.slots[index].record.state =
+                R0LAB_PAGE_RECORD_RESTORING;
+    }
+    r0lab_unlock(flags);
+    if (result)
+        goto fail_reserved;
+
+    result = r0lab_s4_start_monitor();
+    if (result) {
+        r0lab_s4_unhook();
+        goto fail_reserved;
+    }
+
+    r0lab_record(R0LAB_EVENT_S4_ARM, 0);
+    snprintf(reply, sizeof(reply),
+             "s4_descriptor_routing_ready state=%s mode=raw_step slots=2 slot0_page=%llx slot1_page=%llx brk_skip_origin=1 step_skip_origin=1 single_step=1 pte_switch=1 raw_state=shadow_active s4_descriptor_active=2 raw_slots=2 raw_page_table_active=2\n",
+             r0lab_s4_state_name(R0LAB_S4_HOOKED), page0, page1);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+
+fail_reserved:
+    {
+        int restore_result = r0lab_s4_restore_descriptor_pages(false);
+
+        if (restore_result)
+            result = restore_result;
+    }
+    r0lab_s4_reset(mm);
+
+record:
+    r0lab_record(R0LAB_EVENT_REJECT, result);
+    return result;
+}
+
+static long r0lab_s4_descriptor_routing_observed(uint64_t token,
+                                                 char __user *out_msg,
+                                                 int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    unsigned long flags;
+    uint64_t pages[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint64_t generations[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint32_t brk_slot_events[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint32_t step_slot_events[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint32_t pte_begin_slot_events[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint32_t pte_finish_slot_events[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint8_t descriptor_states[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint8_t record_states[R0LAB_RAW_PAGE_SLOT_CAPACITY] = {0, 0};
+    uint32_t brk_events;
+    uint32_t step_events;
+    uint32_t enable_events;
+    uint32_t disable_events;
+    uint32_t pte_begin_events;
+    uint32_t pte_finish_events;
+    unsigned int active_descriptors;
+    uint8_t state;
+    unsigned int index;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    flags = r0lab_lock();
+    if (!g_s4_brk.armed || g_s4_brk.clearing || !g_s4_brk.step_mode ||
+        !g_s4_brk.raw_step_mode || g_s4_brk.raw_reg_mode) {
+        r0lab_unlock(flags);
+        return R0LAB_EAGAIN;
+    }
+    brk_events = g_s4_brk.brk_events;
+    step_events = g_s4_brk.step_events;
+    enable_events = g_s4_brk.step_enable_events;
+    disable_events = g_s4_brk.step_disable_events;
+    pte_begin_events = g_s4_brk.pte_begin_events;
+    pte_finish_events = g_s4_brk.pte_finish_events;
+    state = g_s4_brk.state;
+    active_descriptors = r0lab_s4_descriptor_count_locked();
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        const struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+        const struct r0lab_s4_descriptor *descriptor =
+            &page->s4_descriptor;
+
+        pages[index] = descriptor->page_address;
+        generations[index] = descriptor->generation;
+        brk_slot_events[index] = descriptor->brk_events;
+        step_slot_events[index] = descriptor->step_events;
+        pte_begin_slot_events[index] = descriptor->pte_begin_events;
+        pte_finish_slot_events[index] = descriptor->pte_finish_events;
+        descriptor_states[index] = descriptor->state;
+        record_states[index] = page->record.state;
+    }
+    r0lab_unlock(flags);
+
+    snprintf(reply, sizeof(reply),
+             "s4_descriptor_routing_observed slots=2 active=%u brk_events=%u step_events=%u enable_events=%u disable_events=%u pte_begin_events=%u pte_finish_events=%u state=%s mode=raw_step pte_switch=1 slot0_page=%llx slot0_generation=%llu slot0_brk_events=%u slot0_step_events=%u slot0_pte_begin_events=%u slot0_pte_finish_events=%u slot0_state=%s slot0_record_state=%s slot1_page=%llx slot1_generation=%llu slot1_brk_events=%u slot1_step_events=%u slot1_pte_begin_events=%u slot1_pte_finish_events=%u slot1_state=%s slot1_record_state=%s\n",
+             active_descriptors, brk_events, step_events, enable_events,
+             disable_events, pte_begin_events, pte_finish_events,
+             r0lab_s4_state_name(state), pages[0], generations[0],
+             brk_slot_events[0], step_slot_events[0],
+             pte_begin_slot_events[0], pte_finish_slot_events[0],
+             r0lab_s4_descriptor_state_name(descriptor_states[0]),
+             r0lab_page_record_state_name(record_states[0]), pages[1],
+             generations[1], brk_slot_events[1], step_slot_events[1],
+             pte_begin_slot_events[1], pte_finish_slot_events[1],
+             r0lab_s4_descriptor_state_name(descriptor_states[1]),
+             r0lab_page_record_state_name(record_states[1]));
+    return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
 static long r0lab_s4_brk_observed(uint64_t token, char __user *out_msg,
@@ -2539,14 +2856,9 @@ static long r0lab_s4_brk_clear(uint64_t token, char __user *out_msg, int outlen)
         goto record;
     }
     if (raw_step_mode) {
-        struct mm_struct *raw_mm = (struct mm_struct *)g_raw_page.raw.mm;
-
-        result = r0lab_raw_restore_original(&g_raw_page.raw);
-        if (!result)
-            result = r0lab_raw_wait_for_callbacks();
+        result = r0lab_s4_restore_descriptor_pages(false);
         if (result)
             goto record;
-        r0lab_raw_reset(raw_mm);
     }
     r0lab_s4_reset(mm);
 
@@ -2562,6 +2874,13 @@ record:
     return result;
 }
 
+static long r0lab_s4_descriptor_routing_clear(uint64_t token,
+                                              char __user *out_msg,
+                                              int outlen)
+{
+    return r0lab_s4_brk_clear(token, out_msg, outlen);
+}
+
 static long r0lab_s4_brk_cleared(uint64_t token, char __user *out_msg,
                                  int outlen)
 {
@@ -2571,7 +2890,8 @@ static long r0lab_s4_brk_cleared(uint64_t token, char __user *out_msg,
     if (result)
         return result;
     flags = r0lab_lock();
-    if (r0lab_s4_slot_count_locked()) {
+    if (r0lab_s4_slot_count_locked() || r0lab_s4_descriptor_count_locked() ||
+        r0lab_raw_slot_count_locked()) {
         r0lab_unlock(flags);
         return R0LAB_EAGAIN;
     }
@@ -6907,7 +7227,7 @@ static void r0lab_raw_reset_page(struct r0lab_raw_shadow_page *page,
     r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);
 }
 
-static void r0lab_raw_reset(struct mm_struct *mm)
+static void __attribute__((unused)) r0lab_raw_reset(struct mm_struct *mm)
 {
     r0lab_raw_reset_page(&g_raw_page, mm);
 }
@@ -6949,9 +7269,50 @@ static void r0lab_raw_reset_final_page(struct r0lab_raw_shadow_page *page,
     r0lab_raw_release_mm_ref(mm, mm_count_owned, mm_users_owned);
 }
 
-static void r0lab_raw_reset_final(struct mm_struct *mm, uint64_t generation)
+static void __attribute__((unused)) r0lab_raw_reset_final(
+    struct mm_struct *mm, uint64_t generation)
 {
     r0lab_raw_reset_final_page(&g_raw_page, mm, generation);
+}
+
+static int r0lab_s4_restore_descriptor_pages(bool final)
+{
+    unsigned int index;
+
+    for (index = 0; index < R0LAB_RAW_PAGE_SLOT_CAPACITY; ++index) {
+        struct r0lab_raw_shadow_page *page =
+            &g_raw_page_table.slots[index];
+        struct mm_struct *mm = NULL;
+        unsigned long raw_state = R0LAB_RAW_EMPTY;
+        uint64_t generation = 0;
+        unsigned long flags;
+        int result;
+
+        flags = r0lab_lock();
+        if (r0lab_s4_raw_page_owned_locked(page) && page->raw.mm) {
+            mm = (struct mm_struct *)page->raw.mm;
+            generation = page->generation;
+            raw_state = page->raw.state;
+            page->record.state = R0LAB_PAGE_RECORD_RESTORING;
+        }
+        r0lab_unlock(flags);
+        if (!mm)
+            continue;
+
+        if (r0lab_s4_raw_state_needs_restore(raw_state)) {
+            result = r0lab_raw_restore_original(&page->raw);
+            if (result)
+                return result;
+            result = r0lab_raw_wait_for_callbacks();
+            if (result)
+                return result;
+        }
+        if (final)
+            r0lab_raw_reset_final_page(page, mm, generation);
+        else
+            r0lab_raw_reset_page(page, mm);
+    }
+    return 0;
 }
 
 static void r0lab_raw_reset_exited_page(
@@ -11729,6 +12090,7 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
     uint64_t entry_pc;
     uint64_t return_pc;
     uint64_t page_address;
+    uint64_t page_address2;
     uint64_t slot_value;
     uint64_t generation;
     uint64_t range_offset;
@@ -11757,6 +12119,29 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
         return r0lab_status(out_msg, outlen);
     if (!strcmp(args, "s4 abi"))
         return r0lab_s4_abi_probe(out_msg, outlen);
+    if (!strncmp(args, "s4 descriptor routing arm ", 26)) {
+        value = args + 26;
+        if (r0lab_parse_u64_triplet(value, &token, &page_address,
+                                    &page_address2))
+            return R0LAB_EINVAL;
+        return r0lab_s4_descriptor_routing_arm(token, page_address,
+                                               page_address2, out_msg,
+                                               outlen);
+    }
+    if (!strncmp(args, "s4 descriptor routing observed ", 31)) {
+        value = args + 31;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_s4_descriptor_routing_observed(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "s4 descriptor routing clear ", 28)) {
+        value = args + 28;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_s4_descriptor_routing_clear(token, out_msg, outlen);
+    }
     if (!strncmp(args, "s4 brk arm ", 11)) {
         value = args + 11;
         if (r0lab_parse_u64_pair(value, &token, &page_address))

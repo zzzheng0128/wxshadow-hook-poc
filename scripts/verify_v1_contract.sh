@@ -449,6 +449,7 @@ require_file scripts/test_raw_full_abort_lifecycle_device.sh
 require_file scripts/verify_d4_r3n_disassembly.sh
 require_file scripts/verify_d4_r3o_reference_lifetime.sh
 require_file scripts/test_raw_r3o_lifetime_device.sh
+require_file scripts/test_s4_descriptor_routing_device.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -1292,7 +1293,7 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
   f116231d20d16d97d51ca27467c54cf7f61708397f8d8c75b25573a6b9641589
 require_function_sha256 kpm/r0lab.c r0lab_control0 \
-  c37ba3019829afee056c4980b51d05d7dc3552123c42dcee3cb00090233869cf
+  230cc08b991b2b2c5677d02275d57157f42994e170e8d1aac4f7b9ced1882ebf
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
   56ec74766dd25f01f58650aaffa7c147f21f7f46ce1050b86f0958859e882302
@@ -1301,7 +1302,7 @@ require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   d9b68a753737d4d3f8d6c247f1fb0f90b9edd387d3b8f88e6addf0967565a25e
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   Java_dev_r0hook_lab_MainActivity_nativeControl \
-  c9dc7e262cbf2240878270e5fedd8594874bf2ce4facd8aef6d65b2b4cd9a752
+  2442597839779c318be6522e0152f2d793c05d44cbb8b39ea74c313ffc2d25ee
 require_text "$F46_D4_R3J_PLAN" 'wxshadow F4.6 D4-R3j Adjacent Inflight-Accounting Plan'
 require_text "$F46_D4_R3J_PLAN" 'Status: device row stable and physical-reboot closure verified.'
 require_text "$F46_D4_R3J_PLAN" '65679740eb5253c2779bbd0a0c4dce89ebdd5529'
@@ -3467,17 +3468,21 @@ require_text "$FINAL_ROADMAP" \
 require_text "$FINAL_ROADMAP" \
   'F6-D1 adds page-owned descriptor scaffold'
 require_text "$FINAL_ROADMAP" \
-  'F6-D3-D0 two-slot descriptor routing plan is active'
+  'F6-D3 two-slot descriptor routing is implemented and device-verified'
+require_text "$FINAL_ROADMAP" \
+  'build/evidence/s4-descriptor-routing-20260724-235331.log'
+require_text "$FINAL_ROADMAP" \
+  'hook1=99 hook0=99'
 require_text "$F6_BRK_STEP_PLAN" \
   'wxshadow F6 BRK/Step Descriptor ABI Plan'
 require_text "$F6_BRK_STEP_PLAN" \
-  'Status: F6-D3-D0 two-slot descriptor routing plan gate'
+  'Status: F6-D3 two-slot descriptor routing is implemented and device-verified.'
 require_text "$F6_BRK_STEP_PLAN" \
   'docs/wxshadow-f6-d3-two-slot-descriptor-routing-plan.md'
 require_text "$F6_D3_PLAN" \
   'wxshadow F6-D3 Two-Slot Descriptor Routing Plan'
 require_text "$F6_D3_PLAN" \
-  'Status: F6-D3-D0 plan/contract gate'
+  'Status: F6-D3-L/D implemented and device-verified.'
 require_text "$F6_D3_PLAN" \
   'wxshadow-v2-f6-d2-slot0-descriptor-compat-20260724'
 require_text "$F6_D3_PLAN" \
@@ -3517,13 +3522,13 @@ require_text "$F6_BRK_STEP_PLAN" \
 require_text "$DEVELOPMENT_SEQUENCE" '| 31 | F6-D0 | BRK/step descriptor ABI plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 32 | F6-D1 | BRK/step descriptor scaffold |'
 require_text "$DEVELOPMENT_SEQUENCE" '| 33 | F6-D2 | Slot-0 S4 descriptor compatibility migration |'
-require_text "$DEVELOPMENT_SEQUENCE" '| 34 | F6-D3-D0 | Two-slot S4 descriptor routing plan gate |'
+require_text "$DEVELOPMENT_SEQUENCE" '| 34 | F6-D3 | Two-slot S4 descriptor routing |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'arbitrary register/value mutation remains rejected'
 require_text "$REFERENCE_COVERAGE" \
   'F6-D2 is device-verified for routing the existing slot-0 raw-step/raw-reg callback admission'
 require_text "$REFERENCE_COVERAGE" \
-  'F6-D3-D0 now locks the two-slot descriptor routing plan'
+  'F6-D3 is device-verified for routing two Lab raw slots through independent descriptors'
 require_text "$VERIFICATION" \
   'F6-D0 is the plan gate that turns the singleton S4 proof into a descriptor'
 require_text "$VERIFICATION" \
@@ -3551,7 +3556,13 @@ require_text "$DEVELOPMENT_SEQUENCE" \
 require_text "$VERIFICATION" \
   'F6-D2 is now device-verified with:'
 require_text "$VERIFICATION" \
-  'F6-D3-D0 is the plan/contract gate for two-slot descriptor routing'
+  'F6-D3 is now device-verified with:'
+require_text "$VERIFICATION" \
+  'build/evidence/s4-descriptor-routing-20260724-235331.log'
+require_text "$VERIFICATION" \
+  's4_descriptor_routing=pass warn_after=3 final_modules=empty result=pass'
+require_text "$VERIFICATION" \
+  'normal0=42 normal1=42 hook1=99 hook0=99 restored0=42 restored1=42'
 require_text "$VERIFICATION" \
   'build/evidence/s4-raw-step-20260724-231442.log'
 require_text "$VERIFICATION" \
@@ -3597,14 +3608,37 @@ require_text kpm/r0lab.c 'struct r0lab_s4_descriptor s4_descriptor;'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_prepare_locked(&g_raw_page, raw_mm,'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_brk_matches_locked'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_step_matches_locked'
+require_text kpm/r0lab.c 'uint32_t pte_begin_events;'
+require_text kpm/r0lab.c 'uint32_t pte_finish_events;'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_find_brk_locked'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_find_step_locked'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_has_armed_locked'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_clear_step_tid_locked'
+require_text kpm/r0lab.c 'r0lab_s4_restore_descriptor_pages'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_routing_arm'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_routing_observed'
+require_text kpm/r0lab.c 'r0lab_s4_descriptor_routing_clear'
+require_text kpm/r0lab.c 's4 descriptor routing arm '
+require_text kpm/r0lab.c 's4 descriptor routing observed '
+require_text kpm/r0lab.c 's4 descriptor routing clear '
 require_function_text kpm/r0lab.c r0lab_s4_brk_before \
-  'r0lab_s4_descriptor_brk_matches_locked(&g_raw_page'
+  'raw_page = r0lab_s4_descriptor_find_brk_locked(regs->pc, esr)'
+require_function_text kpm/r0lab.c r0lab_s4_brk_before \
+  'r0lab_raw_begin_stepping(&raw_page->raw)'
+require_function_text kpm/r0lab.c r0lab_s4_brk_before \
+  '++descriptor->pte_begin_events'
 require_function_text kpm/r0lab.c r0lab_s4_brk_before \
   'R0LAB_S4_DESCRIPTOR_BRK_MATCHED_ORIGINAL_STEP'
 require_function_text kpm/r0lab.c r0lab_s4_brk_before \
   'regs->regs[descriptor->register_index] = reg_value'
 require_function_text kpm/r0lab.c r0lab_s4_step_before \
-  'r0lab_s4_descriptor_step_matches_locked(&g_raw_page'
+  'raw_page = r0lab_s4_descriptor_find_step_locked(regs->pc)'
+require_function_text kpm/r0lab.c r0lab_s4_step_before \
+  'r0lab_raw_finish_stepping(&raw_page->raw)'
+require_function_text kpm/r0lab.c r0lab_s4_step_before \
+  '++descriptor->pte_finish_events'
+require_function_text kpm/r0lab.c r0lab_s4_step_before \
+  'r0lab_s4_descriptor_has_armed_locked()'
 require_function_text kpm/r0lab.c r0lab_s4_step_before \
   'R0LAB_S4_DESCRIPTOR_STEP_MATCHED_SHADOW'
 require_function_text kpm/r0lab.c r0lab_s4_step_before \
@@ -3612,6 +3646,21 @@ require_function_text kpm/r0lab.c r0lab_s4_step_before \
 require_text kpm/r0lab.c 's4_descriptor_slots=%u s4_descriptor_active=%u'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_state_name(s4_descriptor_state)'
 require_text kpm/r0lab.c 'r0lab_s4_descriptor_mode_name(s4_descriptor_mode)'
+require_text lab-app/src/main/cpp/labprobe.c 'r0lab_s4_descriptor_routing_run'
+require_text lab-app/src/main/cpp/labprobe.c \
+  '"s4 descriptor routing arm 0x%llx 0x%llx 0x%llx"'
+require_text lab-app/src/main/cpp/labprobe.c \
+  '"s4 descriptor routing observed 0x%llx"'
+require_text lab-app/src/main/cpp/labprobe.c \
+  '"s4 descriptor routing clear 0x%llx"'
+require_text lab-app/src/main/cpp/labprobe.c 'hook1 = ((int (*)(void))page1)()'
+require_text lab-app/src/main/cpp/labprobe.c 'hook0 = ((int (*)(void))page0)()'
+require_text scripts/test_s4_descriptor_routing_device.sh \
+  's4 descriptor routing $TOKEN'
+require_text scripts/test_s4_descriptor_routing_device.sh \
+  'slot0_pte_begin_events=1'
+require_text scripts/test_s4_descriptor_routing_device.sh \
+  'slot1_pte_finish_events=1'
 require_text scripts/probe_shadow_page_capabilities_device.sh \
   'ordinary_xom_read_path=blocked reason=user_xom_read_fault_absent'
 require_text scripts/probe_shadow_page_capabilities_device.sh \
