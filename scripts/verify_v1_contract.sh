@@ -1279,6 +1279,11 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
 require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
   'RAW_ABORT_INFLIGHT_CLEAN_BOOT_CONFIRMED'
 require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
+  'EXPECTED_SERIAL=32250DLH2000Z3'
+require_line_before scripts/test_raw_abort_inflight_passthrough_device.sh \
+  '[ "$SERIAL" = "$EXPECTED_SERIAL" ] ||' \
+  'case "$CLEAN_BOOT_CONFIRMED" in'
+require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
   'EXPECTED_KPM_SHA=018c8e96023692102f2941f4884b5be36913047ab80a59fe96f8e5458c775cfc'
 require_text scripts/test_raw_abort_inflight_passthrough_device.sh \
   'EXPECTED_LABPROBE_SHA=f927140d79d9298d8c55a22cecd2021d664c320557ec74854eb39a90af1e37cb'

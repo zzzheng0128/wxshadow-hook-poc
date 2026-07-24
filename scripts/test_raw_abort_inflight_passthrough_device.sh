@@ -3,6 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
+EXPECTED_SERIAL=32250DLH2000Z3
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-m1.kpm
 PACKAGE=dev.r0hook.lab
@@ -25,6 +26,11 @@ fail() {
   printf '%s\n' "raw abort inflight passthrough failure: $*" >&2
   exit 1
 }
+
+[ -n "$SERIAL" ] ||
+  fail "ANDROID_SERIAL=$EXPECTED_SERIAL is required before device access"
+[ "$SERIAL" = "$EXPECTED_SERIAL" ] ||
+  fail "refusing non-target device serial: expected=$EXPECTED_SERIAL actual=$SERIAL"
 
 case "$CLEAN_BOOT_CONFIRMED" in
   1) ;;
