@@ -1002,6 +1002,7 @@ require_text "$F46_D4_R3I_PLAN" 'apk_lib_entry_sha256=cad0df4c7bf406f6c48dc319b4
 require_text "$F46_D4_R3I_PLAN" 'apk_dex_entry=classes.dex'
 require_text "$F46_D4_R3I_PLAN" 'apk_dex_entry_sha256=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
 require_text "$F46_D4_R3I_PLAN" 'whole-APK hash is not a reproducibility gate'
+require_text "$F46_D4_R3I_PLAN" '73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
 require_tag_target wxshadow-v2-f46-d4-r3i-lock-exposure-plan-20260724 \
   93601f7dc0166ce4559b80a79669b8905f8e4dc6
 require_text "$F46_D4_R3I_PLAN" 'D4-R3i-global-abort-r0lab-lock-exposure'
@@ -1200,7 +1201,7 @@ require_line_before lab-app/src/main/cpp/labprobe.c \
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'RAW_ABORT_LOCK_CLEAN_BOOT_CONFIRMED'
 require_file_sha256 scripts/test_raw_abort_lock_passthrough_device.sh \
-  c1dc682a9b3909881d3082de0664d8d600bf8f3826e5cb3301d11b4a2830e0f4
+  674255c9e4bf0950904d4932dc7c5b6785f0b086cbd755d6d9c774430232327e
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'IDLE_SECONDS=15'
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
@@ -1209,6 +1210,10 @@ require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'EXPECTED_LABPROBE_SHA=cad0df4c7bf406f6c48dc319b41864f0f7a7b667c17b7b41f040d56b1b82dcd4'
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text scripts/test_raw_abort_lock_passthrough_device.sh \
+  'EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
+require_text scripts/test_raw_abort_lock_passthrough_device.sh \
+  'R0LAB_DEBUG_KEYSTORE="$KEYSTORE" "$ROOT/scripts/build_lab_app.sh"'
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
   'git -C "$ROOT" status --porcelain --untracked-files=no'
 require_text scripts/test_raw_abort_lock_passthrough_device.sh \
@@ -1269,6 +1274,9 @@ require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
   'EXISTING=$(supercmd module list 2>&1) ||'
 require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
   'require_tagged_head wxshadow-v2-f46-d4-r3i-lock-exposure-source-20260724' \
+  'EXISTING=$(supercmd module list 2>&1) ||'
+require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
+  'require_sha256 signer-cert "$EXPECTED_SIGNER_CERT_SHA" "$SIGNER_CERT_SHA"' \
   'EXISTING=$(supercmd module list 2>&1) ||'
 require_line_before scripts/test_raw_abort_lock_passthrough_device.sh \
   'require_sha256 kpm "$EXPECTED_KPM_SHA" "$KPM_SHA"' \

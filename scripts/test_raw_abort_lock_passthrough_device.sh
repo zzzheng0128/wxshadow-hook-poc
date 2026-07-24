@@ -10,11 +10,13 @@ ACTIVITY=dev.r0hook.lab/.MainActivity
 IDLE_SECONDS=15
 CLEAN_BOOT_CONFIRMED=${RAW_ABORT_LOCK_CLEAN_BOOT_CONFIRMED:-}
 TOKEN=${RAW_ABORT_LOCK_TOKEN:-0x729298}
+KEYSTORE=${R0LAB_DEBUG_KEYSTORE:-$ROOT/lab-app/debug.keystore}
 EVIDENCE_DIR="$ROOT/build/evidence"
 EVIDENCE="$EVIDENCE_DIR/raw-abort-lock-passthrough-$(date +%Y%m%d-%H%M%S).log"
 EXPECTED_KPM_SHA=dfc4411b50f9ff233bb93905e5eca3da2bd8260dfc33d8a786f43fc67dfebb50
 EXPECTED_LABPROBE_SHA=cad0df4c7bf406f6c48dc319b41864f0f7a7b667c17b7b41f040d56b1b82dcd4
 EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79
+EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd
 MODULE_LOADED=0
 SESSION_OPEN=0
 HOLD_ACTIVE=0
@@ -79,6 +81,19 @@ sha256_apk_entry() {
     unzip -p "$apk" "$entry" | shasum -a 256 | awk '{ print $1 }'
   elif command -v sha256sum >/dev/null 2>&1; then
     unzip -p "$apk" "$entry" | sha256sum | awk '{ print $1 }'
+  else
+    fail "neither shasum nor sha256sum is available"
+  fi
+}
+
+sha256_signer_cert() {
+  keystore=$1
+  if command -v shasum >/dev/null 2>&1; then
+    keytool -exportcert -keystore "$keystore" -storepass android \
+      -alias androiddebugkey | shasum -a 256 | awk '{ print $1 }'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    keytool -exportcert -keystore "$keystore" -storepass android \
+      -alias androiddebugkey | sha256sum | awk '{ print $1 }'
   else
     fail "neither shasum nor sha256sum is available"
   fi
@@ -197,6 +212,10 @@ cleanup() {
         ;;
     esac
   fi
+  if [ "$status" -ne 0 ]; then
+    printf 'classification=D4-R3i-setup-blocked result=classified active_hold=0 cleanup=bounded reason=trap status=%s post_hold_status=not_applicable boot_id_reader=not_used getprop=not_used proc_maps=not_used pstore=not_used\n' \
+      "$status" >> "$EVIDENCE"
+  fi
   exit "$status"
 }
 
@@ -232,11 +251,14 @@ ensure_clean_source
 require_tag_target wxshadow-v2-f46-d4-r3h-mm-reference-stable-20260724 e6ee7c080ec5760f4b2c43bb0062724009ab440f
 require_tag_target wxshadow-v2-f46-d4-r3i-lock-exposure-plan-20260724 93601f7dc0166ce4559b80a79669b8905f8e4dc6
 require_tagged_head wxshadow-v2-f46-d4-r3i-lock-exposure-source-20260724
+[ -f "$KEYSTORE" ] || fail "fixed Lab keystore is missing: $KEYSTORE"
+SIGNER_CERT_SHA=$(sha256_signer_cert "$KEYSTORE")
+require_sha256 signer-cert "$EXPECTED_SIGNER_CERT_SHA" "$SIGNER_CERT_SHA"
 mkdir -p "$EVIDENCE_DIR"
 trap cleanup EXIT INT TERM
 
 "$ROOT/scripts/build_kpm.sh" >/dev/null
-"$ROOT/scripts/build_lab_app.sh" >/dev/null
+R0LAB_DEBUG_KEYSTORE="$KEYSTORE" "$ROOT/scripts/build_lab_app.sh" >/dev/null
 
 KPM_SHA=$(sha256_file "$ROOT/kpm/build/r0lab-m1.kpm")
 LABPROBE_SHA=$(
@@ -261,9 +283,9 @@ LAB_UID=$(adb_device shell "cmd package list packages -U $PACKAGE" |
 [ -n "$LAB_UID" ] || fail "Lab App UID not found"
 WARN_BEFORE=$(adb_device shell su -c cat /sys/kernel/warn_count |
   LC_ALL=C tr -d '\r')
-printf 'serial=%s lab_uid=%s idle_seconds=%s token=%s warn_before=%s source_tree=clean clean_boot_confirmed=1 diagnostic=global_abort_r0lab_lock kpm_sha256=%s labprobe_so_sha256=%s classes_dex_sha256=%s\n' \
+printf 'serial=%s lab_uid=%s idle_seconds=%s token=%s warn_before=%s source_tree=clean clean_boot_confirmed=1 diagnostic=global_abort_r0lab_lock kpm_sha256=%s labprobe_so_sha256=%s classes_dex_sha256=%s signer_cert_sha256=%s\n' \
   "${SERIAL:-default}" "$LAB_UID" "$IDLE_SECONDS" "$TOKEN" "$WARN_BEFORE" \
-  "$KPM_SHA" "$LABPROBE_SHA" "$CLASSES_DEX_SHA" |
+  "$KPM_SHA" "$LABPROBE_SHA" "$CLASSES_DEX_SHA" "$SIGNER_CERT_SHA" |
   tee "$EVIDENCE"
 
 LOAD_OUTPUT=$(supercmd module load "$REMOTE" "lab_uid=$LAB_UID" 2>&1) ||
