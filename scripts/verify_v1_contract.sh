@@ -333,8 +333,10 @@ SHADOW_PLAN=docs/shadow-page-transition-plan.md
 RAW_PLAN=docs/wxshadow-raw-pte-implementation-plan.md
 REPLICA_PLAN=docs/wxshadow-replica-plan.md
 RAW_COMPAT=docs/pixel7-panther-raw-pte-compatibility.md
+KPM_COMPAT_MATRIX=docs/kpm-compatibility-matrix.md
 S4_PLAN=docs/wxshadow-s4-brk-step-plan.md
 FINAL_ROADMAP=docs/wxshadow-final-experiment-roadmap.md
+F5_DECISION_PLAN=docs/wxshadow-f5-hidden-read-decision-plan.md
 F2_PLAN=docs/wxshadow-f2-two-page-lab-harness-plan.md
 F3_PLAN=docs/wxshadow-f3-page-local-patch-records-plan.md
 F4_PLAN=docs/wxshadow-f4-hook-routing-by-page-record-plan.md
@@ -375,8 +377,10 @@ require_file "$SHADOW_PLAN"
 require_file "$RAW_PLAN"
 require_file "$REPLICA_PLAN"
 require_file "$RAW_COMPAT"
+require_file "$KPM_COMPAT_MATRIX"
 require_file "$S4_PLAN"
 require_file "$FINAL_ROADMAP"
+require_file "$F5_DECISION_PLAN"
 require_file "$F2_PLAN"
 require_file "$F3_PLAN"
 require_file "$F4_PLAN"
@@ -3406,6 +3410,84 @@ require_text "$FINAL_ROADMAP" \
   'F4.7 integration is now complete'
 require_text "$FINAL_ROADMAP" \
   'F5 must now choose the final hidden-read model'
+require_text "$FINAL_ROADMAP" \
+  'F5 selects the controlled translation-DABT read-cycle route as the final Lab'
+require_text "$FINAL_ROADMAP" \
+  'Raw-XOM, permission-fault hidden read, and `PTE_USER` clearing remain blocked'
+require_text "$FINAL_ROADMAP" \
+  'scripts/probe_raw_xom_device.sh'
+require_text "$FINAL_ROADMAP" \
+  'scripts/probe_shadow_page_capabilities_device.sh'
+require_text "$FINAL_ROADMAP" \
+  'scripts/test_raw_abort_probe_device.sh'
+require_text "$FINAL_ROADMAP" \
+  'scripts/test_raw_abort_read_cycle_device.sh'
+require_text "$F5_DECISION_PLAN" 'wxshadow F5 Hidden-Read Decision Plan'
+require_text "$F5_DECISION_PLAN" \
+  'Status: F5 decision gate selected and device-verified'
+require_text "$F5_DECISION_PLAN" \
+  'F5 selects the controlled translation-DABT read-cycle route as the final Lab'
+require_text "$F5_DECISION_PLAN" \
+  'build/evidence/raw-xom-device-20260724-204923.log'
+require_text "$F5_DECISION_PLAN" \
+  'build/evidence/shadow-page-capabilities-20260724-204927.log'
+require_text "$F5_DECISION_PLAN" \
+  'build/evidence/raw-abort-probe-20260724-204942.log'
+require_text "$F5_DECISION_PLAN" \
+  'build/evidence/raw-abort-read-cycle-20260724-205015.log'
+require_text "$F5_DECISION_PLAN" \
+  'de505ef582843c7de9597678930394351b9e2df0032709208b24d6d7486e449a'
+require_text "$F5_DECISION_PLAN" \
+  'The final artifact must not say:'
+require_text "$F5_DECISION_PLAN" \
+  'arbitrary reads are hidden'
+require_text "$F5_DECISION_PLAN" \
+  '`handle_mm_fault` positive read routing is implemented'
+require_text "$F5_DECISION_PLAN" \
+  'raw-XOM or `PTE_USER` clearing is supported'
+require_text "$F5_DECISION_PLAN" \
+  '`/proc`, ptrace, VMA walks, or arbitrary kernel/user readers are concealed'
+require_text "$F5_DECISION_PLAN" \
+  'ANDROID_SERIAL=32250DLH2000Z3 scripts/test_raw_abort_probe_device.sh'
+require_text "$F5_DECISION_PLAN" \
+  'ANDROID_SERIAL=32250DLH2000Z3 scripts/test_raw_abort_read_cycle_device.sh'
+require_text "$F5_DECISION_PLAN" \
+  'scripts/probe_raw_xom_device.sh'
+require_text "$DEVELOPMENT_SEQUENCE" '| 30 | F5-D0 | Controlled hidden-read decision gate |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'Complete/device-verified'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'F5-D0 selected controlled translation-DABT read-cycle as the Lab hidden-read'
+require_text "$VERIFICATION" \
+  'F5-D0 verification is a decision gate, not a source gate'
+require_text "$VERIFICATION" \
+  'does not prove arbitrary hidden reads'
+require_text "$VERIFICATION" \
+  'raw-abort-read-cycle-20260724-205015.log'
+require_text "$RAW_PLAN" \
+  'F5-D0 selects this controlled translation-DABT read-cycle as the final Lab'
+require_text "$RAW_PLAN" \
+  'not raw-XOM, not permission-fault'
+require_text "$RAW_PLAN" \
+  'raw-xom-device-20260724-204923.log'
+require_text "$SHADOW_PLAN" \
+  'controlled translation-DABT read-cycle smoke'
+require_text "$SHADOW_PLAN" \
+  'raw-XOM/permission-fault hidden read blocked'
+require_text "$SHADOW_PLAN" \
+  'controlled_dabt_read_cycle=separate_smoke scripts/test_raw_abort_read_cycle_device.sh'
+require_text "$KPM_COMPAT_MATRIX" \
+  'F5 selected hidden-read model'
+require_text "$KPM_COMPAT_MATRIX" \
+  'Raw-XOM, permission-fault hidden read, `PTE_USER` clearing'
+require_text scripts/probe_shadow_page_capabilities_device.sh \
+  'ordinary_xom_read_path=blocked reason=user_xom_read_fault_absent'
+require_text scripts/probe_shadow_page_capabilities_device.sh \
+  'raw_xom_permission_read_path=blocked reason=disabled_after_kernel_panic_requires_separate_preflight'
+require_text scripts/probe_shadow_page_capabilities_device.sh \
+  'controlled_dabt_read_cycle=separate_smoke scripts/test_raw_abort_read_cycle_device.sh'
+require_text scripts/probe_shadow_page_capabilities_device.sh \
+  'result=blocked reason=hardware_xom_route_unavailable'
 require_text "$DEVELOPMENT_SEQUENCE" '| 29 | F4.7 | F4 integration gate |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'fixed the exit-protected patch-record admission mismatch'

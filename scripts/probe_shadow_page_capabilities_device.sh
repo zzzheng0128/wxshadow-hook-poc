@@ -85,8 +85,10 @@ esac
   printf '%s\n' 'gup_view_switch=excluded'
   printf '%s\n' 'mapping_concealment=excluded'
   printf '%s\n' 'epan_route=separate_linux_xom_route_not_raw_pte_admission'
-  printf '%s\n' 'raw_read_cycle_admission=blocked reason=kernel_read_fault_switch_not_implemented'
+  printf '%s\n' 'ordinary_xom_read_path=blocked reason=user_xom_read_fault_absent'
+  printf '%s\n' 'raw_xom_permission_read_path=blocked reason=disabled_after_kernel_panic_requires_separate_preflight'
+  printf '%s\n' 'controlled_dabt_read_cycle=separate_smoke scripts/test_raw_abort_read_cycle_device.sh'
   printf '%s\n' 'raw_pte_route=blocked reason=run_probe_raw_pte_compat_device'
-  printf '%s\n' 'result=blocked reason=leaf_pte_tlb_icache_and_fault_disposition_abi_unverified'
+  printf '%s\n' 'result=blocked reason=hardware_xom_route_unavailable'
 } | tee "$EVIDENCE"
 printf '%s\n' "$EVIDENCE"
