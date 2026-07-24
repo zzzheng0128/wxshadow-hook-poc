@@ -3403,9 +3403,12 @@ require_text "$FINAL_ROADMAP" 'Reference Completeness Gate'
 require_text "$FINAL_ROADMAP" 'all 141 annotated reference functions'
 require_text "$FINAL_ROADMAP" 'two fixed Lab-owned raw shadow pages'
 require_text "$FINAL_ROADMAP" \
-  'cross-family integration, not raw-page'
+  'F4.7 integration is now complete'
 require_text "$FINAL_ROADMAP" \
-  'F4.7 must prove the migrated families still compose'
+  'F5 must now choose the final hidden-read model'
+require_text "$DEVELOPMENT_SEQUENCE" '| 29 | F4.7 | F4 integration gate |'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'fixed the exit-protected patch-record admission mismatch'
 require_text "$DEVELOPMENT_SEQUENCE" 'read-only audit selected D4-R3g'
 require_text "$DEVELOPMENT_SEQUENCE" '| 17 | D4-R3e-L3-A-D |'
 require_text "$DEVELOPMENT_SEQUENCE" 'Four clean-boot device rows'
@@ -4079,6 +4082,7 @@ require_text scripts/test_raw_page_table_patch_records_device.sh 'raw_page_table
 require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records scripts/test_raw_page_table_patch_records_device.sh'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
+reject_function_text kpm/r0lab.c r0lab_raw_page_has_aux_state_locked 'exit_hook_installed'
 
 "$ROOT/scripts/verify_d4_r3o_reference_lifetime.sh" >/dev/null
 

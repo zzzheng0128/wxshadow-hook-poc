@@ -1321,7 +1321,7 @@ static bool r0lab_raw_page_has_aux_state_locked(
     return page && (page->s4_shadow_brk_layout || page->s4_shadow_reg_layout ||
                     page->gup_hook_installed || page->gup_hook_uses_pte ||
                     page->fork_hook_installed || page->fault_hook_installed ||
-                    page->exit_hook_installed || page->syscall_hook_installed ||
+                    page->syscall_hook_installed ||
                     page->syscall_hook_read_cycle_mode ||
                     page->prctl_hook_installed || page->fault_probe_armed ||
                     page->abort_probe_armed ||
