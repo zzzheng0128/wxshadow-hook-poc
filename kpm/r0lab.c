@@ -6596,6 +6596,30 @@ static const char *r0lab_raw_active_kind(unsigned long state,
     return "none";
 }
 
+static const char *r0lab_raw_state_name(unsigned long state)
+{
+    switch (state) {
+    case R0LAB_RAW_EMPTY:
+        return "empty";
+    case R0LAB_RAW_CAPTURED:
+        return "captured";
+    case R0LAB_RAW_SOURCE_UXN:
+        return "source_uxn";
+    case R0LAB_RAW_SHADOW_RX:
+        return "shadow_rx";
+    case R0LAB_RAW_ORIGINAL_STEP:
+        return "original_step";
+    case R0LAB_RAW_RESTORED:
+        return "restored";
+    case R0LAB_RAW_POISONED:
+        return "poisoned";
+    case R0LAB_RAW_ORIGINAL_READ:
+        return "original_read";
+    default:
+        return "unknown";
+    }
+}
+
 static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
                                  char __user *out_msg, int outlen)
 {
@@ -6761,6 +6785,84 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
              gup_finish_events,
              r0lab_page_record_backend_name(record_backend),
              r0lab_page_record_state_name(record_state));
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_slot_live_pte(uint64_t token, uint16_t slot_id,
+                                    char __user *out_msg, int outlen)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct r0lab_raw_live_pte_snapshot snapshot = {0};
+    struct r0lab_raw_page raw = {0};
+    struct r0lab_raw_shadow_page *page;
+    struct mm_struct *current_mm;
+    unsigned long flags;
+    uint64_t generation;
+    uint8_t record_backend;
+    uint8_t record_state;
+    bool record_match;
+    int walk_rc;
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        return result;
+    if (slot_id >= R0LAB_RAW_PAGE_SLOT_CAPACITY)
+        return R0LAB_EINVAL;
+    if (!g_get_task_mm || !g_mmput)
+        return R0LAB_ENOSYS;
+
+    current_mm = g_get_task_mm(current);
+    if (!current_mm)
+        return R0LAB_ESRCH;
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    if (!page || !page->armed || page->reserving || page->clearing ||
+        page->transitioning) {
+        r0lab_unlock(flags);
+        g_mmput(current_mm);
+        return R0LAB_EAGAIN;
+    }
+    if (page->raw.mm != current_mm) {
+        r0lab_unlock(flags);
+        g_mmput(current_mm);
+        return R0LAB_EPERM;
+    }
+    raw = page->raw;
+    raw.mm = current_mm;
+    generation = page->generation;
+    record_backend = page->record.backend;
+    record_state = page->record.state;
+    r0lab_unlock(flags);
+
+    walk_rc = r0lab_raw_snapshot_live_pte(&raw, &snapshot);
+
+    flags = r0lab_lock();
+    page = r0lab_raw_page_slot_locked(slot_id);
+    record_match = page && page->armed && !page->reserving &&
+                   !page->clearing && page->generation == generation &&
+                   page->raw.mm == current_mm &&
+                   page->raw.address == raw.address &&
+                   page->raw.active_pte == raw.active_pte &&
+                   page->raw.state == raw.state &&
+                   page->record.backend == record_backend &&
+                   page->record.state == record_state;
+    r0lab_unlock(flags);
+    g_mmput(current_mm);
+
+    snprintf(reply, sizeof(reply),
+             "raw_slot_live_pte slot=%u page=%llx generation=%llu snapshot_stage=after_arm walk_rc=%d live_pte=%lx expected_pte=%lx live_match=%lu live_pfn=%lx expected_pfn=%lx live_state=%s stored_state=%s live_state_id=%lu stored_state_id=%lu pte_lock=%s mmap_lock=read record_backend=%s record_state=%s record_match=%u\n",
+             (unsigned int)slot_id, (uint64_t)raw.address,
+             (unsigned long long)generation, walk_rc, snapshot.live_pte,
+             snapshot.expected_pte, snapshot.live_match,
+             snapshot.live_pfn, snapshot.expected_pfn,
+             r0lab_raw_state_name(snapshot.live_state),
+             r0lab_raw_state_name(snapshot.stored_state),
+             snapshot.live_state, snapshot.stored_state,
+             walk_rc ? "not_acquired" : "held",
+             r0lab_page_record_backend_name(record_backend),
+             r0lab_page_record_state_name(record_state),
+             record_match ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -10724,6 +10826,13 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_inspect(token, slot_id, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot live pte ", 18)) {
+        value = args + 18;
+        if (r0lab_parse_u64_pair(value, &token, &slot_value) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_slot_live_pte(token, slot_id, out_msg, outlen);
     }
     if (!strncmp(args, "raw slot patch byte ", 20)) {
         value = args + 20;

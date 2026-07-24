@@ -8627,8 +8627,9 @@ finish:
     return success ? 0 : -1;
 }
 
-static int r0lab_raw_hold_lifetime(const char *args, char *output,
-                                   size_t output_size)
+static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
+                                          size_t output_size,
+                                          bool snapshot_live_pte)
 {
     struct sigaction action = {0};
     struct sigaction previous_action = {0};
@@ -8647,6 +8648,7 @@ static int r0lab_raw_hold_lifetime(const char *args, char *output,
     char ready[2][256] = {{0}, {0}};
     char observed[2][256] = {{0}, {0}};
     char inspect[2][512] = {{0}, {0}};
+    char live_pte_reply[768] = {0};
     unsigned int activations[2] = {0, 0};
     unsigned long states[2] = {0, 0};
     uint32_t word_before[2] = {0, 0};
@@ -8656,9 +8658,11 @@ static int r0lab_raw_hold_lifetime(const char *args, char *output,
     long ready_rc[2] = {-1, -1};
     long observed_rc[2] = {-1, -1};
     long inspect_rc[2] = {-1, -1};
+    long live_pte_rc = -1;
     int normal_value[2] = {-1, -1};
     int shadow_value[2] = {-1, -1};
     int inspect_ok[2] = {0, 0};
+    int live_match = 0;
     int handler_installed = 0;
     int failures = 0;
     int success = 0;
@@ -8699,6 +8703,11 @@ static int r0lab_raw_hold_lifetime(const char *args, char *output,
     if (r0lab_parse_token(token_text, &token)) {
         snprintf(output, output_size,
                  "rc=-22 error=invalid raw hold lifetime token");
+        return -1;
+    }
+    if (snapshot_live_pte && (want_shadow || slot_count != 1)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=live pte snapshot requires source single");
         return -1;
     }
     page_size = (size_t)sysconf(_SC_PAGESIZE);
@@ -8753,6 +8762,32 @@ static int r0lab_raw_hold_lifetime(const char *args, char *output,
                                             index, &generation[index]))
             goto finish;
         word_after_arm[index] = readable[index][0];
+    }
+
+    if (snapshot_live_pte) {
+        char *newline;
+
+        snprintf(command, sizeof(command), "raw slot live pte 0x%llx 0",
+                 (unsigned long long)token);
+        live_pte_rc = r0lab_control_raw(command, live_pte_reply,
+                                        sizeof(live_pte_reply));
+        newline = strchr(live_pte_reply, '\n');
+        if (newline)
+            *newline = '\0';
+        live_match =
+            live_pte_rc >= 0 &&
+            strstr(live_pte_reply, "snapshot_stage=after_arm") &&
+            strstr(live_pte_reply, "walk_rc=0") &&
+            strstr(live_pte_reply, "live_match=1") &&
+            strstr(live_pte_reply, "live_state=source_uxn") &&
+            strstr(live_pte_reply, "stored_state=source_uxn") &&
+            strstr(live_pte_reply, "pte_lock=held") &&
+            strstr(live_pte_reply, "mmap_lock=read") &&
+            strstr(live_pte_reply, "record_backend=raw_two_pfn") &&
+            strstr(live_pte_reply, "record_state=source_uxn") &&
+            strstr(live_pte_reply, "record_match=1");
+        if (!live_match)
+            ++failures;
     }
 
     if (want_shadow) {
@@ -8823,7 +8858,8 @@ static int r0lab_raw_hold_lifetime(const char *args, char *output,
     if (want_shadow && g_r0lab_raw_handler_faults)
         ++failures;
 
-    if (!failures) {
+    if ((!snapshot_live_pte && !failures) ||
+        (snapshot_live_pte && arm_rc[0] >= 0 && ready_rc[0] >= 0)) {
         g_r0lab_m5_hold.source_page = pages[0];
         g_r0lab_m5_hold.clone_page = slot_count == 2 ? pages[1] : NULL;
         g_r0lab_m5_hold.page_size = page_size;
@@ -8855,22 +8891,65 @@ finish:
                 munmap(pages[index], page_size);
         }
     }
-    snprintf(output, output_size,
-             "raw mode=raw-hold-lifetime failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
-             failures, target_state, slot_count, slot_count, slot_count,
-             normal_value[0], normal_value[1], shadow_value[0],
-             shadow_value[1], activations[0], activations[1], states[0],
-             states[1], inspect_ok[0], inspect_ok[1], arm_rc[0], arm_rc[1],
-             ready_rc[0], ready_rc[1], observed_rc[0], observed_rc[1],
-             inspect_rc[0], inspect_rc[1],
-             (int)g_r0lab_raw_handler_faults,
-             (unsigned long long)(uintptr_t)pages[0],
-             (unsigned long long)(uintptr_t)pages[1],
-             (unsigned long long)generation[0],
-             (unsigned long long)generation[1], word_before[0],
-             word_before[1], word_after_arm[0], word_after_arm[1],
-             word_shadow[0], word_shadow[1]);
+    if (snapshot_live_pte) {
+        snprintf(output, output_size,
+                 "raw mode=raw-hold-live-pte failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u activations=%u/%u states=%lu/%lu snapshot_stage=after_arm live_match=%d normal=%d/%d shadow=%d/%d inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld live_pte_rc=%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x %s",
+                 failures, target_state, slot_count, slot_count, slot_count,
+                 activations[0], activations[1], states[0], states[1],
+                 live_match, normal_value[0], normal_value[1],
+                 shadow_value[0], shadow_value[1], inspect_ok[0],
+                 inspect_ok[1], arm_rc[0], arm_rc[1], ready_rc[0],
+                 ready_rc[1], observed_rc[0], observed_rc[1],
+                 inspect_rc[0], inspect_rc[1], live_pte_rc,
+                 (int)g_r0lab_raw_handler_faults,
+                 (unsigned long long)(uintptr_t)pages[0],
+                 (unsigned long long)(uintptr_t)pages[1],
+                 (unsigned long long)generation[0],
+                 (unsigned long long)generation[1], word_before[0],
+                 word_before[1], word_after_arm[0], word_after_arm[1],
+                 word_shadow[0], word_shadow[1],
+                 live_pte_reply[0] ? live_pte_reply :
+                                     "raw_slot_live_pte absent=1");
+    } else {
+        snprintf(output, output_size,
+                 "raw mode=raw-hold-lifetime failures=%d exit_mmap_armed=0 target_state=%s slots=%u raw_slots=%u page_records=%u normal=%d/%d shadow=%d/%d activations=%u/%u states=%lu/%lu inspect=%d/%d arm_rc=%ld/%ld ready_rc=%ld/%ld observed_rc=%ld/%ld inspect_rc=%ld/%ld handler_faults=%d source=%llx/%llx generation=%llu/%llu words_before=%08x/%08x words_after_arm=%08x/%08x words_shadow=%08x/%08x",
+                 failures, target_state, slot_count, slot_count, slot_count,
+                 normal_value[0], normal_value[1], shadow_value[0],
+                 shadow_value[1], activations[0], activations[1], states[0],
+                 states[1], inspect_ok[0], inspect_ok[1], arm_rc[0],
+                 arm_rc[1], ready_rc[0], ready_rc[1], observed_rc[0],
+                 observed_rc[1], inspect_rc[0], inspect_rc[1],
+                 (int)g_r0lab_raw_handler_faults,
+                 (unsigned long long)(uintptr_t)pages[0],
+                 (unsigned long long)(uintptr_t)pages[1],
+                 (unsigned long long)generation[0],
+                 (unsigned long long)generation[1], word_before[0],
+                 word_before[1], word_after_arm[0], word_after_arm[1],
+                 word_shadow[0], word_shadow[1]);
+    }
     return success ? 0 : -1;
+}
+
+static int r0lab_raw_hold_lifetime(const char *args, char *output,
+                                   size_t output_size)
+{
+    return r0lab_raw_hold_lifetime_common(args, output, output_size, false);
+}
+
+static int r0lab_raw_hold_live_pte(const char *token_text, char *output,
+                                   size_t output_size)
+{
+    char args[96];
+    uint64_t token;
+
+    if (r0lab_parse_token(token_text, &token)) {
+        snprintf(output, output_size,
+                 "rc=-22 error=invalid raw hold live pte token");
+        return -1;
+    }
+    snprintf(args, sizeof(args), "source single 0x%llx",
+             (unsigned long long)token);
+    return r0lab_raw_hold_lifetime_common(args, output, output_size, true);
 }
 
 static int r0lab_raw_fault_data_probe_run(const char *token_text,
@@ -10731,6 +10810,11 @@ Java_dev_r0hook_lab_MainActivity_nativeControl(JNIEnv *env, jobject thiz, jstrin
     }
     if (!strncmp(args, "raw raw-hold lifetime ", 22)) {
         r0lab_raw_hold_lifetime(args + 22, reply, sizeof(reply));
+        (*env)->ReleaseStringUTFChars(env, command, args);
+        return (*env)->NewStringUTF(env, reply);
+    }
+    if (!strncmp(args, "raw raw-hold live-pte ", 22)) {
+        r0lab_raw_hold_live_pte(args + 22, reply, sizeof(reply));
         (*env)->ReleaseStringUTFChars(env, command, args);
         return (*env)->NewStringUTF(env, reply);
     }

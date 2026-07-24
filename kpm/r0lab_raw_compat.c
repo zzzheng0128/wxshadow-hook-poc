@@ -137,6 +137,25 @@ static bool r0lab_raw_admits_original_pte(pte_t pte)
            !pte_devmap(pte) && !pte_tagged(pte);
 }
 
+static unsigned long r0lab_raw_classify_live_pte(
+    const struct r0lab_raw_page *page, unsigned long live_pte)
+{
+    if (live_pte == page->source_uxn_pte)
+        return R0LAB_RAW_SOURCE_UXN;
+    if (page->shadow_rx_pte && live_pte == page->shadow_rx_pte)
+        return R0LAB_RAW_SHADOW_RX;
+    if (live_pte == page->original_pte) {
+        if (page->state == R0LAB_RAW_ORIGINAL_STEP)
+            return R0LAB_RAW_ORIGINAL_STEP;
+        if (page->state == R0LAB_RAW_ORIGINAL_READ)
+            return R0LAB_RAW_ORIGINAL_READ;
+        if (page->state == R0LAB_RAW_RESTORED)
+            return R0LAB_RAW_RESTORED;
+        return R0LAB_RAW_CAPTURED;
+    }
+    return R0LAB_RAW_POISONED;
+}
+
 static int r0lab_raw_replace_locked(struct mm_struct *mm,
                                     struct vm_area_struct *vma,
                                     unsigned long address, pte_t *ptep,
@@ -184,6 +203,54 @@ int r0lab_raw_capture(struct r0lab_raw_page *page)
     result = 0;
 
 out_unlock_pte:
+    spin_unlock(ptl);
+out_unlock_mmap:
+    mmap_read_unlock(mm);
+    return result;
+}
+
+int r0lab_raw_snapshot_live_pte(
+    const struct r0lab_raw_page *page,
+    struct r0lab_raw_live_pte_snapshot *snapshot)
+{
+    struct mm_struct *mm;
+    struct vm_area_struct *vma;
+    pte_t *ptep;
+    spinlock_t *ptl;
+    pte_t live_pte;
+    pte_t expected_pte;
+    int result;
+
+    if (!page || !page->mm || !page->address || !snapshot)
+        return R0LAB_RAW_EINVAL;
+
+    snapshot->live_pte = 0;
+    snapshot->expected_pte = 0;
+    snapshot->live_pfn = 0;
+    snapshot->expected_pfn = 0;
+    snapshot->live_state = R0LAB_RAW_EMPTY;
+    snapshot->stored_state = R0LAB_RAW_EMPTY;
+    snapshot->live_match = 0;
+    snapshot->expected_pte = page->active_pte;
+    snapshot->stored_state = page->state;
+    expected_pte = r0lab_raw_pte_from_value(page->active_pte);
+    snapshot->expected_pfn = pte_present(expected_pte) ?
+                             pte_pfn(expected_pte) : 0;
+
+    mm = (struct mm_struct *)page->mm;
+    mmap_read_lock(mm);
+    result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
+    if (result)
+        goto out_unlock_mmap;
+
+    live_pte = READ_ONCE(*ptep);
+    snapshot->live_pte = r0lab_raw_pte_value(live_pte);
+    snapshot->live_pfn = pte_present(live_pte) ? pte_pfn(live_pte) : 0;
+    snapshot->live_state =
+        r0lab_raw_classify_live_pte(page, snapshot->live_pte);
+    snapshot->live_match =
+        snapshot->live_pte == snapshot->expected_pte ? 1UL : 0UL;
+
     spin_unlock(ptl);
 out_unlock_mmap:
     mmap_read_unlock(mm);

@@ -32,6 +32,19 @@ require_function_text() {
     fail "required contract text is missing from $path function $function_name: $text"
 }
 
+reject_function_text() {
+  path=$1
+  function_name=$2
+  text=$3
+  if awk -v function_name="$function_name" '
+    index($0, function_name "(") { in_function = 1 }
+    in_function { print }
+    in_function && /^}/ { exit }
+  ' "$ROOT/$path" | grep -F -- "$text" >/dev/null; then
+    fail "forbidden contract text is present in $path function $function_name: $text"
+  fi
+}
+
 CONTRACT=docs/r0lab-v1-contract.md
 VERIFICATION=docs/r0lab-v1-verification.md
 SHADOW_PLAN=docs/shadow-page-transition-plan.md
@@ -90,6 +103,7 @@ require_file scripts/test_raw_exit_hook_preclear_hold_split_device.sh
 require_file scripts/test_raw_exit_hook_raw_hold_split_device.sh
 require_file scripts/test_raw_exit_hook_raw_hold_idle_device.sh
 require_file scripts/test_raw_hold_lifetime_matrix_device.sh
+require_file scripts/test_raw_live_pte_snapshot_device.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -567,7 +581,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3a pre-clear hold-state split | F
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3b Lab App-only raw-hold split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3c status-reader split | Failed/classified'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split | Failed/classified'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e raw-hold lifetime plan | Failed/classified; L2 planning next'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured; L3 planning next'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-P | Plan/docs/contract only'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-L1 | Raw-hold idle diagnostic script only'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3a-diagnostic-split-plan.md'
@@ -692,7 +706,7 @@ require_text "$F46_D4_R3E_PLAN" 'D4-R3e-A | Read-only source audit'
 require_text "$F46_D4_R3E_PLAN" 'D4-R3e-L1 | Lab App lifetime matrix only'
 require_text "$F46_D4_R3E_PLAN" 'Do not continue D4-R3d-L2 status transport or L3 maps reader work'
 require_text "$F46_D4_R3E_L2_PLAN" 'wxshadow F4.6 D4-R3e-L2 Live PTE Snapshot Plan'
-require_text "$F46_D4_R3E_L2_PLAN" 'Status: planning gate only.'
+require_text "$F46_D4_R3E_L2_PLAN" 'Status: the narrow source packet is implemented and builds locally.'
 require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L1-single-source-uxn-unstable'
 require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-divergence'
 require_text "$F46_D4_R3E_L2_PLAN" 'no PTE replacement ordering changes'
@@ -701,6 +715,13 @@ require_text "$F46_D4_R3E_L2_PLAN" 'raw mode=raw-hold-live-pte'
 require_text "$F46_D4_R3E_L2_PLAN" 'live_pte=<hex> expected_pte=<hex>'
 require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-match-then-unstable'
 require_text "$F46_D4_R3E_L2_PLAN" 'scripts/test_raw_live_pte_snapshot_device.sh'
+require_text "$F46_D4_R3E_L2_PLAN" 'raw slot live pte <token> <slot>'
+require_text "$F46_D4_R3E_L2_PLAN" 'raw raw-hold live-pte <token>'
+require_text "$F46_D4_R3E_L2_PLAN" 'Clean-Source Device Result'
+require_text "$F46_D4_R3E_L2_PLAN" 'raw-live-pte-snapshot-20260724-080322.log'
+require_text "$F46_D4_R3E_L2_PLAN" 'live_pte=e00009f9bfffc3 expected_pte=e00009f9bfffc3'
+require_text "$F46_D4_R3E_L2_PLAN" 'D4-R3e-L2-live-pte-stable'
+require_text "$F46_D4_R3E_L2_PLAN" 'repeat/lower-intrusion observation'
 require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3d status-transport split'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3c-status-logcat-timeout-kernel-panic'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3d-raw-hold-self-unstable'
@@ -708,7 +729,7 @@ require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-P'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-A'
 require_text "$DEVELOPMENT_SEQUENCE" 'Lab App-only lifetime matrix'
 require_text "$DEVELOPMENT_SEQUENCE" 'slot count and retained PTE state'
-require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e raw-hold lifetime plan | Failed/classified; L2 planning next'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L2 live-PTE snapshot | Device evidence captured; L3 planning next'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw raw-hold lifetime source|shadow single|double <token>'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L2-P'
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3e-L1-single-source-uxn-unstable'
@@ -719,6 +740,10 @@ require_text "$FINAL_ROADMAP" 'scripts/test_raw_hold_lifetime_matrix_device.sh'
 require_text "$FINAL_ROADMAP" 'D4-R3e-L2 planning'
 require_text "$FINAL_ROADMAP" 'raw-hold-lifetime-matrix-20260724-071931.log'
 require_text "$FINAL_ROADMAP" 'D4-R3e-L2 live-PTE planning'
+require_text "$FINAL_ROADMAP" 'raw slot live pte'
+require_text "$FINAL_ROADMAP" 'raw raw-hold live-pte <token>'
+require_text "$FINAL_ROADMAP" 'raw-live-pte-snapshot-20260724-080322.log'
+require_text "$FINAL_ROADMAP" 'D4-R3e-L3 repeat/lower-intrusion planning'
 require_text "$DEVELOPMENT_SEQUENCE" 'raw-hold idle stability'
 require_text "$DEVELOPMENT_SEQUENCE" 'Activity/Logcat status transport'
 require_text "$DEVELOPMENT_SEQUENCE" 'KPM status supercall'
@@ -768,6 +793,38 @@ require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_hold_lifetime'
 require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold lifetime '
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=raw-hold-lifetime failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'target_state=%s slots=%u raw_slots=%u page_records=%u'
+require_text kpm/r0lab_raw.h 'struct r0lab_raw_live_pte_snapshot'
+require_text kpm/r0lab_raw.h 'r0lab_raw_snapshot_live_pte'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'mmap_read_lock(mm);'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'r0lab_raw_walk_locked'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'live_pte = READ_ONCE(*ptep);'
+reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'r0lab_raw_replace_locked'
+reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'flush_tlb'
+reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'set_pte_at'
+reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'memset'
+require_text kpm/r0lab.c 'raw slot live pte '
+require_text kpm/r0lab.c 'snapshot_stage=after_arm walk_rc=%d'
+require_text kpm/r0lab.c 'page->record.backend == record_backend'
+require_text kpm/r0lab.c 'page->record.state == record_state'
+require_text kpm/r0lab.c 'record_backend=%s record_state=%s record_match=%u'
+require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_hold_live_pte'
+require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold live-pte '
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=raw-hold-live-pte failures=%d'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'RAW_LIVE_PTE_SNAPSHOT_IDLE_SECONDS'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'raw raw-hold live-pte $TOKEN'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'D4-R3e-L2-live-pte-mismatch-before-idle'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'D4-R3e-L2-live-pte-walk-failed'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'D4-R3e-L2-live-pte-match-then-unstable'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'D4-R3e-L2-live-pte-stable'
+require_text scripts/test_raw_live_pte_snapshot_device.sh 'post_hold_status=not_used boot_id_reader=not_used proc_maps=not_used'
+require_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'adb_device get-state'
+require_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'preserve_active_hold 0 D4-R3e-L2-live-pte-stable'
+reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'capture_pstore'
+reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'wait-for-device'
+reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'getprop'
+reject_function_text scripts/test_raw_live_pte_snapshot_device.sh poll_adb_transport 'raw slot clear'
 require_text scripts/test_raw_exit_hook_device.sh 'command_timeout command=%s wait_ms=10000'
 require_text scripts/test_raw_exit_hook_device.sh '*"command=$command"*'
 require_text scripts/test_raw_exit_hook_device.sh 'LC_ALL=C grep -F -- "$needle"'
