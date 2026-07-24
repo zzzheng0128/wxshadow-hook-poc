@@ -114,6 +114,7 @@ require_function_sequence3() {
 [ -f "$DEVICE_SCRIPT" ] || fail "R3o device ladder is missing"
 
 require_text "$PLAN" 'R3o uses the kernel'
+require_text "$PLAN" 'Status: complete.'
 require_text "$PLAN" 'mmgrab(mm)'
 require_text "$PLAN" 'mmdrop(mm)'
 require_text "$PLAN" 'before the first source-UXN PTE transition'
@@ -122,6 +123,12 @@ require_text "$PLAN" 'synchronizes the full page after the initial copy/seed'
 require_text "$PLAN" 'the final full-abort callback resident'
 require_text "$PLAN" 'ordinary owner-process DABTs'
 require_text "$PLAN" 'R3O_STAGE4_HOLD_SECONDS'
+require_text "$PLAN" 'source-tagged six-stage ladder passed'
+require_text "$PLAN" \
+  'wxshadow-v2-f46-d4-r3o-stage4-runtime-gate-candidate-20260724'
+require_text "$PLAN" \
+  'build/evidence/raw-r3o-stage-5-20260724-195753.log'
+require_text "$PLAN" 'Stage 6 ended with an empty FolkPatch module list.'
 require_text "$PLAN" 'raw raw-hold clear <token>'
 require_text "$PLAN" 'r0lab-r3o:'
 require_text "$PLAN" 'scripts/test_raw_r3o_lifetime_device.sh'

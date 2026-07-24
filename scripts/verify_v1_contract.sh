@@ -1756,7 +1756,7 @@ require_text scripts/verify_d4_r3n_disassembly.sh \
 require_text "$F46_D4_R3O_PLAN" \
   'F4.6 D4-R3o Reference Lifetime Parity Fix Plan'
 require_text "$F46_D4_R3O_PLAN" \
-  'Status: source implementation and focused host verification pass.'
+  'Status: complete.'
 require_text "$F46_D4_R3O_PLAN" 'mmgrab(mm)'
 require_text "$F46_D4_R3O_PLAN" 'mmdrop(mm)'
 require_text "$F46_D4_R3O_PLAN" \
@@ -1771,15 +1771,15 @@ require_text "$F46_D4_R3O_PLAN" \
 require_text "$F46_D4_R3O_PLAN" \
   'Only after stages 1-5 pass, run one unload/reload-without-reboot cycle.'
 require_text "$DEVELOPMENT_SEQUENCE" \
-  '| F4.6-D4-R3o reference lifetime parity | Compact-dispatch Stage 4 candidate passed; tagged Stage 4-6 ladder pending |'
+  '| F4.6-D4-R3o reference lifetime parity | Complete; source-tagged Stage 1-6 ladder passed |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   '| 28 | D4-R3o | Reference lifetime parity and compact abort admission |'
 require_text "$FINAL_ROADMAP" \
-  'R3o still active for final device acceptance'
+  'Current superseding status: the F4.6 queue is complete.'
 require_text "$FINAL_ROADMAP" \
   'Allowing every DABT into the full callback first killed `system_server`'
 require_text "$REFERENCE_COVERAGE" \
-  'one `mm_count` reference per slot'
+  'one `mm_count` reference each'
 require_text "$REFERENCE_COVERAGE" \
   'matched `__get_free_pages(GFP_KERNEL, 0)`/`free_pages(..., 0)` pair'
 require_text kpm/r0lab.c 'bool mm_count_owned;'
@@ -2659,7 +2659,9 @@ require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3k-visible-inflight
 require_text "$DEVELOPMENT_SEQUENCE" 'D4-R3l | Read-only IABT admission and route'
 require_text "$DEVELOPMENT_SEQUENCE" 'Complete/classified stable and reboot-closed.'
 require_text "$FINAL_ROADMAP" 'R3l is closed and queue progress reached 25 of 27.'
-require_text "$REFERENCE_COVERAGE" 'R3l exact source `dc12f7e`'
+require_text "$REFERENCE_COVERAGE" 'R3o exact source `e58d3de`'
+require_text "$REFERENCE_COVERAGE" \
+  'R3o Stage 5 restored both active shadow pages'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3l-readonly-iabt-route-plan.md'
 require_text "$DEVELOPMENT_SEQUENCE" 'dedicated no-accounting token acquire/validate/release path'
 require_text "$DEVELOPMENT_SEQUENCE" 'docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md'
@@ -3371,7 +3373,8 @@ require_text docs/kpm-research-plan.md '[the FolkPatch source reference](folkpat
 require_text "$REFERENCE_REVIEW" '141 annotated'
 require_text "$REFERENCE_REVIEW" 'fixed two-slot Lab page table'
 require_text "$REFERENCE_REVIEW" '1024 page-local patch records per armed slot'
-require_text "$REFERENCE_REVIEW" 'F4.6 owner-exit acceptance remains blocked'
+require_text "$REFERENCE_REVIEW" \
+  'Completed for the fixed two-slot Lab boundary.'
 require_text "$REFERENCE_REVIEW" 'Runtime structure-offset scanning and raw TLB fallbacks'
 require_text "$REFERENCE_REVIEW" 'scripts/verify_wxshadow_reference_source.sh'
 require_text "$REFERENCE_REVIEW" 'scripts/verify_wxshadow_reference_inventory.sh'
@@ -3391,15 +3394,18 @@ require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-function
 require_text scripts/test_wxshadow_reference_inventory_host.sh 'unknown-family'
 require_text scripts/test_wxshadow_reference_inventory_host.sh 'missing-matrix-family'
 require_text "$REPLICA_PLAN" 'two fixed anonymous'
-require_text "$REPLICA_PLAN" 'Two-slot `exit_mmap` owner-exit acceptance is not'
+require_text "$REPLICA_PLAN" \
+  "R3o's source-tagged two-slot natural owner-exit path"
 require_text "$REPLICA_PLAN" 'exact 141-function review coverage'
 require_text "$FINAL_ROADMAP" '26 of 27 items executed'
 require_text "$FINAL_ROADMAP" 'progress, not release completion'
 require_text "$FINAL_ROADMAP" 'Reference Completeness Gate'
 require_text "$FINAL_ROADMAP" 'all 141 annotated reference functions'
 require_text "$FINAL_ROADMAP" 'two fixed Lab-owned raw shadow pages'
-require_text "$FINAL_ROADMAP" 'lifecycle acceptance, not general hook'
-require_text "$FINAL_ROADMAP" 'F4.6 two-slot owner-exit cleanup remains the active blocker'
+require_text "$FINAL_ROADMAP" \
+  'cross-family integration, not raw-page'
+require_text "$FINAL_ROADMAP" \
+  'F4.7 must prove the migrated families still compose'
 require_text "$DEVELOPMENT_SEQUENCE" 'read-only audit selected D4-R3g'
 require_text "$DEVELOPMENT_SEQUENCE" '| 17 | D4-R3e-L3-A-D |'
 require_text "$DEVELOPMENT_SEQUENCE" 'Four clean-boot device rows'
@@ -4076,4 +4082,4 @@ require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patc
 
 "$ROOT/scripts/verify_d4_r3o_reference_lifetime.sh" >/dev/null
 
-printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked f4_r3o=compact_stage4_candidate_pass_tagged_stage4_6_pending s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"
+printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked f4_r3o=source_tagged_stage1_6_pass s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"
