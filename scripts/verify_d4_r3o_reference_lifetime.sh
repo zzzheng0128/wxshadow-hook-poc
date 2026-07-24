@@ -239,7 +239,7 @@ require_text "$DEVICE_SCRIPT" 'warn_count changed:'
 require_text "$DEVICE_SCRIPT" 'wait_for_failure_device'
 require_text "$DEVICE_SCRIPT" 'failure_pstore_console_begin'
 require_text "$DEVICE_SCRIPT" 'raw raw-hold clear $TOKEN_2'
-require_text "$DEVICE_SCRIPT" "'state=2'"
+require_text "$DEVICE_SCRIPT" "'states=2/0'"
 require_text "$DEVICE_SCRIPT" 'raw raw-hold clear $TOKEN_3'
 require_text "$DEVICE_SCRIPT" 'raw raw-hold clear $TOKEN_4'
 require_text "$DEVICE_SCRIPT" 'exit_restore_begin slot='

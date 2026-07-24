@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
-SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage2-statefix-candidate-20260724}
+SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage2-fieldfix-candidate-20260724}
 STAGE=${R3O_STAGE:-}
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3o.kpm
@@ -412,7 +412,7 @@ case "$STAGE" in
       'normal=42' \
       'shadow=-1' \
       'activations=0' \
-      'state=2' \
+      'states=2/0' \
       'abort_hook_installed=0' \
       'abort_hook_suppressed=1' \
       'handler_faults=0'
