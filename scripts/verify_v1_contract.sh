@@ -369,6 +369,8 @@ require_file scripts/verify_d4_r3l_plan_packet.sh
 require_file scripts/verify_d4_r3m_plan_packet.sh
 require_file scripts/test_raw_abort_visible_inflight_device.sh
 require_file scripts/verify_d4_r3k_disassembly.sh
+require_file scripts/test_raw_abort_iabt_transition_device.sh
+require_file scripts/verify_d4_r3m_disassembly.sh
 require_file docs/kpm-research-plan.md
 require_file docs/kpm-compatibility-matrix.md
 
@@ -1201,27 +1203,27 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_before_abort_lock_passthrough \
   be53f3e27caa976d597375ce599bd626404c10e9aad630240acb5e4e4c11aa92
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_callback \
-  b9b2dd65e8500a853635593af9e64518c3bddced78fb99149793919f3700eb90
+  464709c24f47b6cdae41003d51584102ea0f2581ae686a3680266933e9523bb2
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
-  fce34ba3a2790efc72dba00a0b8a0aff2ad5e9e445fba9f08078707f981c5e9e
+  d74bd88f1daf89464f7bb26a8db384ecbd6600e6ede9388c3a3f8c8f0b5a7180
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  050186876234d63db16ea2edfdf8e22ca07d499be338196c6b5a55e162523e3e
+  913f535c571c71216f8e2293db433e47cf6e4197b90ca0ac357c8af50ba811b7
 require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
-  eee34a6e7d4dfa71a93d2ce15e16fe207b41fb2cb7745e5b3ee6bf8605e0c19f
+  2699bd6f14aeb5a031550ef51b224490fc428372519ec0d922eb13b9c286fde1
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
-  b4d7ccd0fbec0d89001fc27006b9e71b72d8e850b86d1fa079a6d93833effc46
+  7fa0da7880e510ee2c7b33fa8e07198788ce4ad5c04d57100a2378c96e0fa0ab
 require_function_sha256 kpm/r0lab.c r0lab_control0 \
-  e20ab06101e5bdd375f66b8d6d8f35973884cf63923e47b64a8de41f854d9105
+  c37ba3019829afee056c4980b51d05d7dc3552123c42dcee3cb00090233869cf
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  ba8fb96ca8d9f4eeed7436fcfcacb7302a0220b4a6c419b3b407da29c8c2f929
+  d4c42216531c66eb0dd8df98da18dad384d658ede3098bfbbdf398dee1b05e76
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
-  351913cd4e7e14b8c8c24d4e2c030cc7b985ab991fba404235aa35212d2b3772
+  d9b68a753737d4d3f8d6c247f1fb0f90b9edd387d3b8f88e6addf0967565a25e
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   Java_dev_r0hook_lab_MainActivity_nativeControl \
-  1a67cb7478ac2fa7bc4714c1b0633082ff74cc2d074a20ad1ad40a1ac0233e84
+  11bac93cdb5a4afcd16b2add52593c87426d533a7a78cf13d0d630365df3d6e5
 require_text "$F46_D4_R3J_PLAN" 'wxshadow F4.6 D4-R3j Adjacent Inflight-Accounting Plan'
 require_text "$F46_D4_R3J_PLAN" 'Status: device row stable and physical-reboot closure verified.'
 require_text "$F46_D4_R3J_PLAN" '65679740eb5253c2779bbd0a0c4dce89ebdd5529'
@@ -1386,7 +1388,7 @@ require_text scripts/verify_d4_r3l_plan_packet.sh \
 require_text scripts/verify_v1_contract.sh \
   'D4-R3l plan packet contains a forbidden changed path'
 require_text "$F46_D4_R3M_PLAN" 'wxshadow F4.6 D4-R3m IABT Transition And Restore-ABI Plan'
-require_text "$F46_D4_R3M_PLAN" 'Status: plan packet locked; source and device work not started.'
+require_text "$F46_D4_R3M_PLAN" 'Status: source implemented and host-verified; device row not run.'
 require_text "$F46_D4_R3M_PLAN" 'D4-R3m-global-abort-iabt-transition-restore-abi'
 require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition'
 require_text "$F46_D4_R3M_PLAN" 'raw slot arm abort-iabt-transition <token> <slot> <page>'
@@ -1407,6 +1409,15 @@ require_text "$F46_D4_R3M_PLAN" 'D4-R3m-source-uxn-iabt-transition-stable'
 require_text "$F46_D4_R3M_PLAN" 'D4-R3m-source-uxn-iabt-transition-unstable'
 require_text "$F46_D4_R3M_PLAN" 'D4-R3m-setup-blocked'
 require_text "$F46_D4_R3M_PLAN" 'R3n remains locked'
+require_text "$F46_D4_R3M_PLAN" 'kpm_sha256=c29b114970e94e4b6d559728a1e72dfaadc441f9333c906de67554379c121feb'
+require_text "$F46_D4_R3M_PLAN" 'kpm_object_sha256=b4812d16328f433036a81a78f693cf6dca0e3831686afdb2891dc33c9482da3a'
+require_text "$F46_D4_R3M_PLAN" 'apk_lib_entry_sha256=8f3e8256b023514b379c2ebdd6d6d043b36d53e2d1fca1d2d6d8b56861d947f3'
+require_text "$F46_D4_R3M_PLAN" 'apk_dex_entry_sha256=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text "$F46_D4_R3M_PLAN" 'signer_cert_sha256=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
+require_text "$F46_D4_R3M_PLAN" 'device_script_sha256=02bd98414c29c07e78cc39695d6dc6b2e268bf6b87fd604c3fbbf2e1413c9295'
+require_text "$F46_D4_R3M_PLAN" 'disassembly_script_sha256=1c4deb9a5a6b3e54e1262ac352e62234873191c07696b38315bfa2021d3872ab'
+require_text "$F46_D4_R3M_PLAN" 'contract_script_count=58'
+require_text "$F46_D4_R3M_PLAN" 'device_access=not_run'
 require_text scripts/verify_d4_r3m_plan_packet.sh \
   'D4_R3M_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
@@ -1424,25 +1435,25 @@ require_function_sha256 kpm/r0lab.c \
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_iabt_route \
   809efa85e1b112511370d0910f7dadc14e2f12ac19667acebc8dcf6790bc188b
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm \
-  0a799555b31355fb4514ee1850e2955a0f36dc3d28b666a88d76250b9772875f
+  d25e5b45a82d00a18b2e8cbf26e1ae62b4ab5038725564b5543e4a5e9b5f9dc3
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime \
-  8b70c17f7b65fdf556953b984fb4d944e584e5b0f6a484da24e72b11e2365648
+  5f1ca60e2aa03f62e3971e9bd57aff6ac860a8c835611c3b1e9d4d9d0ddbd8a5
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_live_pte \
-  858d1ea7257323bd066d8ddce8069a76f84b7c649eade9b986e7e9a13613365b
+  f64d6a9d28cf7118c9240c21e155c4a12761708c8b6fb0f1c0936ddf3131519d
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_no_abort \
-  676de7cecc706b403644cb1914bedd65a76884498914a1fbb49cae17a626e309
+  7cb3c2f9d23a19b5b9946b58d1f3d43ecda19aae71a4918cb5317d3a522903db
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_passthrough \
-  dafd910dcfd1c016ab4914d4b7052c1c84f9e686ec31593f327d6e080403c025
+  a757d0138155dc071da87590760094a0b89bab4d25bf177ae77ba505122b9b36
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_mmget \
-  ffbcdfb18c4913e0a75f7be36ffafc603dd7ffcaeecdc445302e2174dc12cb57
+  10f55337b313465b9ae4adb6e8b4806bc234d9adfe00345002e4d16382ebb531
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_iabt_route \
-  245bd9a480bb6152468b6d6365a838ab06a47a460a98da57df935e0188b2d829
+  6bae8add63260797b3c9e8ab2e5cd5932304320111edabb8ec7760306f0bf7cf
 require_function_text kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_readonly_locked \
   '(route_flags & R0LAB_RAW_HOOK_ROUTE_MUTATING)'
@@ -1521,9 +1532,9 @@ require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
   'return r0lab_raw_before_abort_iabt_route;'
 require_function_text kpm/r0lab.c \
   r0lab_raw_abort_hook_installed_callback_locked \
-  'page->abort_hook_iabt_route);'
+  'page->abort_hook_iabt_route,'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
-  'page->abort_hook_iabt_route);'
+  'page->abort_hook_iabt_route, page->abort_hook_iabt_transition);'
 require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
   'iabt_route = page->abort_hook_iabt_route;'
 require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
@@ -1554,7 +1565,7 @@ require_function_text lab-app/src/main/cpp/labprobe.c \
   'abort_hook_iabt_route[index] != 1'
 require_function_text lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  'g_r0lab_m5_hold.mode = iabt_route_abort_hook ? 19 :'
+  'iabt_route_abort_hook ? 19 :'
 require_line_before lab-app/src/main/cpp/labprobe.c \
   '    if (!strncmp(args, "raw raw-hold abort-iabt-route ", 30)) {' \
   '    if (!strncmp(args, "raw exit hook hold ", 19)) {'
@@ -1592,10 +1603,226 @@ require_text scripts/verify_d4_r3l_disassembly.sh \
   'D4-R3l disassembly passed: frame_loads=3 increment=1 decrement=1 nonstack_stores=2 indirect_calls=7 hardware_barriers=0'
 require_text scripts/verify_d4_r3l_disassembly.sh \
   "grep -Eq '[[:space:]](dmb|dsb|isb|dc|ic)([[:space:]]|$)'"
+require_text kpm/r0lab.c 'bool abort_hook_iabt_transition;'
+require_text kpm/r0lab.c 'raw slot arm abort-iabt-transition '
+require_function_sha256 kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  eb0f1a957c0a3991029f1c2de0cef5440939769a0e980ef8d8be7e258f94874d
+require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  164d791a0a6e0de50e9bf681b9df25700efffe085d17a55ee502ea3da8302083
+require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  464709c24f47b6cdae41003d51584102ea0f2581ae686a3680266933e9523bb2
+require_function_sha256 kpm/r0lab.c \
+  r0lab_raw_abort_hook_installed_callback_locked \
+  d74bd88f1daf89464f7bb26a8db384ecbd6600e6ede9388c3a3f8c8f0b5a7180
+require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_acquire \
+  913f535c571c71216f8e2293db433e47cf6e4197b90ca0ac357c8af50ba811b7
+require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
+  2699bd6f14aeb5a031550ef51b224490fc428372519ec0d922eb13b9c286fde1
+require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
+  7fa0da7880e510ee2c7b33fa8e07198788ce4ad5c04d57100a2378c96e0fa0ab
+require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
+  6d5e437214fcaefe75fce1d2f6126ab38a59f27bfc6634336b99843633714068
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  d4c42216531c66eb0dd8df98da18dad384d658ede3098bfbbdf398dee1b05e76
+require_function_sha256 lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_abort_iabt_transition \
+  12ecd7fadde7f3f38ff129c12e5366f98f1908926c60970fb4ff6b06c97b7826
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'page = r0lab_raw_page_find_by_mm_addr_locked(mm, address);'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'if (!page->abort_hook_iabt_transition)'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'page->raw.state != R0LAB_RAW_SOURCE_UXN'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'page->raw.state != R0LAB_RAW_ORIGINAL_READ'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  '!page->raw.read_cycle_active'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'token->kind = R0LAB_RAW_HOOK_ABORT;'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'r0lab_raw_hook_route_reject_locked'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked 'route_hits'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked 'route_rejects'
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
+  'page->transitioning ='
+reject_function_text kpm/r0lab.c \
+  r0lab_raw_hook_page_token_acquire_iabt_transition_locked 'r0lab_record'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'far = (unsigned long)args->arg0;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'esr = (unsigned int)args->arg1;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'regs = (struct pt_regs *)(unsigned long)args->arg2;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'g_session.owner_tgid == r0lab_current_tgid()'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_raw_hook_page_token_acquire_iabt_transition_locked('
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'page->transitioning = true;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'result = r0lab_raw_finish_read_cycle(&fault_page->raw);'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'result = r0lab_raw_activate_shadow(&fault_page->raw);'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_raw_hook_page_token_release_locked(&route_token, true)'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'fault_page->raw.state == R0LAB_RAW_SHADOW_RX'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'args->skip_origin = 1;'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'args->ret = 0;'
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'g_get_task_mm(' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'g_mmput(' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_lock();' 3
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_unlock(flags);' 3
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  '++g_raw_inflight;' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  '--g_raw_inflight;' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'page->transitioning = true;' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_raw_finish_read_cycle(' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_raw_activate_shadow(' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'args->skip_origin = 1;' 1
+require_function_count kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'args->ret = 0;' 1
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'R0LAB_M3_ESR_EC_DABT_LOW'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_raw_hook_route_reject_locked'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'route_hits'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'route_rejects'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_record'
+reject_function_text kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
+  'r0lab_raw_replace_locked'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  'if (iabt_transition)'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_callback \
+  'return r0lab_raw_before_abort_iabt_transition;'
+require_function_text kpm/r0lab.c \
+  r0lab_raw_abort_hook_installed_callback_locked \
+  'page->abort_hook_iabt_transition);'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_acquire \
+  'page->abort_hook_iabt_transition);'
+require_function_text kpm/r0lab.c r0lab_raw_abort_hook_release \
+  'iabt_transition = page->abort_hook_iabt_transition;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  '(iabt_transition_abort_hook ? 1U : 0U)'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'active->abort_hook_iabt_transition'
+require_function_text kpm/r0lab.c r0lab_raw_slot_arm \
+  'slot->abort_hook_iabt_transition = iabt_transition_abort_hook;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_iabt_transition = page->abort_hook_iabt_transition;'
+require_function_text kpm/r0lab.c r0lab_raw_slot_ready \
+  'abort_hook_iabt_route=%u abort_hook_iabt_transition=%u'
+require_line_before kpm/r0lab.c \
+  '    if (!strncmp(args, "raw slot arm abort-iabt-transition ", 35)) {' \
+  '    if (!strncmp(args, "raw slot arm ", 13)) {'
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw raw-hold abort-iabt-transition '
+require_text lab-app/src/main/cpp/labprobe.c \
+  'raw mode=raw-hold-abort-iabt-transition failures=%d'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'error=abort-iabt-transition hold requires source single'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'expect_shadow = want_shadow || iabt_transition_abort_hook;'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'iabt_transition_abort_hook ? 1 : 0;'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'if (!sigsetjmp(g_r0lab_raw_signal_jump, 1))'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'transition_fault_caught = 1;'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'g_r0lab_m5_hold.mode = iabt_transition_abort_hook ? 20 :'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_hold_lifetime_common \
+  'restore_abi=skip_origin_ret0'
+require_function_text lab-app/src/main/cpp/labprobe.c \
+  r0lab_raw_signal_handler \
+  'if (g_r0lab_raw_signal_jump_on_fault)'
+require_line_before lab-app/src/main/cpp/labprobe.c \
+  '    if (g_r0lab_raw_signal_jump_on_fault)' \
+  '    (void)syscall(SYS_mprotect, g_r0lab_raw_signal_page,'
+require_line_before lab-app/src/main/cpp/labprobe.c \
+  '    if (!strncmp(args, "raw raw-hold abort-iabt-transition ", 35)) {' \
+  '    if (!strncmp(args, "raw exit hook hold ", 19)) {'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'RAW_ABORT_IABT_TRANSITION_CLEAN_BOOT_CONFIRMED'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'EXPECTED_SERIAL=32250DLH2000Z3'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'EXPECTED_PRE_HOLD_BOOT_ID=922ad5c1-a406-4993-8c76-8b51d6d1a546'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'IDLE_SECONDS=15'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'EXPECTED_KPM_SHA=c29b114970e94e4b6d559728a1e72dfaadc441f9333c906de67554379c121feb'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'EXPECTED_LABPROBE_SHA=8f3e8256b023514b379c2ebdd6d6d043b36d53e2d1fca1d2d6d8b56861d947f3'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'EXPECTED_CLASSES_DEX_SHA=325e8a54bd306ef4da230de9919d0da46dec112f97efa9fbf42646dc7dd7ec79'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'EXPECTED_SIGNER_CERT_SHA=73f1e2d251423909f33bfc7573580bd096834b57f680d5edb6e68655b1f903dd'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'wxshadow-v2-f46-d4-r3m-iabt-transition-source-20260724'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'raw raw-hold abort-iabt-transition $TOKEN'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'D4-R3m-source-uxn-iabt-transition-stable'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'D4-R3m-source-uxn-iabt-transition-unstable'
+require_text scripts/test_raw_abort_iabt_transition_device.sh \
+  'D4-R3m-setup-blocked'
+require_file_sha256 scripts/test_raw_abort_iabt_transition_device.sh \
+  02bd98414c29c07e78cc39695d6dc6b2e268bf6b87fd604c3fbbf2e1413c9295
+require_function_text scripts/test_raw_abort_iabt_transition_device.sh \
+  poll_adb_transport 'state=$(adb_device get-state 2>&1)'
+reject_function_text scripts/test_raw_abort_iabt_transition_device.sh \
+  poll_adb_transport 'run_app_command'
+reject_function_text scripts/test_raw_abort_iabt_transition_device.sh \
+  poll_adb_transport 'supercmd'
+reject_function_text scripts/test_raw_abort_iabt_transition_device.sh \
+  poll_adb_transport '/proc/'
+reject_function_text scripts/test_raw_abort_iabt_transition_device.sh \
+  poll_adb_transport 'adb_device shell getprop'
+require_text scripts/verify_d4_r3m_disassembly.sh \
+  'D4-R3m disassembly passed: frame_loads=3 increments=2 decrement=1 nonstack_stores=10 indirect_calls=10 activate_calls=1 finish_calls=1 transition_stores=2 skip_origin_stores=1 ret_zero_stores=1 hardware_cache_tlb=0'
+require_text scripts/verify_d4_r3m_disassembly.sh \
+  "grep -Eq '[[:space:]](dmb|dsb|isb|dc|ic|tlbi)([[:space:]]|$)'"
+require_file_sha256 scripts/verify_d4_r3m_disassembly.sh \
+  1c4deb9a5a6b3e54e1262ac352e62234873191c07696b38315bfa2021d3872ab
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
   e6b888f79dd63507885374ef3bf1014d2346c940a496d2dcb96d2e8f5ab06bfc
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
-  b1a525bb8c85c6300a8ed36d65ae658c1f4c214015459914795637165082028a
+  6d5e437214fcaefe75fce1d2f6126ab38a59f27bfc6634336b99843633714068
 require_file scripts/test_raw_abort_inflight_passthrough_device.sh
 require_file scripts/verify_d4_r3j_disassembly.sh
 require_text kpm/r0lab.c 'bool abort_hook_inflight;'
@@ -1673,7 +1900,7 @@ require_line_before kpm/r0lab.c \
   '    if (!strncmp(args, "raw slot arm ", 13)) {'
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_inflight \
-  cc3f31be93904817393378ee29f01f5dca291a5434dd56a68e9438ad2240eed6
+  98d313f8e46f3bb449f4cef11159096506f9a9d8e7806af0ffa5c474b97998c1
 require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold abort-inflight '
 require_text lab-app/src/main/cpp/labprobe.c \
   'raw mode=raw-hold-abort-inflight failures=%d'
@@ -2838,6 +3065,8 @@ scripts/test_raw_abort_visible_inflight_device.sh
 scripts/verify_d4_r3k_disassembly.sh
 scripts/test_raw_abort_iabt_route_device.sh
 scripts/verify_d4_r3l_disassembly.sh
+scripts/test_raw_abort_iabt_transition_device.sh
+scripts/verify_d4_r3m_disassembly.sh
 scripts/test_v1_device.sh
 '
 

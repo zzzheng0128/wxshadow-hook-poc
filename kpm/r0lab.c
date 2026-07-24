@@ -364,6 +364,7 @@ struct r0lab_raw_shadow_page {
     bool abort_hook_lock;
     bool abort_hook_inflight;
     bool abort_hook_iabt_route;
+    bool abort_hook_iabt_transition;
     bool target_exiting;
     bool monitor_running;
     bool transitioning;
@@ -1169,6 +1170,41 @@ static int r0lab_raw_hook_page_token_acquire_readonly_locked(
     token->generation = page->generation;
     token->page = page;
     token->kind = kind;
+    return 0;
+}
+
+static int r0lab_raw_hook_page_token_acquire_iabt_transition_locked(
+    void *mm, unsigned long address, struct r0lab_raw_hook_page_token *token)
+{
+    struct r0lab_raw_shadow_page *page;
+
+    if (!token)
+        return R0LAB_EINVAL;
+    token->slot_id = R0LAB_RAW_PRIMARY_SLOT;
+    token->generation = 0;
+    token->page = NULL;
+    token->kind = R0LAB_RAW_HOOK_NONE;
+    page = r0lab_raw_page_find_by_mm_addr_locked(mm, address);
+    if (!page)
+        return R0LAB_ENOENT;
+    if (!mm || page->raw.mm != mm)
+        return R0LAB_EPERM;
+    if (!page->abort_hook_iabt_transition)
+        return R0LAB_EPERM;
+    if (page->transitioning)
+        return R0LAB_EBUSY;
+    if (!page->armed || page->reserving || page->clearing ||
+        !page->generation || page->raw.gup_hide_active ||
+        page->raw.fork_hide_active)
+        return R0LAB_EAGAIN;
+    if (page->raw.state != R0LAB_RAW_SOURCE_UXN &&
+        (page->raw.state != R0LAB_RAW_ORIGINAL_READ ||
+         !page->raw.read_cycle_active))
+        return R0LAB_EAGAIN;
+    token->slot_id = page->slot_id;
+    token->generation = page->generation;
+    token->page = page;
+    token->kind = R0LAB_RAW_HOOK_ABORT;
     return 0;
 }
 
@@ -4221,6 +4257,93 @@ static void r0lab_raw_before_abort_iabt_route(hook_fargs3_t *args,
     r0lab_unlock(flags);
 }
 
+static void r0lab_raw_before_abort_iabt_transition(hook_fargs3_t *args,
+                                                   void *udata)
+{
+    unsigned long far;
+    unsigned int esr;
+    struct pt_regs *regs;
+    struct mm_struct *current_mm;
+    struct r0lab_raw_hook_page_token route_token = {0};
+    struct r0lab_raw_shadow_page *fault_page = NULL;
+    unsigned long flags;
+    uint64_t generation = 0;
+    bool read_cycle_resume = false;
+    bool should_handle = false;
+    int result = R0LAB_EINVAL;
+
+    (void)udata;
+    if (!args || !g_get_task_mm || !g_mmput)
+        return;
+    far = (unsigned long)args->arg0;
+    esr = (unsigned int)args->arg1;
+    regs = (struct pt_regs *)(unsigned long)args->arg2;
+    current_mm = g_get_task_mm(current);
+    if (!current_mm)
+        return;
+
+    flags = r0lab_lock();
+    ++g_raw_inflight;
+    if (regs &&
+        (esr >> R0LAB_M3_ESR_EC_SHIFT) == R0LAB_M3_ESR_EC_IABT_LOW &&
+        (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
+        g_session.active &&
+        g_session.owner_tgid == r0lab_current_tgid() &&
+        !r0lab_raw_hook_page_token_acquire_iabt_transition_locked(
+            current_mm, far, &route_token)) {
+        struct r0lab_raw_shadow_page *page = route_token.page;
+        unsigned long page_address = page->raw.address;
+
+        if (page->abort_hook_iabt_transition &&
+            page->generation == route_token.generation &&
+            regs->pc >= page_address &&
+            regs->pc < page_address + R0LAB_RAW_PAGE_SIZE &&
+            (page->raw.state == R0LAB_RAW_SOURCE_UXN ||
+             (page->raw.state == R0LAB_RAW_ORIGINAL_READ &&
+              page->raw.read_cycle_active))) {
+            read_cycle_resume =
+                page->raw.state == R0LAB_RAW_ORIGINAL_READ;
+            page->transitioning = true;
+            fault_page = page;
+            generation = route_token.generation;
+            should_handle = true;
+        } else {
+            (void)r0lab_raw_hook_page_token_release_locked(
+                &route_token, false);
+        }
+    }
+    r0lab_unlock(flags);
+
+    if (should_handle) {
+        if (read_cycle_resume)
+            result = r0lab_raw_finish_read_cycle(&fault_page->raw);
+        else
+            result = r0lab_raw_activate_shadow(&fault_page->raw);
+    }
+
+    flags = r0lab_lock();
+    if (should_handle && route_token.page == fault_page &&
+        fault_page->generation == generation &&
+        fault_page->transitioning &&
+        !r0lab_raw_hook_page_token_release_locked(&route_token, true) &&
+        !result && fault_page->raw.state == R0LAB_RAW_SHADOW_RX) {
+        if (!read_cycle_resume) {
+            ++fault_page->activation_events;
+            fault_page->record.events = fault_page->activation_events;
+            fault_page->record.source_pfn = fault_page->raw.source_pfn;
+            fault_page->record.shadow_pfn = fault_page->raw.shadow_pfn;
+        }
+        fault_page->record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
+        args->skip_origin = 1;
+        args->ret = 0;
+    }
+    r0lab_unlock(flags);
+    g_mmput(current_mm);
+    flags = r0lab_lock();
+    --g_raw_inflight;
+    r0lab_unlock(flags);
+}
+
 static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
 {
     const unsigned long far = (unsigned long)args->arg0;
@@ -6008,8 +6131,11 @@ static unsigned int r0lab_raw_abort_hook_users_locked(void)
 
 static hook_chain3_callback
 r0lab_raw_abort_hook_callback(bool passthrough, bool mmget, bool lock,
-                              bool inflight, bool iabt_route)
+                              bool inflight, bool iabt_route,
+                              bool iabt_transition)
 {
+    if (iabt_transition)
+        return r0lab_raw_before_abort_iabt_transition;
     if (iabt_route)
         return r0lab_raw_before_abort_iabt_route;
     if (inflight)
@@ -6036,7 +6162,8 @@ r0lab_raw_abort_hook_installed_callback_locked(void)
             return r0lab_raw_abort_hook_callback(
                 page->abort_hook_passthrough, page->abort_hook_mmget,
                 page->abort_hook_lock, page->abort_hook_inflight,
-                page->abort_hook_iabt_route);
+                page->abort_hook_iabt_route,
+                page->abort_hook_iabt_transition);
     }
     return NULL;
 }
@@ -6053,7 +6180,7 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
     callback = r0lab_raw_abort_hook_callback(
         page->abort_hook_passthrough, page->abort_hook_mmget,
         page->abort_hook_lock, page->abort_hook_inflight,
-        page->abort_hook_iabt_route);
+        page->abort_hook_iabt_route, page->abort_hook_iabt_transition);
     flags = r0lab_lock();
     if (page->hook_installed) {
         r0lab_unlock(flags);
@@ -6110,6 +6237,7 @@ static int r0lab_raw_abort_hook_acquire(struct r0lab_raw_shadow_page *page)
 static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
 {
     hook_chain3_callback callback;
+    bool iabt_transition = false;
     bool iabt_route = false;
     bool inflight = false;
     bool lock = false;
@@ -6123,6 +6251,7 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
         return;
     flags = r0lab_lock();
     if (page->hook_installed) {
+        iabt_transition = page->abort_hook_iabt_transition;
         iabt_route = page->abort_hook_iabt_route;
         inflight = page->abort_hook_inflight;
         lock = page->abort_hook_lock;
@@ -6140,7 +6269,7 @@ static void r0lab_raw_abort_hook_release(struct r0lab_raw_shadow_page *page)
         (void)r0lab_raw_wait_for_callbacks();
     callback =
         r0lab_raw_abort_hook_callback(passthrough, mmget, lock, inflight,
-                                      iabt_route);
+                                      iabt_route, iabt_transition);
     if (should_detach)
         r0lab_hook_detach(g_do_mem_abort, callback, NULL);
     if (installed)
@@ -6675,7 +6804,9 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
                                bool mmget_abort_hook,
                                bool lock_abort_hook,
                                bool inflight_abort_hook,
-                               bool iabt_route_abort_hook, bool legacy_reply,
+                               bool iabt_route_abort_hook,
+                               bool iabt_transition_abort_hook,
+                               bool legacy_reply,
                                char __user *out_msg, int outlen)
 {
     char reply[R0LAB_OUTPUT_CAPACITY];
@@ -6692,7 +6823,8 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
             (mmget_abort_hook ? 1U : 0U) +
             (lock_abort_hook ? 1U : 0U) +
             (inflight_abort_hook ? 1U : 0U) +
-            (iabt_route_abort_hook ? 1U : 0U) >
+            (iabt_route_abort_hook ? 1U : 0U) +
+            (iabt_transition_abort_hook ? 1U : 0U) >
         1U) {
         result = R0LAB_EINVAL;
         goto record;
@@ -6733,13 +6865,14 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
             continue;
         if (suppress_abort_hook || passthrough_abort_hook ||
             mmget_abort_hook || lock_abort_hook || inflight_abort_hook ||
-            iabt_route_abort_hook ||
+            iabt_route_abort_hook || iabt_transition_abort_hook ||
             active->abort_hook_suppressed ||
             active->abort_hook_passthrough ||
             active->abort_hook_mmget ||
             active->abort_hook_lock ||
             active->abort_hook_inflight ||
-            active->abort_hook_iabt_route) {
+            active->abort_hook_iabt_route ||
+            active->abort_hook_iabt_transition) {
             r0lab_unlock(flags);
             g_mmput(mm);
             result = R0LAB_EBUSY;
@@ -6772,6 +6905,7 @@ static long r0lab_raw_slot_arm(uint64_t token, uint16_t slot_id,
     slot->abort_hook_lock = lock_abort_hook;
     slot->abort_hook_inflight = inflight_abort_hook;
     slot->abort_hook_iabt_route = iabt_route_abort_hook;
+    slot->abort_hook_iabt_transition = iabt_transition_abort_hook;
     slot->reserving = true;
     g_raw_page_table.selected_slot = slot_id;
     r0lab_unlock(flags);
@@ -6799,7 +6933,7 @@ static long r0lab_raw_arm(uint64_t token, uint64_t page_address,
                           char __user *out_msg, int outlen)
 {
     return r0lab_raw_slot_arm(token, R0LAB_RAW_PRIMARY_SLOT, page_address,
-                              false, false, false, false, false, false,
+                              false, false, false, false, false, false, false,
                               true, out_msg, outlen);
 }
 
@@ -6925,6 +7059,7 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     uint8_t record_backend;
     uint8_t record_state;
     bool abort_hook_installed;
+    bool abort_hook_iabt_transition;
     bool abort_hook_iabt_route;
     bool abort_hook_inflight;
     bool abort_hook_lock;
@@ -6959,6 +7094,7 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     record_backend = page->record.backend;
     record_state = page->record.state;
     abort_hook_installed = page->hook_installed;
+    abort_hook_iabt_transition = page->abort_hook_iabt_transition;
     abort_hook_iabt_route = page->abort_hook_iabt_route;
     abort_hook_inflight = page->abort_hook_inflight;
     abort_hook_lock = page->abort_hook_lock;
@@ -6967,7 +7103,7 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
     abort_hook_passthrough = page->abort_hook_passthrough;
     r0lab_unlock(flags);
     snprintf(reply, sizeof(reply),
-             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u abort_hook_lock=%u abort_hook_inflight=%u abort_hook_iabt_route=%u\n",
+             "raw_slot_ready slot=%u page=%llx generation=%llu source_pfn_low=%lx shadow_pfn_low=%lx state=source_uxn record_backend=%s record_state=%s abort_hook_installed=%u abort_hook_suppressed=%u abort_hook_passthrough=%u abort_hook_mmget=%u abort_hook_lock=%u abort_hook_inflight=%u abort_hook_iabt_route=%u abort_hook_iabt_transition=%u\n",
              (unsigned int)slot_id, (uint64_t)address,
              (unsigned long long)generation, source_pfn & 0xffffUL,
              shadow_pfn & 0xffffUL,
@@ -6979,7 +7115,8 @@ static long r0lab_raw_slot_ready(uint64_t token, uint16_t slot_id,
              abort_hook_mmget ? 1U : 0U,
              abort_hook_lock ? 1U : 0U,
              abort_hook_inflight ? 1U : 0U,
-             abort_hook_iabt_route ? 1U : 0U);
+             abort_hook_iabt_route ? 1U : 0U,
+             abort_hook_iabt_transition ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -11117,8 +11254,8 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, true, false,
-                                  false, false, false, false, false, out_msg,
-                                  outlen);
+                                  false, false, false, false, false, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm abort-passthrough ", 31)) {
         value = args + 31;
@@ -11127,8 +11264,8 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, true,
-                                  false, false, false, false, false, out_msg,
-                                  outlen);
+                                  false, false, false, false, false, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm abort-mmget ", 25)) {
         value = args + 25;
@@ -11137,8 +11274,8 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
-                                  true, false, false, false, false, out_msg,
-                                  outlen);
+                                  true, false, false, false, false, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm abort-lock ", 24)) {
         value = args + 24;
@@ -11147,8 +11284,8 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
-                                  false, true, false, false, false, out_msg,
-                                  outlen);
+                                  false, true, false, false, false, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm abort-inflight ", 28)) {
         value = args + 28;
@@ -11157,8 +11294,8 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
-                                  false, false, true, false, false, out_msg,
-                                  outlen);
+                                  false, false, true, false, false, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm abort-iabt-route ", 30)) {
         value = args + 30;
@@ -11167,8 +11304,18 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
-                                  false, false, false, true, false, out_msg,
-                                  outlen);
+                                  false, false, false, true, false, false,
+                                  out_msg, outlen);
+    }
+    if (!strncmp(args, "raw slot arm abort-iabt-transition ", 35)) {
+        value = args + 35;
+        if (r0lab_parse_u64_triplet(value, &token, &slot_value,
+                                    &page_address) ||
+            r0lab_raw_parse_slot_id(slot_value, &slot_id))
+            return R0LAB_EINVAL;
+        return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
+                                  false, false, false, false, true, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot arm ", 13)) {
         value = args + 13;
@@ -11177,8 +11324,8 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
             r0lab_raw_parse_slot_id(slot_value, &slot_id))
             return R0LAB_EINVAL;
         return r0lab_raw_slot_arm(token, slot_id, page_address, false, false,
-                                  false, false, false, false, false, out_msg,
-                                  outlen);
+                                  false, false, false, false, false, false,
+                                  out_msg, outlen);
     }
     if (!strncmp(args, "raw slot ready ", 15)) {
         value = args + 15;
