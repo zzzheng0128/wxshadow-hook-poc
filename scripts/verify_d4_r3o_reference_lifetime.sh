@@ -202,9 +202,9 @@ require_text "$RAW_HEADER" 'unsigned long r0lab_raw_abi_gfp_kernel(void);'
 require_text "$RAW_HEADER" 'void r0lab_raw_mmgrab(void *mm);'
 require_text "$RAW_HEADER" 'void r0lab_raw_mmdrop(void *mm);'
 require_function_text "$RAW_SOURCE" r0lab_raw_shadow_pfn_from_kaddr \
-  'virt_addr_valid(page->shadow_kaddr)'
-require_function_text "$RAW_SOURCE" r0lab_raw_shadow_pfn_from_kaddr \
   'virt_to_page(page->shadow_kaddr)'
+reject_function_text "$RAW_SOURCE" r0lab_raw_shadow_pfn_from_kaddr \
+  'virt_addr_valid'
 reject_function_text "$RAW_SOURCE" r0lab_raw_shadow_pfn_from_kaddr \
   'vmalloc_to_page'
 require_function_sequence3 "$RAW_SOURCE" r0lab_raw_replace_locked \
@@ -264,9 +264,9 @@ done
     compat_copy_to_user | current_uid | hook_unwrap_remove | hook_wrap | \
     kallsyms_lookup_name | kf_memcpy | kf_memset | kf_snprintf | \
     kf_strchr | kf_strcmp | kf_strlen | kf_strncmp | kf_strnlen | \
-    kf_strstr | pfn_valid | printk | sp_el0_is_current | \
+    kf_strstr | printk | sp_el0_is_current | \
     sp_el0_is_thread_info | task_in_thread_info_offset | thread_info_in_task | \
-    thread_size | vabits_actual)
+    thread_size)
       ;;
     *)
       fail "unexpected undefined symbol in KPM: $symbol"

@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
-SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-reference-lifetime-candidate-20260724}
+SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-loadable-candidate-20260724}
 STAGE=${R3O_STAGE:-}
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3o.kpm
@@ -190,12 +190,16 @@ prepare_worker_shutdown() {
 }
 
 load_module() {
-  LOAD_OUTPUT=$(supercmd module load "$REMOTE" "lab_uid=$LAB_UID" 2>&1) ||
-    return 1
+  if LOAD_OUTPUT=$(supercmd module load "$REMOTE" "lab_uid=$LAB_UID" 2>&1); then
+    load_rc=0
+  else
+    load_rc=$?
+  fi
+  printf 'module_load=%s\n' "$LOAD_OUTPUT" >> "$EVIDENCE"
+  [ "$load_rc" -eq 0 ] || return 1
   case "$LOAD_OUTPUT" in
     *"supercmd error code"*) return 1 ;;
   esac
-  printf 'module_load=%s\n' "$LOAD_OUTPUT" >> "$EVIDENCE"
 }
 
 unload_module() {

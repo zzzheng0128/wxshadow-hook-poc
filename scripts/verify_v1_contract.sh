@@ -2981,7 +2981,7 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm_worker \
   874f8f12422ff744204799582b402d2541eab4e5447662f0a1eb4c377ad6e9a2
 require_file_sha256 kpm/r0lab_raw_compat.c \
-  f10fee3cc1392418e5d7889e53372c47e0490ee5a5bed959aff0bc143f9b6b88
+  698a9b36674408d4cf1cfb5bf4b0b69eaf1f879f27851dd0633f97e634e9bdb7
 require_file_sha256 kpm/r0lab_raw.h \
   b8340cd245e26cdd2595231e7574e9910377eba99743670e318deeba1714d479
 require_text kpm/r0lab.c 'bool abort_hook_mmget;'

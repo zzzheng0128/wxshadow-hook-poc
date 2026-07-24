@@ -294,8 +294,6 @@ int r0lab_raw_shadow_pfn_from_kaddr(struct r0lab_raw_page *page)
 
     if (!page || !page->shadow_kaddr)
         return R0LAB_RAW_EINVAL;
-    if (!virt_addr_valid(page->shadow_kaddr))
-        return R0LAB_RAW_ENOENT;
     shadow_page = virt_to_page(page->shadow_kaddr);
     if (!shadow_page)
         return R0LAB_RAW_ENOENT;
