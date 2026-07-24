@@ -83,6 +83,31 @@ verify_d4_r3l_plan_packet_paths() {
   done
 }
 
+verify_d4_r3m_plan_packet_paths() {
+  changed=$(
+    (
+      git -C "$ROOT" diff --name-only
+      git -C "$ROOT" diff --cached --name-only
+      git -C "$ROOT" ls-files --others --exclude-standard
+    ) | LC_ALL=C sort -u
+  ) || fail "could not enumerate D4-R3m plan-packet changes"
+
+  for path in $changed; do
+    case "$path" in
+      docs/wxshadow-development-sequence.md | \
+      docs/wxshadow-f4.6-d4-r3m-iabt-transition-restore-abi-plan.md | \
+      docs/wxshadow-final-experiment-roadmap.md | \
+      docs/wxshadow-reference-function-coverage.md | \
+      scripts/verify_d4_r3m_plan_packet.sh | \
+      scripts/verify_v1_contract.sh)
+        ;;
+      *)
+        fail "D4-R3m plan packet contains a forbidden changed path: $path"
+        ;;
+    esac
+  done
+}
+
 if [ "${D4_R3J_PLAN_PACKET_STRICT:-0}" = 1 ]; then
   verify_d4_r3j_plan_packet_paths
 fi
@@ -93,6 +118,10 @@ fi
 
 if [ "${D4_R3L_PLAN_PACKET_STRICT:-0}" = 1 ]; then
   verify_d4_r3l_plan_packet_paths
+fi
+
+if [ "${D4_R3M_PLAN_PACKET_STRICT:-0}" = 1 ]; then
+  verify_d4_r3m_plan_packet_paths
 fi
 
 require_file() {
@@ -270,6 +299,7 @@ F46_D4_R3I_PLAN=docs/wxshadow-f4.6-d4-r3i-lock-exposure-plan.md
 F46_D4_R3J_PLAN=docs/wxshadow-f4.6-d4-r3j-inflight-accounting-plan.md
 F46_D4_R3K_PLAN=docs/wxshadow-f4.6-d4-r3k-visible-inflight-lifetime-plan.md
 F46_D4_R3L_PLAN=docs/wxshadow-f4.6-d4-r3l-readonly-iabt-route-plan.md
+F46_D4_R3M_PLAN=docs/wxshadow-f4.6-d4-r3m-iabt-transition-restore-abi-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
 REFERENCE_REVIEW=docs/wxshadow-reference-review.md
@@ -308,6 +338,7 @@ require_file "$F46_D4_R3I_PLAN"
 require_file "$F46_D4_R3J_PLAN"
 require_file "$F46_D4_R3K_PLAN"
 require_file "$F46_D4_R3L_PLAN"
+require_file "$F46_D4_R3M_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
 require_file "$REFERENCE_REVIEW"
@@ -335,6 +366,7 @@ require_file scripts/verify_d4_r3j_disassembly.sh
 require_file scripts/verify_d4_r3j_plan_packet.sh
 require_file scripts/verify_d4_r3k_plan_packet.sh
 require_file scripts/verify_d4_r3l_plan_packet.sh
+require_file scripts/verify_d4_r3m_plan_packet.sh
 require_file scripts/test_raw_abort_visible_inflight_device.sh
 require_file scripts/verify_d4_r3k_disassembly.sh
 require_file docs/kpm-research-plan.md
@@ -1353,6 +1385,32 @@ require_text scripts/verify_d4_r3l_plan_packet.sh \
   'D4_R3L_PLAN_PACKET_STRICT=1'
 require_text scripts/verify_v1_contract.sh \
   'D4-R3l plan packet contains a forbidden changed path'
+require_text "$F46_D4_R3M_PLAN" 'wxshadow F4.6 D4-R3m IABT Transition And Restore-ABI Plan'
+require_text "$F46_D4_R3M_PLAN" 'Status: plan packet locked; source and device work not started.'
+require_text "$F46_D4_R3M_PLAN" 'D4-R3m-global-abort-iabt-transition-restore-abi'
+require_text "$F46_D4_R3M_PLAN" 'abort_hook_iabt_transition'
+require_text "$F46_D4_R3M_PLAN" 'raw slot arm abort-iabt-transition <token> <slot> <page>'
+require_text "$F46_D4_R3M_PLAN" 'raw raw-hold abort-iabt-transition <token>'
+require_text "$F46_D4_R3M_PLAN" 'r0lab_raw_before_abort_iabt_transition'
+require_text "$F46_D4_R3M_PLAN" 'r0lab_raw_hook_page_token_acquire_iabt_transition_locked'
+require_text "$F46_D4_R3M_PLAN" 'r0lab_raw_activate_shadow()'
+require_text "$F46_D4_R3M_PLAN" 'r0lab_raw_finish_read_cycle()'
+require_text "$F46_D4_R3M_PLAN" 'args->skip_origin=1 and args->ret=0'
+require_text "$F46_D4_R3M_PLAN" 'g_r0lab_raw_signal_jump_on_fault=1'
+require_text "$F46_D4_R3M_PLAN" 'never call'
+require_text "$F46_D4_R3M_PLAN" '`mprotect` from the handler'
+require_text "$F46_D4_R3M_PLAN" 'source checkpoint must start from exact R3l stable commit `b655fcd`'
+require_text "$F46_D4_R3M_PLAN" 'scripts/test_raw_abort_iabt_transition_device.sh'
+require_text "$F46_D4_R3M_PLAN" 'scripts/verify_d4_r3m_disassembly.sh'
+require_text "$F46_D4_R3M_PLAN" 'RAW_ABORT_IABT_TRANSITION_CLEAN_BOOT_CONFIRMED=1'
+require_text "$F46_D4_R3M_PLAN" 'D4-R3m-source-uxn-iabt-transition-stable'
+require_text "$F46_D4_R3M_PLAN" 'D4-R3m-source-uxn-iabt-transition-unstable'
+require_text "$F46_D4_R3M_PLAN" 'D4-R3m-setup-blocked'
+require_text "$F46_D4_R3M_PLAN" 'R3n remains locked'
+require_text scripts/verify_d4_r3m_plan_packet.sh \
+  'D4_R3M_PLAN_PACKET_STRICT=1'
+require_text scripts/verify_v1_contract.sh \
+  'D4-R3m plan packet contains a forbidden changed path'
 require_file scripts/test_raw_abort_iabt_route_device.sh
 require_file scripts/verify_d4_r3l_disassembly.sh
 require_text kpm/r0lab.c 'bool abort_hook_iabt_route;'
@@ -2775,6 +2833,7 @@ scripts/test_raw_abort_mmget_passthrough_device.sh
 scripts/verify_d4_r3j_plan_packet.sh
 scripts/verify_d4_r3k_plan_packet.sh
 scripts/verify_d4_r3l_plan_packet.sh
+scripts/verify_d4_r3m_plan_packet.sh
 scripts/test_raw_abort_visible_inflight_device.sh
 scripts/verify_d4_r3k_disassembly.sh
 scripts/test_raw_abort_iabt_route_device.sh
