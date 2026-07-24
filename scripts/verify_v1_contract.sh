@@ -98,6 +98,7 @@ F46_D4_R3E_L2_PLAN=docs/wxshadow-f4.6-d4-r3e-l2-live-pte-plan.md
 F46_D4_R3E_L3_PLAN=docs/wxshadow-f4.6-d4-r3e-l3-observer-perturbation-plan.md
 DEVELOPMENT_SEQUENCE=docs/wxshadow-development-sequence.md
 FOLKPATCH_REFERENCE=docs/folkpatch-runtime-reference.md
+REFERENCE_REVIEW=docs/wxshadow-reference-review.md
 
 require_file "$CONTRACT"
 require_file "$VERIFICATION"
@@ -126,6 +127,8 @@ require_file "$F46_D4_R3E_L2_PLAN"
 require_file "$F46_D4_R3E_L3_PLAN"
 require_file "$DEVELOPMENT_SEQUENCE"
 require_file "$FOLKPATCH_REFERENCE"
+require_file "$REFERENCE_REVIEW"
+require_file scripts/verify_wxshadow_reference_source.sh
 require_file scripts/test_raw_exit_hook_routing_device.sh
 require_file scripts/test_raw_exit_hook_routing_diagnostics_device.sh
 require_file scripts/test_raw_exit_hook_cleanup_isolation_device.sh
@@ -1155,6 +1158,22 @@ require_text docs/kpm-research-plan.md 'M0-M5 plus raw two-PFN are complete for 
 require_text docs/kpm-compatibility-matrix.md 'Trusting `.kpm.exit` to block FolkPatch unload'
 require_text docs/kpm-compatibility-matrix.md 'reference only, not installed-binary provenance'
 require_text docs/kpm-research-plan.md '[the FolkPatch source reference](folkpatch-runtime-reference.md)'
+require_text "$REFERENCE_REVIEW" '141 annotated'
+require_text "$REFERENCE_REVIEW" 'fixed two-slot Lab page table'
+require_text "$REFERENCE_REVIEW" '1024 page-local patch records per armed slot'
+require_text "$REFERENCE_REVIEW" 'F4.6 owner-exit acceptance remains blocked'
+require_text "$REFERENCE_REVIEW" 'Runtime structure-offset scanning and raw TLB fallbacks'
+require_text "$REFERENCE_REVIEW" 'scripts/verify_wxshadow_reference_source.sh'
+require_text scripts/verify_wxshadow_reference_source.sh 'EXPECTED_LINES=7124'
+require_text scripts/verify_wxshadow_reference_source.sh 'EXPECTED_FUNCTION_BLOCKS=141'
+require_text scripts/verify_wxshadow_reference_source.sh '2b2fb7ade7e572fd5aea8a79f39bd9c743b1ee1dc57552449209612e69903191'
+require_text "$REPLICA_PLAN" 'two fixed anonymous'
+require_text "$REPLICA_PLAN" 'Two-slot `exit_mmap` owner-exit acceptance is not'
+require_text "$FINAL_ROADMAP" '16 of 19 items complete'
+require_text "$FINAL_ROADMAP" 'This is queue progress, not release completion'
+require_text "$DEVELOPMENT_SEQUENCE" 'The current slice is'
+require_text "$DEVELOPMENT_SEQUENCE" 'F4.6-D4-R3e-L3-A-D'
+require_text "$DEVELOPMENT_SEQUENCE" 'four device-only rows'
 require_text "$FOLKPATCH_REFERENCE" 'https://github.com/LyraVoid/FolkPatch.git'
 require_text "$FOLKPATCH_REFERENCE" '5da126b92af481bd226eb161183ddacdfadb3987'
 require_text "$FOLKPATCH_REFERENCE" 'FolkPatch reports `50ac6,d01`'
@@ -1167,6 +1186,7 @@ require_text "$FOLKPATCH_REFERENCE" '/system/bin/truncate su module ...'
 SCRIPTS='
 scripts/build_kpm.sh
 scripts/build_lab_app.sh
+scripts/verify_wxshadow_reference_source.sh
 scripts/test_m0_environment_device.sh
 scripts/test_m0_device.sh
 scripts/test_m1_isolation_device.sh
@@ -1211,10 +1231,12 @@ scripts/test_raw_exit_hook_preclear_hold_split_device.sh
 scripts/test_v1_device.sh
 '
 
+SCRIPT_COUNT=0
 for script in $SCRIPTS; do
   require_file "$script"
   [ -x "$ROOT/$script" ] || fail "required script is not executable: $script"
   sh -n "$ROOT/$script" || fail "shell syntax is invalid: $script"
+  SCRIPT_COUNT=$((SCRIPT_COUNT + 1))
 done
 
 if grep -E 'pgtable_entry|flush_tlb_all|vmalle1is|[[:space:]]tlbi[[:space:]]' \
@@ -1805,4 +1827,4 @@ require_text scripts/test_v1_device.sh 'run_phase raw_page_table_patch_records s
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=page-table-patch-records failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw page table patch records run ", 33)'
 
-printf '%s\n' 'v1_contract=pass scripts=47 raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass'
+printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"
