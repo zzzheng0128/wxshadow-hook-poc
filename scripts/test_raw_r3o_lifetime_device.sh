@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 SERIAL=${ANDROID_SERIAL:-}
 EXPECTED_SERIAL=32250DLH2000Z3
-SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-loadable-candidate-20260724}
+SOURCE_TAG=${R3O_SOURCE_TAG:-wxshadow-v2-f46-d4-r3o-stage1-baseline-candidate-20260724}
 STAGE=${R3O_STAGE:-}
 MODULE=r0lab-m1
 REMOTE=/data/local/tmp/r0lab-r3o.kpm
@@ -356,16 +356,17 @@ SIGNER_SHA=$(sha256_signer_cert)
 if [ "$STAGE" = 1 ]; then
   [ ! -f "$STATE_FILE" ] ||
     fail "R3o continuity state already exists: $STATE_FILE"
-  R3O_BOOT_ID=$(read_boot_id) || fail "initial boot ID read failed"
-  R3O_WARN_BASE=$(read_warn_count) || fail "initial warn_count read failed"
-  modules=$(module_list) || fail "initial module list failed"
-  [ -z "$modules" ] || fail "stage 1 requires an empty module list: $modules"
   adb_device install -r "$ROOT/build/lab-app/r0lab-debug.apk" >/dev/null
   adb_device push "$ROOT/kpm/build/r0lab-m1.kpm" "$REMOTE" >/dev/null
   LAB_UID=$(adb_device shell "cmd package list packages -U $PACKAGE" |
     LC_ALL=C tr -d '\r' |
     sed -n 's/.* uid:\([0-9][0-9]*\).*/\1/p')
   [ -n "$LAB_UID" ] || fail "Lab UID not found"
+  sleep 3
+  R3O_BOOT_ID=$(read_boot_id) || fail "initial boot ID read failed"
+  R3O_WARN_BASE=$(read_warn_count) || fail "initial warn_count read failed"
+  modules=$(module_list) || fail "initial module list failed"
+  [ -z "$modules" ] || fail "stage 1 requires an empty module list: $modules"
 else
   load_state
 fi
