@@ -7,8 +7,13 @@ NDK=${ANDROID_NDK_HOME:-$SDK/ndk/29.0.14206865}
 BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-$SDK/build-tools/35.0.0}
 OUT="$ROOT/build/lab-app"
 STAGE="$OUT/stage"
-KEYSTORE="$ROOT/lab-app/debug.keystore"
+KEYSTORE=${R0LAB_DEBUG_KEYSTORE:-$ROOT/lab-app/debug.keystore}
 ANDROID_JAR="$SDK/platforms/android-34/android.jar"
+
+if [ -n "${R0LAB_DEBUG_KEYSTORE:-}" ] && [ ! -f "$KEYSTORE" ]; then
+  printf '%s\n' "explicit Lab keystore is missing: $KEYSTORE" >&2
+  exit 1
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT/classes" "$OUT/dex" "$STAGE"
