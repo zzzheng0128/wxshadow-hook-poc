@@ -13,6 +13,7 @@ enum r0lab_raw_state {
     R0LAB_RAW_RESTORED = 5,
     R0LAB_RAW_POISONED = 6,
     R0LAB_RAW_ORIGINAL_READ = 7,
+    R0LAB_RAW_SHADOW_XOM = 8,
 };
 
 struct r0lab_raw_page {
@@ -24,6 +25,7 @@ struct r0lab_raw_page {
     unsigned long original_pte;
     unsigned long source_uxn_pte;
     unsigned long shadow_rx_pte;
+    unsigned long shadow_xom_pte;
     unsigned long active_pte;
     unsigned long gup_saved_pte;
     unsigned long gup_hide_active;
@@ -68,11 +70,13 @@ int r0lab_raw_shadow_pfn_from_kaddr(struct r0lab_raw_page *page);
 int r0lab_raw_arm_source_uxn(struct r0lab_raw_page *page);
 int r0lab_raw_arm_source_uxn_only(struct r0lab_raw_page *page);
 int r0lab_raw_activate_shadow(struct r0lab_raw_page *page);
+int r0lab_raw_activate_shadow_xom(struct r0lab_raw_page *page);
 int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page);
 int r0lab_raw_begin_stepping(struct r0lab_raw_page *page);
 int r0lab_raw_finish_stepping(struct r0lab_raw_page *page);
 int r0lab_raw_begin_read_cycle(struct r0lab_raw_page *page);
 int r0lab_raw_begin_fault_read_cycle(struct r0lab_raw_page *page);
+int r0lab_raw_begin_xom_read_cycle(struct r0lab_raw_page *page);
 int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page);
 int r0lab_raw_vma_matches(const struct r0lab_raw_page *page, void *vma,
                           unsigned long address);

@@ -476,7 +476,7 @@ require_text "$SHADOW_PLAN" 'visible-clone'
 require_text "$RAW_PLAN" 'same VA, two PFNs'
 require_text "$RAW_PLAN" 'record_backend=raw_two_pfn'
 require_text "$REPLICA_PLAN" 'wxshadow Replica Plan For r0lab'
-require_text "$REPLICA_PLAN" 'no `shadow_xom` symbols in KPM source'
+require_text "$REPLICA_PLAN" 'scripts/test_raw_xom_read_fault_device.sh'
 require_text "$REPLICA_PLAN" 'Future work must'
 require_text "$REPLICA_PLAN" 'struct r0lab_page_record'
 require_text "$REPLICA_PLAN" 'record_backend=visible_clone'
@@ -486,7 +486,8 @@ require_text "$FINAL_ROADMAP" 'Two-Page Lab Harness'
 require_text "$FINAL_ROADMAP" 'Page-Local Patch Records'
 require_text "$FINAL_ROADMAP" 'Hook Routing By Page Record'
 require_text "$FINAL_ROADMAP" 'Controlled Hidden-Read Decision Gate'
-require_text "$FINAL_ROADMAP" 'Do not re-enable `shadow_xom`'
+require_text "$FINAL_ROADMAP" 'The only admitted XOM'
+require_text "$FINAL_ROADMAP" 'Pixel 7 Lab-owned raw-XOM read-fault gate'
 require_text "$FINAL_ROADMAP" 'Do not add arbitrary process or arbitrary address support.'
 require_text "$FINAL_ROADMAP" 'raw_page_table_slots'
 require_text "$FINAL_ROADMAP" 'Slot 1 is intentionally inert until F2'
@@ -1302,7 +1303,7 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_abort_hook_release \
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_arm \
   f116231d20d16d97d51ca27467c54cf7f61708397f8d8c75b25573a6b9641589
 require_function_sha256 kpm/r0lab.c r0lab_control0 \
-  14bc6f0ae0e9902f9ac78d861a9e77a999c00f09324799565b3276e2157d6a7b
+  b80363ddc9acc8113214a45876fded9a4c61fe6a9ed3dba04cb54cbb0320de0d
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
   56ec74766dd25f01f58650aaffa7c147f21f7f46ce1050b86f0958859e882302
@@ -1583,7 +1584,7 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_full_abort_locked \
   4e408d41443fae25faa27af8ba70a3e9a79db9a5c6e6c07dd94b0f7129e4fdb8
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  dfa2fef78a90a38c427a82041164acbfa3fab5b00b594976edd09d965f0fea61
+  da0ef2e96bbd545e6b7ba2f5a48e5aee42d03e494934933aecbb51dd221efe23
 require_function_sha256 kpm/r0lab.c r0lab_raw_exit_mmap_before \
   c93284b7ea39e8923cd5161ea1871dcdc3106d51486596496746d385088fcca3
 require_function_sha256 kpm/r0lab.c r0lab_raw_unhook_page \
@@ -1623,9 +1624,9 @@ require_function_count kpm/r0lab.c r0lab_raw_before_abort \
 require_function_count kpm/r0lab.c r0lab_raw_before_abort \
   '--g_raw_inflight;' 1
 require_function_count kpm/r0lab.c r0lab_raw_before_abort \
-  'args->skip_origin = 1;' 2
+  'args->skip_origin = 1;' 3
 require_function_count kpm/r0lab.c r0lab_raw_before_abort \
-  'args->ret = 0;' 2
+  'args->ret = 0;' 3
 for primitive in \
   r0lab_raw_activate_shadow \
   r0lab_raw_finish_read_cycle \
@@ -2018,9 +2019,9 @@ require_function_sha256 kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
   eb0f1a957c0a3991029f1c2de0cef5440939769a0e980ef8d8be7e258f94874d
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
-  164d791a0a6e0de50e9bf681b9df25700efffe085d17a55ee502ea3da8302083
+  6be9918fbcbe39c2d7dc4c9ad704e56b1fde5767485f5a60c40bce468a3299fd
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_full_iabt \
-  eddd98592bb6156259c3968b57dca98c4f230a6702f59f1a7877b896133f6385
+  e0a743f2b13158e24e3d3aab5a78a83d488f10ba094f5dd3ef94d986a8e4b9f0
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_dabt_route_armed_unlocked \
   658d0f2f4eac94449b1b99006772d6212e1da4f8557ceab7d867df40f2e09e92
@@ -2239,7 +2240,7 @@ require_text scripts/verify_d4_r3m_disassembly.sh \
 require_file_sha256 scripts/verify_d4_r3m_disassembly.sh \
   1c4deb9a5a6b3e54e1262ac352e62234873191c07696b38315bfa2021d3872ab
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  dfa2fef78a90a38c427a82041164acbfa3fab5b00b594976edd09d965f0fea61
+  da0ef2e96bbd545e6b7ba2f5a48e5aee42d03e494934933aecbb51dd221efe23
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
   78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_file scripts/test_raw_abort_inflight_passthrough_device.sh
@@ -3012,13 +3013,13 @@ require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
 require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
   'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  dfa2fef78a90a38c427a82041164acbfa3fab5b00b594976edd09d965f0fea61
+  da0ef2e96bbd545e6b7ba2f5a48e5aee42d03e494934933aecbb51dd221efe23
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm_worker \
   874f8f12422ff744204799582b402d2541eab4e5447662f0a1eb4c377ad6e9a2
 require_file_sha256 kpm/r0lab_raw_compat.c \
-  698a9b36674408d4cf1cfb5bf4b0b69eaf1f879f27851dd0633f97e634e9bdb7
+  6830e71cc1806d619fd75607c09ec1f3bfb4702b6adb45f3af5f597ffdb970c4
 require_file_sha256 kpm/r0lab_raw.h \
-  b8340cd245e26cdd2595231e7574e9910377eba99743670e318deeba1714d479
+  436251b0273852fef930ef9b62e60a3492286caaf1ad2c51e9647c912a264b07
 require_text kpm/r0lab.c 'bool abort_hook_mmget;'
 require_text kpm/r0lab.c 'raw slot arm abort-mmget '
 require_function_text kpm/r0lab.c \
@@ -3423,11 +3424,11 @@ require_text "$FINAL_ROADMAP" 'two fixed Lab-owned raw shadow pages'
 require_text "$FINAL_ROADMAP" \
   'F4.7 integration is now complete'
 require_text "$FINAL_ROADMAP" \
-  'F5 must now choose the final hidden-read model'
+  'F5 has now selected the controlled translation-DABT fallback'
 require_text "$FINAL_ROADMAP" \
-  'F5 selects the controlled translation-DABT read-cycle route as the final Lab'
+  'F5 keeps the controlled translation-DABT read-cycle route as the deterministic'
 require_text "$FINAL_ROADMAP" \
-  'Raw-XOM, permission-fault hidden read, and `PTE_USER` clearing remain blocked'
+  'F5-D1 admits the Pixel 7 Lab-owned raw-XOM permission-DABT route'
 require_text "$FINAL_ROADMAP" \
   'scripts/probe_raw_xom_device.sh'
 require_text "$FINAL_ROADMAP" \
@@ -3438,9 +3439,9 @@ require_text "$FINAL_ROADMAP" \
   'scripts/test_raw_abort_read_cycle_device.sh'
 require_text "$F5_DECISION_PLAN" 'wxshadow F5 Hidden-Read Decision Plan'
 require_text "$F5_DECISION_PLAN" \
-  'Status: F5 decision gate selected and device-verified'
+  'Status: F5-D0 selected and device-verified'
 require_text "$F5_DECISION_PLAN" \
-  'F5 selects the controlled translation-DABT read-cycle route as the final Lab'
+  'controlled translation-DABT'
 require_text "$F5_DECISION_PLAN" \
   'build/evidence/raw-xom-device-20260724-204923.log'
 require_text "$F5_DECISION_PLAN" \
@@ -3458,7 +3459,7 @@ require_text "$F5_DECISION_PLAN" \
 require_text "$F5_DECISION_PLAN" \
   '`handle_mm_fault` positive read routing is implemented'
 require_text "$F5_DECISION_PLAN" \
-  'raw-XOM or `PTE_USER` clearing is supported'
+  'raw-XOM or `PTE_USER` clearing is supported outside the Pixel 7 Lab-owned'
 require_text "$F5_DECISION_PLAN" \
   '`/proc`, ptrace, VMA walks, or arbitrary kernel/user readers are concealed'
 require_text "$F5_DECISION_PLAN" \
@@ -3471,7 +3472,7 @@ require_text "$DEVELOPMENT_SEQUENCE" '| 30 | F5-D0 | Controlled hidden-read deci
 require_text "$DEVELOPMENT_SEQUENCE" \
   'Complete/device-verified'
 require_text "$DEVELOPMENT_SEQUENCE" \
-  'F5-D0 selected controlled translation-DABT read-cycle as the Lab hidden-read'
+  'F5-D0 selected controlled translation-DABT read-cycle as the deterministic'
 require_text "$FINAL_ROADMAP" \
   'docs/wxshadow-f6-brk-step-descriptor-abi-plan.md'
 require_text "$FINAL_ROADMAP" \
@@ -3619,7 +3620,7 @@ require_text "$F7_STRESS_PLAN" \
 require_text "$F7_STRESS_PLAN" \
   'Complete/source-only: `scripts/test_f7_lifecycle_stress_device.sh` wraps'
 require_text "$F7_STRESS_PLAN" \
-  'Complete/device-verified: `build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log`'
+  'Complete/device-verified: `build/evidence/f7-lifecycle-stress-20260725T044119Z/manifest.log`'
 require_text "$F7_STRESS_PLAN" \
   '`repeat_count=<value>`'
 require_text "$F7_STRESS_PLAN" \
@@ -3627,7 +3628,7 @@ require_text "$F7_STRESS_PLAN" \
 require_text "$F7_STRESS_PLAN" \
   '`static_contract_regression`'
 require_text "$F7_STRESS_PLAN" \
-  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+  'build/evidence/f7-lifecycle-stress-20260725T044119Z/manifest.log'
 require_text "$F7_STRESS_PLAN" \
   'phase=m5_faults_1 ... status=pass'
 require_text "$F7_STRESS_PLAN" \
@@ -3635,7 +3636,7 @@ require_text "$F7_STRESS_PLAN" \
 require_text "$F7_STRESS_PLAN" \
   'phase=v1_device ... status=pass'
 require_text "$F7_STRESS_PLAN" \
-  'build/evidence/v1-device-20260724T170452Z/manifest.log'
+  'build/evidence/v1-device-20260725T044309Z/manifest.log'
 require_text "$F7_STRESS_PLAN" \
   '29 status=pass evidence= phase rows'
 require_text "$F7_STRESS_PLAN" \
@@ -3687,13 +3688,13 @@ require_text "$F8_ARTIFACT" \
 require_text "$F8_ARTIFACT" \
   'arbitrary process, arbitrary address'
 require_text "$F8_ARTIFACT" \
-  'raw-XOM, `PTE_USER` clearing'
+  'Pixel 7 Lab-owned raw-XOM read-fault cycle'
 require_text "$F8_ARTIFACT" \
   'ANDROID_SERIAL=32250DLH2000Z3 scripts/test_f7_lifecycle_stress_device.sh'
 require_text "$F8_ARTIFACT" \
-  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+  'build/evidence/f7-lifecycle-stress-20260725T044119Z/manifest.log'
 require_text "$F8_ARTIFACT" \
-  'build/evidence/v1-device-20260724T170452Z/manifest.log'
+  'build/evidence/v1-device-20260725T044309Z/manifest.log'
 require_text "$F8_ARTIFACT" \
   'It does not prove behavior on another device'
 require_text "$FINAL_ROADMAP" \
@@ -3703,7 +3704,7 @@ require_text "$FINAL_ROADMAP" \
 require_text "$FINAL_ROADMAP" \
   'ANDROID_SERIAL=32250DLH2000Z3 scripts/test_f7_lifecycle_stress_device.sh'
 require_text "$FINAL_ROADMAP" \
-  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+  'build/evidence/f7-lifecycle-stress-20260725T044119Z/manifest.log'
 require_text "$FINAL_ROADMAP" \
   'passed all 29'
 require_text "$FINAL_ROADMAP" \
@@ -3729,19 +3730,19 @@ require_text "$DEVELOPMENT_SEQUENCE" \
 require_text "$KPM_COMPAT_MATRIX" \
   'F7 lifecycle stress runner leave no module'
 require_text "$KPM_COMPAT_MATRIX" \
-  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+  'build/evidence/f7-lifecycle-stress-20260725T044119Z/manifest.log'
 require_text "$VERIFICATION" \
   'Final lifecycle stress'
 require_text "$VERIFICATION" \
   'scripts/test_f7_lifecycle_stress_device.sh'
 require_text "$VERIFICATION" \
-  'build/evidence/v1-device-20260724T170452Z/manifest.log'
+  'build/evidence/v1-device-20260725T044309Z/manifest.log'
 require_text "$VERIFICATION" \
   'docs/wxshadow-final-lab-artifact.md'
 require_text "$REPLICA_PLAN" \
   'current final lifecycle stress artifact'
 require_text "$REPLICA_PLAN" \
-  'build/evidence/f7-lifecycle-stress-20260724T170300Z/manifest.log'
+  'build/evidence/f7-lifecycle-stress-20260725T044119Z/manifest.log'
 require_text "$REFERENCE_COVERAGE" \
   'F7-D2 then refreshed current-HEAD lifecycle stress'
 require_text "$REFERENCE_COVERAGE" \
@@ -3809,21 +3810,21 @@ require_text "$VERIFICATION" \
 require_text "$VERIFICATION" \
   'raw-abort-read-cycle-20260724-205015.log'
 require_text "$RAW_PLAN" \
-  'F5-D0 selects this controlled translation-DABT read-cycle as the final Lab'
+  'F5-D0 selected this controlled translation-DABT read-cycle as the deterministic'
 require_text "$RAW_PLAN" \
-  'not raw-XOM, not permission-fault'
+  'raw-XOM permission-DABT gate is tracked separately'
 require_text "$RAW_PLAN" \
-  'raw-xom-device-20260724-204923.log'
+  'raw-xom-read-fault-20260725-123706.log'
 require_text "$SHADOW_PLAN" \
-  'controlled translation-DABT read-cycle smoke'
+  'deterministic teaching model'
 require_text "$SHADOW_PLAN" \
-  'raw-XOM/permission-fault hidden read blocked'
+  'separate Lab-owned permission-DABT gate'
 require_text "$SHADOW_PLAN" \
   'controlled_dabt_read_cycle=separate_smoke scripts/test_raw_abort_read_cycle_device.sh'
 require_text "$KPM_COMPAT_MATRIX" \
   'F5 selected hidden-read model'
 require_text "$KPM_COMPAT_MATRIX" \
-  'Raw-XOM, permission-fault hidden read, `PTE_USER` clearing'
+  'Raw-XOM permission-DABT read-cycle'
 require_text "$F6_BRK_STEP_PLAN" \
   'F6-D1 may edit only:'
 require_text "$F6_BRK_STEP_PLAN" \
@@ -3951,6 +3952,8 @@ scripts/test_m5_faults_device.sh
 scripts/probe_shadow_page_capabilities_device.sh
 scripts/probe_raw_pte_compat_device.sh
 scripts/probe_raw_xom_device.sh
+scripts/probe_raw_xom_preflight_device.sh
+scripts/test_raw_xom_read_fault_device.sh
 scripts/probe_s4_abi_device.sh
 scripts/test_s4_brk_device.sh
 scripts/test_s4_step_device.sh
@@ -4014,11 +4017,11 @@ if grep -E 'pgtable_entry|flush_tlb_all|vmalle1is|[[:space:]]tlbi[[:space:]]' \
   fail 'r0lab KPM contains a forbidden raw page-table or global-TLB primitive'
 fi
 
-if grep -E 'shadow_xom|SHADOW_XOM|xom_mode|activate_shadow_xom' \
+if grep -E 'xom_mode|raw_xom_unsafe|generic_shadow_xom' \
   "$ROOT/kpm/r0lab.c" \
   "$ROOT/kpm/r0lab_raw_compat.c" \
   "$ROOT/kpm/r0lab_raw.h" >/dev/null; then
-  fail 'r0lab KPM contains a disabled raw-xom execution path'
+  fail 'r0lab KPM contains a forbidden generic raw-xom execution path'
 fi
 
 if grep -F 'do_mprotect_pkey' "$ROOT/kpm/r0lab.c" >/dev/null; then
@@ -4030,6 +4033,7 @@ require_text kpm/r0lab.c 'record_backend=%s'
 require_text kpm/r0lab.c 'R0LAB_PAGE_RECORD_M4_VISIBLE_CLONE'
 require_text kpm/r0lab.c 'R0LAB_PAGE_RECORD_RAW_TWO_PFN'
 require_text kpm/r0lab.c '#define R0LAB_RAW_PAGE_SLOT_CAPACITY 2U'
+require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_ROUTE_ALLOW_SHADOW_XOM'
 require_text kpm/r0lab.c 'struct r0lab_raw_page_table'
 require_text kpm/r0lab.c 'r0lab_raw_page_slot_reset_locked'
 require_text kpm/r0lab.c 'r0lab_raw_selected_page_locked'
@@ -4159,8 +4163,8 @@ require_text kpm/r0lab.c 'raw_va_prot_none'
 require_text kpm/r0lab.c 'raw_va_rx_write'
 require_text kpm/r0lab.c 'raw_abort_probe_ready symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
 require_text kpm/r0lab.c 'raw_slot_abort_probe_ready slot=%u generation=%llu symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 page_record_routed=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
-require_text kpm/r0lab.c 'raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
-require_text kpm/r0lab.c 'raw_slot_abort_probe_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 page_record_routed=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent'
+require_text kpm/r0lab.c 'raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s action=%s observe_only=%u pte_switch=%u data_fault=sync_el0_dabt read_cycle=%s skip_origin=%u'
+require_text kpm/r0lab.c 'raw_slot_abort_probe_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 page_record_routed=1 source=%s action=%s observe_only=%u pte_switch=%u data_fault=sync_el0_dabt read_cycle=%s skip_origin=%u'
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_ABORT_READ_CYCLE_BEGIN'
 require_function_text kpm/r0lab.c r0lab_raw_before_abort \
   'r0lab_raw_hook_page_token_acquire_full_abort_locked'
@@ -4176,6 +4180,13 @@ require_text kpm/r0lab.c 'raw_abort_read_cycle_ready symbol=do_mem_abort install
 require_text kpm/r0lab.c 'raw_slot_abort_read_cycle_ready slot=%u generation=%llu symbol=do_mem_abort installed=1 armed=1 target_mm_scoped=1 page_record_routed=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume skip_origin=1 exec_resume=pending'
 require_text kpm/r0lab.c 'raw_abort_read_cycle_status symbol=%s installed=%u armed=%u read_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u begin_result=%d target_mm_scoped=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu skip_origin=1 exec_resume=%s'
 require_text kpm/r0lab.c 'raw_slot_abort_read_cycle_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u begin_result=%d target_mm_scoped=1 page_record_routed=1 source=raw_va_prot_none action=begin_read_cycle observe_only=0 pte_switch=%u data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume read_cycle_active=%lu read_cycle_begin_events=%lu read_cycle_finish_events=%lu skip_origin=1 exec_resume=%s'
+require_text kpm/r0lab.c 'raw_xom_read_fault_ready'
+require_text kpm/r0lab.c 'raw_xom_preflight_ready'
+require_text kpm/r0lab.c 'source=raw_shadow_xom action=begin_xom_read_cycle observe_only=0 pte_switch=1 read_fault=permission read_cycle=uxn_original_exec_resume expected_wnr=0 skip_origin=1'
+require_text kpm/r0lab.c 'capability=raw_xom_read_fault'
+require_text kpm/r0lab.c 'raw xom read fault arm '
+require_text kpm/r0lab.c 'raw xom read fault status '
+require_text kpm/r0lab.c 'raw xom read fault clear '
 require_text kpm/r0lab.c 'raw abort read cycle arm '
 require_text kpm/r0lab.c 'raw abort read cycle status '
 require_text kpm/r0lab.c 'raw abort read cycle clear '
@@ -4288,6 +4299,12 @@ require_text lab-app/src/main/cpp/labprobe.c 'strncmp(args, "raw fault hook posi
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=fault-data-probe failures=%d observe_only=1 target_mm_scoped=1 remote_only=1 pte_switch=0 data_fault_source=normal_anon_remote_gup'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=abort-probe failures=%d observe_only=1 target_mm_scoped=1 pte_switch=0 data_fault_source=raw_va_prot_none data_fault=sync_el0_dabt read_cycle=absent'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=abort-read-cycle failures=%d trigger=do_mem_abort target_mm_scoped=1 pte_switch=1 data_fault_source=raw_va_prot_none data_fault=sync_el0_dabt read_cycle=uxn_original_exec_resume skip_origin=1 observe_only=0'
+require_text lab-app/src/main/cpp/labprobe.c 'raw mode=xom-read-fault failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'raw xom read fault arm 0x%llx'
+require_text lab-app/src/main/cpp/labprobe.c 'raw xom read fault status 0x%llx'
+require_text lab-app/src/main/cpp/labprobe.c 'permission_fault=1'
+require_text lab-app/src/main/cpp/labprobe.c 'translation_fault=0'
+require_text lab-app/src/main/cpp/labprobe.c 'read_fault_reply'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=hook-routing abort_route=read-cycle failures=%d page_record_routed=1 target_mm_scoped=1'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=abort-write-probe failures=%d observe_only=1 target_mm_scoped=1 pte_switch=0 data_fault_source=raw_va_rx_write data_fault=sync_el0_dabt read_cycle=absent'
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=abort-write-release failures=%d target_mm_scoped=1 source=raw_va_rx_write action=restore_original logical_release=1 observe_only=0 pte_switch=1 data_fault=sync_el0_dabt read_cycle=absent skip_origin=0'
@@ -4334,6 +4351,17 @@ require_text scripts/test_raw_read_cycle_device.sh 'read_cycle_exec_resume=prove
 require_text scripts/test_raw_read_cycle_device.sh 'read_cycle_data_fault=absent'
 require_text scripts/test_raw_read_cycle_device.sh 'op=36 result=0'
 require_text scripts/test_raw_read_cycle_device.sh 'op=37 result=0'
+require_text scripts/test_raw_xom_read_fault_device.sh 'probe_raw_xom_preflight_device.sh'
+require_text scripts/probe_raw_xom_preflight_device.sh 'raw mode=xom-read-fault failures=0'
+require_text scripts/probe_raw_xom_preflight_device.sh 'read_fault="raw_xom_read_fault_ready'
+require_text scripts/probe_raw_xom_preflight_device.sh 'capability=raw_xom_read_fault'
+require_text scripts/probe_raw_xom_preflight_device.sh 'permission_fault=1'
+require_text scripts/probe_raw_xom_preflight_device.sh 'translation_fault=0'
+require_text scripts/probe_raw_xom_preflight_device.sh 'read_cycle=uxn_original_exec_resume'
+require_text scripts/probe_raw_xom_preflight_device.sh 'op=39 result=0'
+require_text scripts/probe_raw_xom_preflight_device.sh 'op=47 result=0'
+require_text scripts/probe_raw_xom_preflight_device.sh 'op=37 result=0'
+require_text scripts/probe_raw_xom_preflight_device.sh 'raw_xom_read_fault=%s warn_after=%s final_modules=empty result=pass'
 require_text scripts/test_raw_syscall_read_cycle_device.sh 'raw mode=syscall-read-cycle failures=0'
 require_text scripts/test_raw_syscall_read_cycle_device.sh 'trigger=syscall_getpid'
 require_text scripts/test_raw_syscall_read_cycle_device.sh 'read_cycle=uxn_original_exec_resume'
@@ -4598,4 +4626,4 @@ reject_function_text kpm/r0lab.c r0lab_raw_page_has_aux_state_locked 'exit_hook_
 
 "$ROOT/scripts/verify_d4_r3o_reference_lifetime.sh" >/dev/null
 
-printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked f4_r3o=source_tagged_stage1_6_pass s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"
+printf '%s\n' "v1_contract=pass scripts=$SCRIPT_COUNT raw_pte_kpm=lab_two_pfn raw_page_table=two_slot_lab_harness raw_page_table_patch_records=page_local_records f3_plan=page_local_patch_records_locked f4_plan=hook_routing_by_page_record_locked f4_helper=route_token_status_ready f4_abort_route=two_slot_read_cycle f4_fault_route=prot_none_blocked_diagnostic f4_fault_positive_plan=file_backed_rx_pte_af_preflight_locked f4_fault_positive_preflight=classified_blocked f4_gup_route=two_slot_external_reader f4_fork_route=two_slot_dup_mmap_parent_page_list f4_syscall_route=selected_slot_generation f4_exit_plan=owner_exit_page_record_routing_locked f4_r3o=source_tagged_stage1_6_pass s4_brk=brk_only s4_step=raw_pte_step s4_reg=fixed_x1_before_step raw_gup_hide=primitive raw_read_cycle=uxn_original_exec_resume raw_xom_read_fault=permission_dabt raw_syscall_read_cycle=hook_triggered raw_prctl_dispatch=read_patch_release_range_records raw_prctl_patch_records=versioned_overlap_rebuild raw_gup_hook=target_mm_external_reader raw_fork_hook=dup_mmap_parent_pause raw_fault_hook=handle_mm_fault_observe_only raw_fault_data_probe=normal_anon_remote_gup raw_abort_probe=sync_el0_translation_dabt_observe raw_abort_read_cycle=sync_el0_translation_dabt_read_cycle raw_abort_write_probe=sync_el0_permission_dabt_observe raw_abort_write_release=write_fault_restore_original raw_exit_hook=exit_mmap_observe result=pass"

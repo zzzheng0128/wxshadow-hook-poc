@@ -97,6 +97,15 @@ static inline pte_t r0lab_raw_make_shadow_rx(pte_t original,
     return pfn_pte(shadow_pfn, r0lab_raw_pte_pgprot(original));
 }
 
+static inline pte_t r0lab_raw_make_shadow_xom(pte_t original,
+                                              unsigned long shadow_pfn)
+{
+    pte_t pte = pfn_pte(shadow_pfn, r0lab_raw_pte_pgprot(original));
+
+    pte = clear_pte_bit(pte, __pgprot(PTE_USER));
+    return clear_pte_bit(pte, __pgprot(PTE_UXN));
+}
+
 static inline spinlock_t *r0lab_raw_pte_lockptr(pmd_t *pmd)
 {
     return &pmd_page(*pmd)->ptl;
@@ -160,6 +169,8 @@ static unsigned long r0lab_raw_classify_live_pte(
         return R0LAB_RAW_SOURCE_UXN;
     if (page->shadow_rx_pte && live_pte == page->shadow_rx_pte)
         return R0LAB_RAW_SHADOW_RX;
+    if (page->shadow_xom_pte && live_pte == page->shadow_xom_pte)
+        return R0LAB_RAW_SHADOW_XOM;
     if (live_pte == page->original_pte) {
         if (page->state == R0LAB_RAW_ORIGINAL_STEP)
             return R0LAB_RAW_ORIGINAL_STEP;
@@ -404,6 +415,54 @@ out_unlock_mmap:
     return result;
 }
 
+int r0lab_raw_activate_shadow_xom(struct r0lab_raw_page *page)
+{
+    struct mm_struct *mm;
+    struct vm_area_struct *vma;
+    pte_t *ptep;
+    spinlock_t *ptl;
+    pte_t current_pte;
+    pte_t original;
+    pte_t shadow_xom;
+    int result;
+
+    if (!page || !page->mm || !page->address ||
+        page->state != R0LAB_RAW_SHADOW_RX || !page->original_pte ||
+        !page->shadow_rx_pte || !page->shadow_pfn ||
+        page->gup_hide_active || page->fork_hide_active ||
+        page->read_cycle_active)
+        return R0LAB_RAW_EINVAL;
+
+    mm = (struct mm_struct *)page->mm;
+    mmap_read_lock(mm);
+    result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
+    if (result)
+        goto out_unlock_mmap;
+
+    current_pte = READ_ONCE(*ptep);
+    if (r0lab_raw_pte_value(current_pte) != page->shadow_rx_pte ||
+        pte_pfn(current_pte) != page->shadow_pfn) {
+        result = R0LAB_RAW_EAGAIN;
+        goto out_unlock_pte;
+    }
+
+    original = r0lab_raw_pte_from_value(page->original_pte);
+    shadow_xom = r0lab_raw_make_shadow_xom(original, page->shadow_pfn);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      shadow_xom);
+    if (!result) {
+        page->shadow_xom_pte = r0lab_raw_pte_value(shadow_xom);
+        page->active_pte = page->shadow_xom_pte;
+        page->state = R0LAB_RAW_SHADOW_XOM;
+    }
+
+out_unlock_pte:
+    spin_unlock(ptl);
+out_unlock_mmap:
+    mmap_read_unlock(mm);
+    return result;
+}
+
 int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page)
 {
     struct mm_struct *mm;
@@ -633,6 +692,56 @@ out_unlock_mmap:
     return result;
 }
 
+int r0lab_raw_begin_xom_read_cycle(struct r0lab_raw_page *page)
+{
+    struct mm_struct *mm;
+    struct vm_area_struct *vma;
+    pte_t *ptep;
+    spinlock_t *ptl;
+    pte_t current_pte;
+    pte_t source_uxn;
+    unsigned long current_value;
+    int result;
+
+    if (!page || !page->mm || !page->address ||
+        page->state != R0LAB_RAW_SHADOW_XOM || !page->original_pte ||
+        !page->source_uxn_pte || !page->shadow_xom_pte ||
+        !page->shadow_pfn || page->gup_hide_active ||
+        page->fork_hide_active || page->read_cycle_active)
+        return R0LAB_RAW_EINVAL;
+
+    mm = (struct mm_struct *)page->mm;
+    mmap_read_lock(mm);
+    result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
+    if (result)
+        goto out_unlock_mmap;
+
+    current_pte = READ_ONCE(*ptep);
+    current_value = r0lab_raw_pte_value(current_pte);
+    if (current_value != page->shadow_xom_pte ||
+        pte_pfn(current_pte) != page->shadow_pfn) {
+        result = R0LAB_RAW_EAGAIN;
+        goto out_unlock_pte;
+    }
+
+    source_uxn = r0lab_raw_pte_from_value(page->source_uxn_pte);
+    result = r0lab_raw_replace_locked(page, mm, vma, page->address, ptep,
+                                      source_uxn);
+    if (!result) {
+        page->read_cycle_saved_pte = page->shadow_xom_pte;
+        page->read_cycle_active = 1;
+        page->active_pte = page->source_uxn_pte;
+        page->state = R0LAB_RAW_ORIGINAL_READ;
+        ++page->read_cycle_begin_events;
+    }
+
+out_unlock_pte:
+    spin_unlock(ptl);
+out_unlock_mmap:
+    mmap_read_unlock(mm);
+    return result;
+}
+
 int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page)
 {
     struct mm_struct *mm;
@@ -671,7 +780,8 @@ int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page)
         page->active_pte = replacement_value;
         page->read_cycle_saved_pte = 0;
         page->read_cycle_active = 0;
-        page->state = R0LAB_RAW_SHADOW_RX;
+        page->state = replacement_value == page->shadow_xom_pte ?
+                      R0LAB_RAW_SHADOW_XOM : R0LAB_RAW_SHADOW_RX;
         ++page->read_cycle_finish_events;
     }
 
@@ -906,6 +1016,7 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
     if (page->state != R0LAB_RAW_SOURCE_UXN &&
         page->state != R0LAB_RAW_SHADOW_RX &&
+        page->state != R0LAB_RAW_SHADOW_XOM &&
         page->state != R0LAB_RAW_ORIGINAL_STEP &&
         page->state != R0LAB_RAW_ORIGINAL_READ &&
         page->state != R0LAB_RAW_CAPTURED)
@@ -924,8 +1035,11 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
 
     current_pte = READ_ONCE(*ptep);
     current_value = r0lab_raw_pte_value(current_pte);
-    current_is_shadow = current_value == page->shadow_rx_pte;
-    if (!current_is_shadow && page->state == R0LAB_RAW_SHADOW_RX &&
+    current_is_shadow = current_value == page->shadow_rx_pte ||
+                        current_value == page->shadow_xom_pte;
+    if (!current_is_shadow &&
+        (page->state == R0LAB_RAW_SHADOW_RX ||
+         page->state == R0LAB_RAW_SHADOW_XOM) &&
         page->shadow_rx_pte && page->shadow_pfn) {
         pte_t shadow_rx = r0lab_raw_pte_from_value(page->shadow_rx_pte);
 
@@ -945,6 +1059,7 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
                                       original);
     if (!result) {
         page->active_pte = page->original_pte;
+        page->shadow_xom_pte = 0;
         page->gup_saved_pte = 0;
         page->gup_hide_active = 0;
         page->fork_saved_pte = 0;

@@ -57,6 +57,12 @@ static sigjmp_buf g_r0lab_xom_jump;
 static volatile sig_atomic_t g_r0lab_xom_stage;
 static volatile sig_atomic_t g_r0lab_xom_exec_faults;
 static volatile sig_atomic_t g_r0lab_xom_read_faults;
+static volatile sig_atomic_t g_r0lab_xom_post_clear_faults;
+static volatile sig_atomic_t g_r0lab_xom_unexpected_faults;
+static volatile sig_atomic_t g_r0lab_xom_last_signal;
+static volatile sig_atomic_t g_r0lab_xom_last_si_code;
+static volatile sig_atomic_t g_r0lab_xom_last_stage;
+static volatile uintptr_t g_r0lab_xom_last_fault_address;
 static void *g_r0lab_xom_page;
 static size_t g_r0lab_xom_page_size;
 static void *g_r0lab_s4_brk_page;
@@ -241,8 +247,16 @@ static void r0lab_xom_signal_handler(int signal_number, siginfo_t *info,
     uintptr_t fault_address = info ? (uintptr_t)info->si_addr : 0;
 
     (void)context;
+    g_r0lab_xom_last_signal = signal_number;
+    g_r0lab_xom_last_si_code = info ? info->si_code : 0;
+    g_r0lab_xom_last_stage = g_r0lab_xom_stage;
+    g_r0lab_xom_last_fault_address = fault_address;
     if (signal_number != SIGSEGV || !page_start ||
         fault_address < page_start || fault_address >= page_end) {
+        static const char message[] = "r0lab_xom_unexpected_outside_page\n";
+
+        (void)syscall(__NR_write, STDERR_FILENO, message,
+                      sizeof(message) - 1);
         syscall(__NR_exit_group, 128 + SIGSEGV);
         return;
     }
@@ -254,6 +268,11 @@ static void r0lab_xom_signal_handler(int signal_number, siginfo_t *info,
         ++g_r0lab_xom_read_faults;
         siglongjmp(g_r0lab_xom_jump, 1);
     }
+    if (g_r0lab_xom_stage == 3 || g_r0lab_xom_stage == 4) {
+        ++g_r0lab_xom_post_clear_faults;
+        siglongjmp(g_r0lab_xom_jump, 1);
+    }
+    ++g_r0lab_xom_unexpected_faults;
     syscall(__NR_exit_group, 128 + SIGSEGV);
 }
 
@@ -331,6 +350,12 @@ static int r0lab_xom_probe(char *output, size_t output_size)
     g_r0lab_xom_stage = 0;
     g_r0lab_xom_exec_faults = 0;
     g_r0lab_xom_read_faults = 0;
+    g_r0lab_xom_post_clear_faults = 0;
+    g_r0lab_xom_unexpected_faults = 0;
+    g_r0lab_xom_last_signal = 0;
+    g_r0lab_xom_last_si_code = 0;
+    g_r0lab_xom_last_stage = 0;
+    g_r0lab_xom_last_fault_address = 0;
     action.sa_sigaction = r0lab_xom_signal_handler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_SIGINFO;
@@ -10303,7 +10328,11 @@ static int r0lab_raw_xom_run(const char *token_text, char *output,
     size_t page_size;
     char command[96];
     char reply[256] = {0};
-    char inspect_reply[512] = {0};
+    char read_fault_reply[512] = {0};
+    char status_reply[512] = {0};
+    char status_after_resume[512] = {0};
+    char inspect_reply[4096] = {0};
+    char inspect_after_resume[4096] = {0};
     unsigned int activations = 0;
     unsigned long state = 0;
     uint32_t word_before = 0;
@@ -10312,15 +10341,29 @@ static int r0lab_raw_xom_run(const char *token_text, char *output,
     uint32_t read_after_xom = 0;
     long arm_rc = -1;
     long ready_rc = -1;
+    long read_fault_rc = -1;
+    long status_rc = -1;
+    long status_after_resume_rc = -1;
     long observed_rc = -1;
     long inspect_rc = -1;
+    long inspect_after_resume_rc = -1;
     long clear_rc = -1;
     long cleared_rc = -1;
     int normal_value = -1;
     int shadow_value = -1;
+    int resume_value = -1;
     int restored_value = -1;
     int handler_installed = 0;
     int admission_proven = 0;
+    int inspect_original_read = 0;
+    int inspect_read_cycle_active = 0;
+    int inspect_resume_shadow_xom = 0;
+    int inspect_resume_read_cycle_active_clear = 0;
+    int inspect_resume_read_cycle_begin = 0;
+    int inspect_resume_read_cycle_finish = 0;
+    int inspect_resume_exec_resume = 0;
+    int inspect_resume_read_cycle_done = 0;
+    int exec_resume_proven = 0;
     int failures = 0;
 
     if (r0lab_parse_token(token_text, &token)) {
@@ -10355,7 +10398,7 @@ static int r0lab_raw_xom_run(const char *token_text, char *output,
     word_before = readable_code[0];
     normal_value = ((int (*)(void))page)();
 
-    snprintf(command, sizeof(command), "raw xom arm 0x%llx 0x%llx",
+    snprintf(command, sizeof(command), "raw arm 0x%llx 0x%llx",
              (unsigned long long)token, (unsigned long long)(uintptr_t)page);
     arm_rc = r0lab_control_raw(command, reply, sizeof(reply));
     if (arm_rc < 0)
@@ -10370,6 +10413,12 @@ static int r0lab_raw_xom_run(const char *token_text, char *output,
     g_r0lab_xom_stage = 0;
     g_r0lab_xom_exec_faults = 0;
     g_r0lab_xom_read_faults = 0;
+    g_r0lab_xom_post_clear_faults = 0;
+    g_r0lab_xom_unexpected_faults = 0;
+    g_r0lab_xom_last_signal = 0;
+    g_r0lab_xom_last_si_code = 0;
+    g_r0lab_xom_last_stage = 0;
+    g_r0lab_xom_last_fault_address = 0;
     action.sa_sigaction = r0lab_xom_signal_handler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_SIGINFO;
@@ -10381,11 +10430,28 @@ static int r0lab_raw_xom_run(const char *token_text, char *output,
         g_r0lab_xom_stage = 1;
         shadow_value = ((int (*)(void))page)();
     }
+    if (g_r0lab_xom_exec_faults)
+        goto clear;
+
+    snprintf(command, sizeof(command), "raw xom read fault arm 0x%llx",
+             (unsigned long long)token);
+    read_fault_rc = r0lab_control_raw(command, read_fault_reply,
+                                      sizeof(read_fault_reply));
+    if (read_fault_rc < 0)
+        goto clear;
+
     if (!sigsetjmp(g_r0lab_xom_jump, 1)) {
         g_r0lab_xom_stage = 2;
         read_after_xom = readable_code[0];
     }
     g_r0lab_xom_stage = 0;
+
+    snprintf(command, sizeof(command), "raw xom read fault status 0x%llx",
+             (unsigned long long)token);
+    status_rc = r0lab_control_raw(command, status_reply,
+                                  sizeof(status_reply));
+    if (status_rc < 0)
+        ++failures;
 
     memset(reply, 0, sizeof(reply));
     snprintf(command, sizeof(command), "raw observed 0x%llx",
@@ -10400,41 +10466,137 @@ static int r0lab_raw_xom_run(const char *token_text, char *output,
              (unsigned long long)token);
     inspect_rc = r0lab_control_raw(command, inspect_reply,
                                    sizeof(inspect_reply));
+    inspect_original_read =
+        inspect_rc >= 0 && strstr(inspect_reply,
+                                  "active_kind=original_read") != NULL;
+    inspect_read_cycle_active =
+        inspect_rc >= 0 && strstr(inspect_reply,
+                                  "read_cycle_active=1") != NULL;
+
+    if (!sigsetjmp(g_r0lab_xom_jump, 1)) {
+        g_r0lab_xom_stage = 1;
+        resume_value = ((int (*)(void))page)();
+    }
+    g_r0lab_xom_stage = 0;
+
+    snprintf(command, sizeof(command), "raw xom read fault status 0x%llx",
+             (unsigned long long)token);
+    status_after_resume_rc =
+        r0lab_control_raw(command, status_after_resume,
+                          sizeof(status_after_resume));
+    if (status_after_resume_rc < 0)
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw observed 0x%llx",
+             (unsigned long long)token);
+    observed_rc = r0lab_control_raw(command, reply, sizeof(reply));
+    if (observed_rc < 0 ||
+        sscanf(reply, "raw_observed activations=%u state=%lu",
+               &activations, &state) != 2)
+        ++failures;
+
+    snprintf(command, sizeof(command), "raw inspect 0x%llx",
+             (unsigned long long)token);
+    inspect_after_resume_rc =
+        r0lab_control_raw(command, inspect_after_resume,
+                          sizeof(inspect_after_resume));
+    inspect_resume_shadow_xom =
+        inspect_after_resume_rc >= 0 &&
+        strstr(inspect_after_resume, "active_kind=shadow_xom") != NULL;
+    inspect_resume_read_cycle_active_clear =
+        inspect_after_resume_rc >= 0 &&
+        strstr(inspect_after_resume, "read_cycle_active=0") != NULL;
+    inspect_resume_read_cycle_begin =
+        inspect_after_resume_rc >= 0 &&
+        strstr(inspect_after_resume, "read_cycle_begin_events=1") != NULL;
+    inspect_resume_read_cycle_finish =
+        inspect_after_resume_rc >= 0 &&
+        strstr(inspect_after_resume, "read_cycle_finish_events=1") != NULL;
+    inspect_resume_exec_resume =
+        inspect_after_resume_rc >= 0 &&
+        strstr(inspect_after_resume, "read_cycle_exec_resume=proven") != NULL;
+    inspect_resume_read_cycle_done =
+        inspect_resume_read_cycle_active_clear &&
+        inspect_resume_read_cycle_begin &&
+        inspect_resume_read_cycle_finish &&
+        inspect_resume_exec_resume;
+    exec_resume_proven = resume_value == 99 &&
+        g_r0lab_xom_exec_faults == 0 &&
+        status_after_resume_rc >= 0 &&
+        strstr(status_after_resume, "read_events=1") != NULL &&
+        strstr(status_after_resume, "source=raw_shadow_xom") != NULL &&
+        inspect_resume_shadow_xom &&
+        inspect_resume_read_cycle_done;
     admission_proven = shadow_value == 99 &&
         g_r0lab_xom_exec_faults == 0 &&
-        g_r0lab_xom_read_faults == 1 &&
+        g_r0lab_xom_read_faults == 0 &&
+        read_after_xom == R0LAB_M3_CODE_MOV_W0_42 &&
+        status_rc >= 0 &&
+        strstr(status_reply, "read_events=1") != NULL &&
+        strstr(status_reply, "last_wnr=0") != NULL &&
+        strstr(status_reply, "permission_fault=1") != NULL &&
+        strstr(status_reply, "translation_fault=0") != NULL &&
         inspect_rc >= 0 &&
-        strstr(inspect_reply, "active_kind=shadow_xom") != NULL;
+        inspect_original_read &&
+        inspect_read_cycle_active &&
+        exec_resume_proven;
 
 clear:
     r0lab_raw_clear(token, &clear_rc, &cleared_rc);
+    if (cleared_rc >= 0) {
+        if (!sigsetjmp(g_r0lab_xom_jump, 1)) {
+            g_r0lab_xom_stage = 3;
+            word_after_clear = readable_code[0];
+        }
+        if (!sigsetjmp(g_r0lab_xom_jump, 1)) {
+            g_r0lab_xom_stage = 4;
+            restored_value = ((int (*)(void))page)();
+        }
+    }
     if (handler_installed)
         sigaction(SIGSEGV, &previous_action, NULL);
     g_r0lab_xom_page = NULL;
     g_r0lab_xom_page_size = 0;
     g_r0lab_xom_stage = 0;
-    if (cleared_rc >= 0) {
-        word_after_clear = readable_code[0];
-        restored_value = ((int (*)(void))page)();
-    }
 
 finish:
     if (normal_value != 42 || restored_value != 42 ||
         word_before != R0LAB_M3_CODE_MOV_W0_42 ||
         word_during != R0LAB_M3_CODE_MOV_W0_42 ||
         word_after_clear != R0LAB_M3_CODE_MOV_W0_42 ||
-        arm_rc < 0 || ready_rc < 0 || observed_rc < 0 || inspect_rc < 0 ||
+        arm_rc < 0 || ready_rc < 0 || read_fault_rc < 0 ||
+        status_rc < 0 || status_after_resume_rc < 0 ||
+        observed_rc < 0 || inspect_rc < 0 ||
+        inspect_after_resume_rc < 0 ||
         clear_rc < 0 || cleared_rc < 0 || activations != 1 ||
-        restored_value != 42)
+        restored_value != 42 || !admission_proven ||
+        !exec_resume_proven || state != 8 ||
+        g_r0lab_xom_unexpected_faults)
         ++failures;
     snprintf(output, output_size,
-             "raw mode=xom-admission failures=%d admission=%s normal_value=%d shadow_value=%d restored_value=%d activations=%u state=%lu exec_faults=%d read_faults=%d read_after_xom=%08x words=%08x/%08x/%08x arm_rc=%ld ready_rc=%ld observed_rc=%ld inspect_rc=%ld clear_rc=%ld cleared_rc=%ld inspect=\"%s\"",
+             "raw mode=xom-read-fault failures=%d admission=%s normal_value=%d shadow_value=%d resume_value=%d restored_value=%d activations=%u state=%lu exec_faults=%d read_faults=%d post_clear_faults=%d unexpected_faults=%d last_signal=%d last_si_code=%d last_stage=%d last_fault=%llx read_after_xom=%08x words=%08x/%08x/%08x inspect_original_read=%d inspect_read_cycle_active=%d exec_resume=%s inspect_resume_shadow_xom=%d inspect_resume_read_cycle_done=%d resume_read_cycle_active_clear=%d read_cycle_begin_events=%d read_cycle_finish_events=%d inspect_resume_exec_resume=%d arm_rc=%ld ready_rc=%ld read_fault_rc=%ld status_rc=%ld status_after_resume_rc=%ld observed_rc=%ld inspect_rc=%ld inspect_after_resume_rc=%ld clear_rc=%ld cleared_rc=%ld read_fault=\"%s\" status=\"%s\" status_after_resume=\"%s\"",
              failures, admission_proven ? "proven" : "blocked",
-             normal_value, shadow_value, restored_value, activations, state,
+             normal_value, shadow_value, resume_value, restored_value,
+             activations, state,
              (int)g_r0lab_xom_exec_faults, (int)g_r0lab_xom_read_faults,
+             (int)g_r0lab_xom_post_clear_faults,
+             (int)g_r0lab_xom_unexpected_faults,
+             (int)g_r0lab_xom_last_signal,
+             (int)g_r0lab_xom_last_si_code,
+             (int)g_r0lab_xom_last_stage,
+             (unsigned long long)g_r0lab_xom_last_fault_address,
              read_after_xom, word_before, word_during, word_after_clear,
-             arm_rc, ready_rc, observed_rc, inspect_rc, clear_rc, cleared_rc,
-             inspect_reply);
+             inspect_original_read, inspect_read_cycle_active,
+             exec_resume_proven ? "proven" : "blocked",
+             inspect_resume_shadow_xom, inspect_resume_read_cycle_done,
+             inspect_resume_read_cycle_active_clear,
+             inspect_resume_read_cycle_begin,
+             inspect_resume_read_cycle_finish,
+             inspect_resume_exec_resume,
+             arm_rc, ready_rc, read_fault_rc, status_rc,
+             status_after_resume_rc, observed_rc, inspect_rc,
+             inspect_after_resume_rc, clear_rc, cleared_rc, read_fault_reply,
+             status_reply, status_after_resume);
     munmap(page, page_size);
     return failures ? -1 : 0;
 }

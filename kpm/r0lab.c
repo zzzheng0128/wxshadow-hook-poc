@@ -53,6 +53,7 @@
 #define R0LAB_ABORT_PROBE_SOURCE_NONE 0U
 #define R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION 1U
 #define R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION 2U
+#define R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION 3U
 #define R0LAB_PRCTL_MAGIC 0x52304c42U
 #define R0LAB_PRCTL_OP_READ_CYCLE 1U
 #define R0LAB_PRCTL_OP_PATCH_WORD 2U
@@ -302,6 +303,7 @@ enum r0lab_raw_hook_route_flags {
     R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX = 1U << 1,
     R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN = 1U << 2,
     R0LAB_RAW_HOOK_ROUTE_ALLOW_ORIGINAL_READ = 1U << 3,
+    R0LAB_RAW_HOOK_ROUTE_ALLOW_SHADOW_XOM = 1U << 4,
 };
 
 struct r0lab_page_record {
@@ -1335,6 +1337,9 @@ static bool r0lab_raw_hook_route_state_allowed(
     state = page->raw.state;
     if (state == R0LAB_RAW_SHADOW_RX)
         return true;
+    if ((route_flags & R0LAB_RAW_HOOK_ROUTE_ALLOW_SHADOW_XOM) &&
+        state == R0LAB_RAW_SHADOW_XOM)
+        return true;
     if ((route_flags & R0LAB_RAW_HOOK_ROUTE_ALLOW_SOURCE_UXN) &&
         state == R0LAB_RAW_SOURCE_UXN)
         return true;
@@ -2167,6 +2172,7 @@ static void r0lab_s4_unhook(void)
 static bool r0lab_s4_raw_state_needs_restore(unsigned long state)
 {
     return state == R0LAB_RAW_SOURCE_UXN || state == R0LAB_RAW_SHADOW_RX ||
+           state == R0LAB_RAW_SHADOW_XOM ||
            state == R0LAB_RAW_ORIGINAL_STEP ||
            state == R0LAB_RAW_ORIGINAL_READ;
 }
@@ -5299,7 +5305,9 @@ static void r0lab_raw_before_abort_iabt_transition(hook_fargs3_t *args,
         fault_page->generation == generation &&
         fault_page->transitioning &&
         !r0lab_raw_hook_page_token_release_locked(&route_token, true) &&
-        !result && fault_page->raw.state == R0LAB_RAW_SHADOW_RX) {
+        !result &&
+        (fault_page->raw.state == R0LAB_RAW_SHADOW_RX ||
+         fault_page->raw.state == R0LAB_RAW_SHADOW_XOM)) {
         if (!read_cycle_resume) {
             ++fault_page->activation_events;
             fault_page->record.events = fault_page->activation_events;
@@ -5345,6 +5353,7 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         R0LAB_RAW_ABORT_BRANCH_IABT,
         R0LAB_RAW_ABORT_BRANCH_READ,
         R0LAB_RAW_ABORT_BRANCH_WRITE,
+        R0LAB_RAW_ABORT_BRANCH_XOM_READ,
     } branch = R0LAB_RAW_ABORT_BRANCH_NONE;
     int branch_result = R0LAB_EINVAL;
     int write_release_result = R0LAB_EINVAL;
@@ -5404,10 +5413,15 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         bool permission_write =
             (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
             (esr & R0LAB_M3_ESR_WNR);
+        bool permission_read =
+            (esr & R0LAB_M3_ESR_FSC_TYPE) == R0LAB_M3_ESR_FSC_PERM &&
+            !(esr & R0LAB_M3_ESR_WNR);
         int route_result =
             r0lab_raw_hook_page_token_acquire_full_abort_locked(
                 current_mm, far,
-                R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX, &route_token);
+                R0LAB_RAW_HOOK_ROUTE_REQUIRE_SHADOW_RX |
+                    R0LAB_RAW_HOOK_ROUTE_ALLOW_SHADOW_XOM,
+                &route_token);
 
         if (!route_result) {
             fault_page = route_token.page;
@@ -5427,7 +5441,18 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                 generation = route_token.generation;
                 branch = R0LAB_RAW_ABORT_BRANCH_WRITE;
             } else if (fault_page->abort_probe_armed) {
-                if (permission_write || translation_read) {
+                bool abort_probe_match =
+                    (fault_page->abort_probe_source ==
+                         R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION &&
+                     translation_read) ||
+                    (fault_page->abort_probe_source ==
+                         R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION &&
+                     permission_write) ||
+                    (fault_page->abort_probe_source ==
+                         R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION &&
+                     permission_read);
+
+                if (abort_probe_match) {
                     abort_probe_kind = (esr & R0LAB_M3_ESR_WNR) ?
                                        R0LAB_FAULT_KIND_WRITE :
                                        R0LAB_FAULT_KIND_READ;
@@ -5442,8 +5467,20 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                     fault_page->abort_probe_last_esr = esr;
                     fault_page->abort_probe_last_far = far;
                     abort_probe_hit = true;
+                    if (fault_page->abort_probe_source ==
+                            R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION &&
+                        permission_read &&
+                        fault_page->raw.state == R0LAB_RAW_SHADOW_XOM &&
+                        !fault_page->raw.gup_hide_active &&
+                        !fault_page->raw.fork_hide_active &&
+                        !fault_page->raw.read_cycle_active) {
+                        fault_page->transitioning = true;
+                        generation = route_token.generation;
+                        branch = R0LAB_RAW_ABORT_BRANCH_XOM_READ;
+                    }
                 }
-                fault_page = NULL;
+                if (branch == R0LAB_RAW_ABORT_BRANCH_NONE)
+                    fault_page = NULL;
             } else {
                 fault_page = NULL;
             }
@@ -5467,6 +5504,9 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
     } else if (branch == R0LAB_RAW_ABORT_BRANCH_WRITE && fault_page) {
         write_release_result =
             r0lab_raw_restore_original(&fault_page->raw);
+    } else if (branch == R0LAB_RAW_ABORT_BRANCH_XOM_READ && fault_page) {
+        abort_read_cycle_result =
+            r0lab_raw_begin_xom_read_cycle(&fault_page->raw);
     }
 
     flags = r0lab_lock();
@@ -5477,7 +5517,8 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         if (!r0lab_raw_hook_page_token_release_locked(
                 &route_token, true) &&
             !branch_result &&
-            fault_page->raw.state == R0LAB_RAW_SHADOW_RX) {
+            (fault_page->raw.state == R0LAB_RAW_SHADOW_RX ||
+             fault_page->raw.state == R0LAB_RAW_SHADOW_XOM)) {
             if (!read_cycle_resume) {
                 ++fault_page->activation_events;
                 fault_page->record.events = fault_page->activation_events;
@@ -5505,6 +5546,21 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
         fault_page->abort_read_cycle_last_result = abort_read_cycle_result;
         abort_read_cycle_events = fault_page->abort_read_cycle_events;
         abort_read_cycle_failures = fault_page->abort_read_cycle_failures;
+        if (!abort_read_cycle_result &&
+            fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
+            fault_page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
+            args->skip_origin = 1;
+            args->ret = 0;
+        }
+        read_cycle_hit = true;
+    }
+    if (branch == R0LAB_RAW_ABORT_BRANCH_XOM_READ && fault_page &&
+        fault_page->generation == generation &&
+        fault_page->transitioning &&
+        !r0lab_raw_hook_page_token_release_locked(&route_token, true)) {
+        fault_page->abort_probe_armed = false;
+        if (abort_read_cycle_result)
+            ++fault_page->abort_probe_failures;
         if (!abort_read_cycle_result &&
             fault_page->raw.state == R0LAB_RAW_ORIGINAL_READ) {
             fault_page->record.state = R0LAB_PAGE_RECORD_ORIGINAL_READ;
@@ -5641,7 +5697,9 @@ r0lab_raw_before_abort_full_iabt(hook_fargs3_t *args, void *udata)
         fault_page->generation == generation &&
         fault_page->transitioning &&
         !r0lab_raw_hook_page_token_release_locked(&route_token, true) &&
-        !result && fault_page->raw.state == R0LAB_RAW_SHADOW_RX) {
+        !result &&
+        (fault_page->raw.state == R0LAB_RAW_SHADOW_RX ||
+         fault_page->raw.state == R0LAB_RAW_SHADOW_XOM)) {
         if (!read_cycle_resume) {
             ++fault_page->activation_events;
             fault_page->record.events = fault_page->activation_events;
@@ -8371,7 +8429,8 @@ static const char *r0lab_raw_active_kind(unsigned long state,
                                          unsigned long active_pte,
                                          unsigned long original_pte,
                                          unsigned long source_uxn_pte,
-                                         unsigned long shadow_rx_pte)
+                                         unsigned long shadow_rx_pte,
+                                         unsigned long shadow_xom_pte)
 {
     if (state == R0LAB_RAW_ORIGINAL_READ)
         return "original_read";
@@ -8379,6 +8438,8 @@ static const char *r0lab_raw_active_kind(unsigned long state,
         return "original";
     if (active_pte == source_uxn_pte)
         return "source_uxn";
+    if (shadow_xom_pte && active_pte == shadow_xom_pte)
+        return "shadow_xom";
     if (active_pte == shadow_rx_pte)
         return "shadow_rx";
     if (state == R0LAB_RAW_ORIGINAL_STEP)
@@ -8405,6 +8466,8 @@ static const char *r0lab_raw_state_name(unsigned long state)
         return "poisoned";
     case R0LAB_RAW_ORIGINAL_READ:
         return "original_read";
+    case R0LAB_RAW_SHADOW_XOM:
+        return "shadow_xom";
     default:
         return "unknown";
     }
@@ -8548,6 +8611,7 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
     unsigned long original_pte;
     unsigned long source_uxn_pte;
     unsigned long shadow_rx_pte;
+    unsigned long shadow_xom_pte;
     unsigned long source_pfn;
     unsigned long shadow_pfn;
     uint64_t generation;
@@ -8583,6 +8647,7 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
     original_pte = page->raw.original_pte;
     source_uxn_pte = page->raw.source_uxn_pte;
     shadow_rx_pte = page->raw.shadow_rx_pte;
+    shadow_xom_pte = page->raw.shadow_xom_pte;
     source_pfn = page->raw.source_pfn;
     shadow_pfn = page->raw.shadow_pfn;
     generation = page->generation;
@@ -8598,7 +8663,8 @@ static long r0lab_raw_slot_inspect(uint64_t token, uint16_t slot_id,
     r0lab_unlock(flags);
 
     active_kind = r0lab_raw_active_kind(state, active_pte, original_pte,
-                                        source_uxn_pte, shadow_rx_pte);
+                                        source_uxn_pte, shadow_rx_pte,
+                                        shadow_xom_pte);
     snprintf(reply, sizeof(reply),
              "raw_slot_inspect slot=%u page=%llx generation=%llu state=%lu activations=%u active_kind=%s source_pfn_low=%lx shadow_pfn_low=%lx gup_hook_installed=%u gup_hook_begin_events=%u gup_hook_finish_events=%u gup_hook_failures=%u gup_begin_events=%lu gup_finish_events=%lu record_backend=%s record_state=%s read_cycle=absent original_view_after_shadow=absent\n",
              (unsigned int)slot_id, (uint64_t)address,
@@ -9098,6 +9164,7 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     unsigned long original_pte;
     unsigned long source_uxn_pte;
     unsigned long shadow_rx_pte;
+    unsigned long shadow_xom_pte;
     unsigned long source_pfn;
     unsigned long shadow_pfn;
     unsigned long gup_hide_active;
@@ -9155,6 +9222,7 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     original_pte = g_raw_page.raw.original_pte;
     source_uxn_pte = g_raw_page.raw.source_uxn_pte;
     shadow_rx_pte = g_raw_page.raw.shadow_rx_pte;
+    shadow_xom_pte = g_raw_page.raw.shadow_xom_pte;
     source_pfn = g_raw_page.raw.source_pfn;
     shadow_pfn = g_raw_page.raw.shadow_pfn;
     gup_hide_active = g_raw_page.raw.gup_hide_active;
@@ -9195,16 +9263,9 @@ static long r0lab_raw_inspect(uint64_t token, char __user *out_msg, int outlen)
     record_state = g_raw_page.record.state;
     r0lab_unlock(flags);
 
-    if (state == R0LAB_RAW_ORIGINAL_READ)
-        active_kind = "original_read";
-    else if (active_pte == original_pte)
-        active_kind = "original";
-    else if (active_pte == source_uxn_pte)
-        active_kind = "source_uxn";
-    else if (active_pte == shadow_rx_pte)
-        active_kind = "shadow_rx";
-    else if (state == R0LAB_RAW_ORIGINAL_STEP)
-        active_kind = "original_step";
+    active_kind = r0lab_raw_active_kind(state, active_pte, original_pte,
+                                        source_uxn_pte, shadow_rx_pte,
+                                        shadow_xom_pte);
 
     if (read_cycle_active || read_cycle_begin_events ||
         read_cycle_finish_events)
@@ -9777,7 +9838,114 @@ static const char *r0lab_raw_abort_probe_source_name(uint8_t source)
         return "raw_va_prot_none";
     if (source == R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION)
         return "raw_va_rx_write";
+    if (source == R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION)
+        return "raw_shadow_xom";
     return "none";
+}
+
+static long r0lab_raw_xom_read_fault_arm_common(uint64_t token,
+                                                char __user *out_msg,
+                                                int outlen,
+                                                bool preflight_reply)
+{
+    char reply[R0LAB_OUTPUT_CAPACITY];
+    struct mm_struct *current_mm = NULL;
+    unsigned long flags;
+    uint64_t generation = 0;
+    unsigned long state = R0LAB_RAW_EMPTY;
+    unsigned long active_pte = 0;
+    unsigned long original_pte = 0;
+    unsigned long source_uxn_pte = 0;
+    unsigned long shadow_rx_pte = 0;
+    unsigned long shadow_xom_pte = 0;
+    const char *active_kind = "none";
+    int result = r0lab_validate_owner(token);
+
+    if (result)
+        goto record;
+    current_mm = g_get_task_mm ? g_get_task_mm(current) : NULL;
+    if (!current_mm) {
+        result = R0LAB_ESRCH;
+        goto record;
+    }
+
+    flags = r0lab_lock();
+    if (!g_raw_page.armed || g_raw_page.clearing ||
+        g_raw_page.transitioning || g_raw_page.raw.mm != current_mm ||
+        g_raw_page.raw.state != R0LAB_RAW_SHADOW_RX ||
+        !g_raw_page.raw.shadow_rx_pte || !g_raw_page.raw.shadow_pfn ||
+        !g_raw_page.hook_installed ||
+        g_raw_page.raw.gup_hide_active || g_raw_page.raw.fork_hide_active ||
+        g_raw_page.raw.read_cycle_active || g_raw_page.abort_probe_armed ||
+        g_raw_page.abort_read_cycle_armed ||
+        g_session.owner_tgid != r0lab_current_tgid()) {
+        r0lab_unlock(flags);
+        result = R0LAB_EAGAIN;
+        goto record;
+    }
+    g_raw_page.transitioning = true;
+    generation = g_raw_page.generation;
+    r0lab_unlock(flags);
+
+    result = r0lab_raw_activate_shadow_xom(&g_raw_page.raw);
+
+    flags = r0lab_lock();
+    if (g_raw_page.generation == generation) {
+        g_raw_page.transitioning = false;
+        if (!result) {
+            g_raw_page.abort_probe_armed = true;
+            g_raw_page.abort_probe_read_events = 0;
+            g_raw_page.abort_probe_write_events = 0;
+            g_raw_page.abort_probe_exec_events = 0;
+            g_raw_page.abort_probe_failures = 0;
+            g_raw_page.abort_probe_last_esr = 0;
+            g_raw_page.abort_probe_last_far = 0;
+            g_raw_page.abort_probe_source =
+                R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION;
+            g_raw_page.record.state = R0LAB_PAGE_RECORD_SHADOW_ACTIVE;
+        } else {
+            result = result ? result : R0LAB_EAGAIN;
+        }
+        state = g_raw_page.raw.state;
+        active_pte = g_raw_page.raw.active_pte;
+        original_pte = g_raw_page.raw.original_pte;
+        source_uxn_pte = g_raw_page.raw.source_uxn_pte;
+        shadow_rx_pte = g_raw_page.raw.shadow_rx_pte;
+        shadow_xom_pte = g_raw_page.raw.shadow_xom_pte;
+    } else {
+        result = result ? result : R0LAB_EAGAIN;
+    }
+    r0lab_unlock(flags);
+
+record:
+    if (current_mm)
+        g_mmput(current_mm);
+    if (result) {
+        r0lab_record(R0LAB_EVENT_REJECT, result);
+        return result;
+    }
+    active_kind = r0lab_raw_active_kind(state, active_pte, original_pte,
+                                        source_uxn_pte, shadow_rx_pte,
+                                        shadow_xom_pte);
+    snprintf(reply, sizeof(reply),
+             "%s symbol=do_mem_abort installed=1 armed=1 generation=%llu state=%lu active_kind=%s source=raw_shadow_xom action=begin_xom_read_cycle observe_only=0 pte_switch=1 read_fault=permission read_cycle=uxn_original_exec_resume expected_wnr=0 skip_origin=1 shadow_xom_pte=%lx capability=raw_xom_read_fault\n",
+             preflight_reply ? "raw_xom_preflight_ready" :
+                               "raw_xom_read_fault_ready",
+             (unsigned long long)generation, state, active_kind,
+             shadow_xom_pte);
+    return r0lab_copy_reply(out_msg, outlen, reply);
+}
+
+static long r0lab_raw_xom_read_fault_arm(uint64_t token, char __user *out_msg,
+                                         int outlen)
+{
+    return r0lab_raw_xom_read_fault_arm_common(token, out_msg, outlen, false);
+}
+
+static long r0lab_raw_xom_preflight_arm(uint64_t token, char __user *out_msg,
+                                        int outlen)
+{
+    return r0lab_raw_xom_read_fault_arm_common(token, out_msg, outlen, true);
 }
 
 static long r0lab_raw_abort_probe_arm_common(uint64_t token, uint16_t slot_id,
@@ -9794,7 +9962,8 @@ static long r0lab_raw_abort_probe_arm_common(uint64_t token, uint16_t slot_id,
     if (result)
         goto record;
     if (source != R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION &&
-        source != R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION) {
+        source != R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION &&
+        source != R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION) {
         result = R0LAB_EINVAL;
         goto record;
     }
@@ -9882,6 +10051,7 @@ static long r0lab_raw_abort_probe_status_common(uint64_t token,
     uint32_t permission_fault;
     uint32_t translation_fault;
     uint8_t source;
+    bool xom_read_cycle_source;
     int result = r0lab_validate_owner(token);
 
     if (result)
@@ -9912,19 +10082,27 @@ static long r0lab_raw_abort_probe_status_common(uint64_t token,
     permission_fault = last_fsc_type == R0LAB_M3_ESR_FSC_PERM ? 1 : 0;
     translation_fault =
         last_fsc_type == R0LAB_M3_ESR_FSC_TRANSLATION ? 1 : 0;
+    xom_read_cycle_source =
+        source == R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION;
     if (legacy_reply)
         snprintf(reply, sizeof(reply),
-                 "raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+                 "raw_abort_probe_status symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 source=%s action=%s observe_only=%u pte_switch=%u data_fault=sync_el0_dabt read_cycle=%s skip_origin=%u\n",
                  g_do_mem_abort ? "do_mem_abort" : "absent",
                  installed ? 1 : 0, armed ? 1 : 0, read_events,
                  write_events, exec_events,
                  read_events + write_events + exec_events, failures,
                  (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
                  last_wnr, permission_fault, translation_fault,
-                 r0lab_raw_abort_probe_source_name(source));
+                 r0lab_raw_abort_probe_source_name(source),
+                 xom_read_cycle_source ? "begin_xom_read_cycle" : "observe",
+                 xom_read_cycle_source ? 0U : 1U,
+                 xom_read_cycle_source ? 1U : 0U,
+                 xom_read_cycle_source ? "uxn_original_exec_resume" :
+                                         "absent",
+                 xom_read_cycle_source ? 1U : 0U);
     else
         snprintf(reply, sizeof(reply),
-                 "raw_slot_abort_probe_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 page_record_routed=1 source=%s observe_only=1 pte_switch=0 data_fault=sync_el0_dabt read_cycle=absent\n",
+                 "raw_slot_abort_probe_status slot=%u generation=%llu symbol=%s installed=%u armed=%u read_events=%u write_events=%u exec_events=%u hit_events=%u failures=%u last_far=%llx last_esr=%x last_ec=%u last_fsc_type=%x last_wnr=%u permission_fault=%u translation_fault=%u target_mm_scoped=1 page_record_routed=1 source=%s action=%s observe_only=%u pte_switch=%u data_fault=sync_el0_dabt read_cycle=%s skip_origin=%u\n",
                  (unsigned int)slot_id, (unsigned long long)generation,
                  g_do_mem_abort ? "do_mem_abort" : "absent",
                  installed ? 1 : 0, armed ? 1 : 0, read_events,
@@ -9932,7 +10110,13 @@ static long r0lab_raw_abort_probe_status_common(uint64_t token,
                  read_events + write_events + exec_events, failures,
                  (uint64_t)last_far, last_esr, last_ec, last_fsc_type,
                  last_wnr, permission_fault, translation_fault,
-                 r0lab_raw_abort_probe_source_name(source));
+                 r0lab_raw_abort_probe_source_name(source),
+                 xom_read_cycle_source ? "begin_xom_read_cycle" : "observe",
+                 xom_read_cycle_source ? 0U : 1U,
+                 xom_read_cycle_source ? 1U : 0U,
+                 xom_read_cycle_source ? "uxn_original_exec_resume" :
+                                         "absent",
+                 xom_read_cycle_source ? 1U : 0U);
     return r0lab_copy_reply(out_msg, outlen, reply);
 }
 
@@ -12796,6 +12980,34 @@ static long r0lab_control0(const char *args, char __user *out_msg, int outlen)
         if (r0lab_parse_u64_pair(value, &token, &page_address))
             return R0LAB_EINVAL;
         return r0lab_raw_arm(token, page_address, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw xom read fault arm ", 23)) {
+        value = args + 23;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_xom_read_fault_arm(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw xom read fault status ", 26)) {
+        value = args + 26;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_status(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw xom read fault clear ", 25)) {
+        value = args + 25;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_abort_probe_clear(token, out_msg, outlen);
+    }
+    if (!strncmp(args, "raw xom preflight arm ", 22)) {
+        value = args + 22;
+        if (strnlen(value, R0LAB_TOKEN_MAX + 1) > R0LAB_TOKEN_MAX ||
+            r0lab_parse_u64(value, &token))
+            return R0LAB_EINVAL;
+        return r0lab_raw_xom_preflight_arm(token, out_msg, outlen);
     }
     if (!strncmp(args, "raw xom arm ", 12)) {
         return R0LAB_ENOSYS;
