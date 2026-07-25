@@ -334,6 +334,7 @@ struct r0lab_raw_hook_route_stats {
     uint32_t route_stale_generation;
     uint32_t route_busy;
     uint32_t route_wrong_state;
+    uint32_t route_identity_mismatch;
 };
 
 struct r0lab_raw_hook_page_token {
@@ -1327,6 +1328,17 @@ static void r0lab_raw_hook_route_reject_locked(
         ++stats->route_wrong_state;
 }
 
+static void r0lab_raw_hook_route_identity_reject_locked(
+    struct r0lab_raw_shadow_page *page)
+{
+    struct r0lab_raw_hook_route_stats *stats =
+        page ? &page->hook_route_stats :
+               &g_raw_page_table.hook_route_miss_stats;
+
+    ++stats->route_rejects;
+    ++stats->route_identity_mismatch;
+}
+
 static bool r0lab_raw_hook_route_state_allowed(
     const struct r0lab_raw_shadow_page *page, unsigned int route_flags)
 {
@@ -1400,6 +1412,10 @@ static int r0lab_raw_page_find_for_hook_locked(
                                            false, true);
         return R0LAB_EAGAIN;
     }
+    if (!r0lab_raw_saved_identity_matches(&page->raw)) {
+        r0lab_raw_hook_route_identity_reject_locked(page);
+        return R0LAB_EAGAIN;
+    }
     ++page->hook_route_stats.route_hits;
     if (route_flags & R0LAB_RAW_HOOK_ROUTE_MUTATING)
         page->transitioning = true;
@@ -1449,6 +1465,8 @@ static int r0lab_raw_hook_page_token_acquire_readonly_locked(
         !page->generation ||
         !r0lab_raw_hook_route_state_allowed(page, route_flags))
         return R0LAB_EAGAIN;
+    if (!r0lab_raw_saved_identity_matches(&page->raw))
+        return R0LAB_EAGAIN;
     token->slot_id = page->slot_id;
     token->generation = page->generation;
     token->page = page;
@@ -1483,6 +1501,8 @@ static int r0lab_raw_hook_page_token_acquire_iabt_transition_locked(
     if (page->raw.state != R0LAB_RAW_SOURCE_UXN &&
         (page->raw.state != R0LAB_RAW_ORIGINAL_READ ||
          !page->raw.read_cycle_active))
+        return R0LAB_EAGAIN;
+    if (!r0lab_raw_saved_identity_matches(&page->raw))
         return R0LAB_EAGAIN;
     token->slot_id = page->slot_id;
     token->generation = page->generation;
@@ -1541,6 +1561,10 @@ static int r0lab_raw_hook_page_token_acquire_full_abort_locked(
     if (!page->armed || page->reserving || page->clearing ||
         !page->generation || !state_allowed)
         return R0LAB_EAGAIN;
+    if (!r0lab_raw_saved_identity_matches(&page->raw)) {
+        r0lab_raw_hook_route_identity_reject_locked(page);
+        return R0LAB_EAGAIN;
+    }
     token->slot_id = page->slot_id;
     token->generation = page->generation;
     token->page = page;
@@ -5424,8 +5448,16 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                 &route_token);
 
         if (!route_result) {
+            bool shadow_rx_state;
+            bool shadow_xom_state;
+
             fault_page = route_token.page;
-            if (translation_read && fault_page->abort_read_cycle_armed) {
+            shadow_rx_state =
+                fault_page->raw.state == R0LAB_RAW_SHADOW_RX;
+            shadow_xom_state =
+                fault_page->raw.state == R0LAB_RAW_SHADOW_XOM;
+            if (translation_read && shadow_rx_state &&
+                fault_page->abort_read_cycle_armed) {
                 if (!fault_page->raw.gup_hide_active &&
                     !fault_page->raw.fork_hide_active &&
                     !fault_page->raw.read_cycle_active) {
@@ -5436,6 +5468,7 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                     fault_page = NULL;
                 }
             } else if (permission_write &&
+                       shadow_rx_state &&
                        fault_page->abort_write_release_armed) {
                 fault_page->transitioning = true;
                 generation = route_token.generation;
@@ -5444,13 +5477,13 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                 bool abort_probe_match =
                     (fault_page->abort_probe_source ==
                          R0LAB_ABORT_PROBE_SOURCE_READ_TRANSLATION &&
-                     translation_read) ||
+                     translation_read && shadow_rx_state) ||
                     (fault_page->abort_probe_source ==
                          R0LAB_ABORT_PROBE_SOURCE_WRITE_PERMISSION &&
-                     permission_write) ||
+                     permission_write && shadow_rx_state) ||
                     (fault_page->abort_probe_source ==
                          R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION &&
-                     permission_read);
+                     permission_read && shadow_xom_state);
 
                 if (abort_probe_match) {
                     abort_probe_kind = (esr & R0LAB_M3_ESR_WNR) ?
@@ -5470,7 +5503,7 @@ static void r0lab_raw_before_abort(hook_fargs3_t *args, void *udata)
                     if (fault_page->abort_probe_source ==
                             R0LAB_ABORT_PROBE_SOURCE_READ_PERMISSION &&
                         permission_read &&
-                        fault_page->raw.state == R0LAB_RAW_SHADOW_XOM &&
+                        shadow_xom_state &&
                         !fault_page->raw.gup_hide_active &&
                         !fault_page->raw.fork_hide_active &&
                         !fault_page->raw.read_cycle_active) {
@@ -8741,14 +8774,17 @@ static long r0lab_raw_slot_live_pte(uint64_t token, uint16_t slot_id,
     g_mmput(current_mm);
 
     snprintf(reply, sizeof(reply),
-             "raw_slot_live_pte slot=%u page=%llx generation=%llu snapshot_stage=after_arm walk_rc=%d live_pte=%lx expected_pte=%lx live_match=%lu live_pfn=%lx expected_pfn=%lx live_state=%s stored_state=%s live_state_id=%lu stored_state_id=%lu pte_lock=%s mmap_lock=read record_backend=%s record_state=%s record_match=%u\n",
+             "raw_slot_live_pte slot=%u page=%llx generation=%llu snapshot_stage=after_arm walk_rc=%d live_pte=%lx expected_pte=%lx live_match=%lu pte_match=%lu pfn_match=%lu live_pfn=%lx expected_pfn=%lx live_state=%s stored_state=%s live_state_id=%lu stored_state_id=%lu vma_match=%lu vma_flags=%lx source_identity_match=%lu shadow_identity_match=%lu identity_match=%lu pte_lock=%s mmap_lock=read record_backend=%s record_state=%s record_match=%u\n",
              (unsigned int)slot_id, (uint64_t)raw.address,
              (unsigned long long)generation, walk_rc, snapshot.live_pte,
              snapshot.expected_pte, snapshot.live_match,
-             snapshot.live_pfn, snapshot.expected_pfn,
+             snapshot.pte_match, snapshot.pfn_match, snapshot.live_pfn,
+             snapshot.expected_pfn,
              r0lab_raw_state_name(snapshot.live_state),
              r0lab_raw_state_name(snapshot.stored_state),
-             snapshot.live_state, snapshot.stored_state,
+             snapshot.live_state, snapshot.stored_state, snapshot.vma_match,
+             snapshot.vma_flags, snapshot.source_identity_match,
+             snapshot.shadow_identity_match, snapshot.identity_match,
              walk_rc ? "not_acquired" : "held",
              r0lab_page_record_backend_name(record_backend),
              r0lab_page_record_state_name(record_state),
@@ -8910,14 +8946,16 @@ static long r0lab_raw_hook_route_status(uint64_t token, uint16_t slot_id,
     r0lab_unlock(flags);
 
     snprintf(reply, sizeof(reply),
-             "raw_hook_route_status slot=%u generation=%llu hook=all owned=%u armed=%u page=%llx state=%lu route_helper_ready=1 page_record_routed=0 lookup_self=%u fault_lookup_self=%u target_mm_scoped=1 route_hits=%u route_rejects=%u route_wrong_mm=%u route_outside_page=%u route_stale_generation=%u route_busy=%u route_wrong_state=%u table_route_rejects=%u table_route_outside_page=%u migration=callbacks_slot0_compat route_kinds=%s,%s,%s,%s,%s,%s,%s\n",
+             "raw_hook_route_status slot=%u generation=%llu hook=all owned=%u armed=%u page=%llx state=%lu route_helper_ready=1 page_record_routed=0 lookup_self=%u fault_lookup_self=%u target_mm_scoped=1 route_hits=%u route_rejects=%u route_wrong_mm=%u route_outside_page=%u route_stale_generation=%u route_busy=%u route_wrong_state=%u route_identity_mismatch=%u table_route_rejects=%u table_route_outside_page=%u table_route_identity_mismatch=%u migration=callbacks_slot0_compat route_kinds=%s,%s,%s,%s,%s,%s,%s\n",
              (unsigned int)slot_id, (unsigned long long)generation,
              owned ? 1U : 0U, armed ? 1U : 0U, (uint64_t)address, state,
              lookup_self ? 1U : 0U, fault_lookup_self ? 1U : 0U,
              stats.route_hits, stats.route_rejects, stats.route_wrong_mm,
              stats.route_outside_page, stats.route_stale_generation,
              stats.route_busy, stats.route_wrong_state,
-             miss_stats.route_rejects, miss_stats.route_outside_page,
+             stats.route_identity_mismatch, miss_stats.route_rejects,
+             miss_stats.route_outside_page,
+             miss_stats.route_identity_mismatch,
              r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_ABORT),
              r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_FAULT),
              r0lab_raw_hook_kind_name(R0LAB_RAW_HOOK_GUP),

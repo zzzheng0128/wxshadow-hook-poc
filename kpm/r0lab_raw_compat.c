@@ -183,6 +183,71 @@ static unsigned long r0lab_raw_classify_live_pte(
     return R0LAB_RAW_POISONED;
 }
 
+static bool r0lab_raw_pte_value_has_pfn(unsigned long pte_value,
+                                        unsigned long pfn)
+{
+    pte_t pte;
+
+    if (!pte_value || !pfn)
+        return false;
+    pte = r0lab_raw_pte_from_value(pte_value);
+    return pte_present(pte) && pte_pfn(pte) == pfn;
+}
+
+static bool r0lab_raw_active_pte_identity_matches(
+    const struct r0lab_raw_page *page)
+{
+    if (!page || !page->active_pte)
+        return false;
+
+    switch (page->state) {
+    case R0LAB_RAW_CAPTURED:
+    case R0LAB_RAW_ORIGINAL_STEP:
+    case R0LAB_RAW_RESTORED:
+        return r0lab_raw_pte_value_has_pfn(page->active_pte,
+                                           page->source_pfn);
+    case R0LAB_RAW_SOURCE_UXN:
+    case R0LAB_RAW_ORIGINAL_READ:
+        return page->active_pte == page->source_uxn_pte &&
+               r0lab_raw_pte_value_has_pfn(page->active_pte,
+                                           page->source_pfn);
+    case R0LAB_RAW_SHADOW_RX:
+        return page->active_pte == page->shadow_rx_pte &&
+               r0lab_raw_pte_value_has_pfn(page->active_pte,
+                                           page->shadow_pfn);
+    case R0LAB_RAW_SHADOW_XOM:
+        return page->active_pte == page->shadow_xom_pte &&
+               r0lab_raw_pte_value_has_pfn(page->active_pte,
+                                           page->shadow_pfn);
+    default:
+        return false;
+    }
+}
+
+int r0lab_raw_saved_identity_matches(const struct r0lab_raw_page *page)
+{
+    if (!page || !page->mm || !page->address ||
+        (page->address & (PAGE_SIZE - 1)) || !page->source_pfn ||
+        !page->original_pte || !page->source_uxn_pte)
+        return 0;
+    if (!r0lab_raw_pte_value_has_pfn(page->original_pte,
+                                     page->source_pfn) ||
+        !r0lab_raw_pte_value_has_pfn(page->source_uxn_pte,
+                                     page->source_pfn))
+        return 0;
+    if (page->shadow_pfn) {
+        if (!page->shadow_rx_pte ||
+            !r0lab_raw_pte_value_has_pfn(page->shadow_rx_pte,
+                                         page->shadow_pfn))
+            return 0;
+        if (page->shadow_xom_pte &&
+            !r0lab_raw_pte_value_has_pfn(page->shadow_xom_pte,
+                                         page->shadow_pfn))
+            return 0;
+    }
+    return r0lab_raw_active_pte_identity_matches(page) ? 1 : 0;
+}
+
 static int r0lab_raw_replace_locked(struct r0lab_raw_page *page,
                                     struct mm_struct *mm,
                                     struct vm_area_struct *vma,
@@ -266,11 +331,29 @@ int r0lab_raw_snapshot_live_pte(
     snapshot->live_state = R0LAB_RAW_EMPTY;
     snapshot->stored_state = R0LAB_RAW_EMPTY;
     snapshot->live_match = 0;
+    snapshot->pte_match = 0;
+    snapshot->pfn_match = 0;
+    snapshot->vma_match = 0;
+    snapshot->vma_flags = 0;
+    snapshot->source_identity_match = 0;
+    snapshot->shadow_identity_match = 0;
+    snapshot->identity_match = 0;
     snapshot->expected_pte = page->active_pte;
     snapshot->stored_state = page->state;
     expected_pte = r0lab_raw_pte_from_value(page->active_pte);
     snapshot->expected_pfn = pte_present(expected_pte) ?
                              pte_pfn(expected_pte) : 0;
+    snapshot->source_identity_match =
+        (r0lab_raw_pte_value_has_pfn(page->original_pte, page->source_pfn) &&
+         r0lab_raw_pte_value_has_pfn(page->source_uxn_pte,
+                                     page->source_pfn)) ? 1UL : 0UL;
+    snapshot->shadow_identity_match =
+        (!page->shadow_pfn ||
+         (r0lab_raw_pte_value_has_pfn(page->shadow_rx_pte,
+                                      page->shadow_pfn) &&
+          (!page->shadow_xom_pte ||
+           r0lab_raw_pte_value_has_pfn(page->shadow_xom_pte,
+                                       page->shadow_pfn)))) ? 1UL : 0UL;
 
     mm = (struct mm_struct *)page->mm;
     mmap_read_lock(mm);
@@ -279,12 +362,24 @@ int r0lab_raw_snapshot_live_pte(
         goto out_unlock_mmap;
 
     live_pte = READ_ONCE(*ptep);
+    snapshot->vma_flags = vma->vm_flags;
+    snapshot->vma_match =
+        (vma->vm_mm == mm && page->address >= vma->vm_start &&
+         page->address + PAGE_SIZE <= vma->vm_end) ? 1UL : 0UL;
     snapshot->live_pte = r0lab_raw_pte_value(live_pte);
     snapshot->live_pfn = pte_present(live_pte) ? pte_pfn(live_pte) : 0;
     snapshot->live_state =
         r0lab_raw_classify_live_pte(page, snapshot->live_pte);
-    snapshot->live_match =
+    snapshot->pte_match =
         snapshot->live_pte == snapshot->expected_pte ? 1UL : 0UL;
+    snapshot->pfn_match =
+        snapshot->expected_pfn &&
+        snapshot->live_pfn == snapshot->expected_pfn ? 1UL : 0UL;
+    snapshot->live_match = snapshot->pte_match;
+    snapshot->identity_match =
+        snapshot->vma_match && snapshot->source_identity_match &&
+        snapshot->shadow_identity_match &&
+        (snapshot->pte_match || snapshot->pfn_match) ? 1UL : 0UL;
 
     spin_unlock(ptl);
 out_unlock_mmap:

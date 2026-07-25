@@ -50,6 +50,13 @@ struct r0lab_raw_live_pte_snapshot {
     unsigned long live_state;
     unsigned long stored_state;
     unsigned long live_match;
+    unsigned long pte_match;
+    unsigned long pfn_match;
+    unsigned long vma_match;
+    unsigned long vma_flags;
+    unsigned long source_identity_match;
+    unsigned long shadow_identity_match;
+    unsigned long identity_match;
 };
 
 unsigned long r0lab_raw_abi_page_size(void);
@@ -85,6 +92,7 @@ int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page);
 int r0lab_raw_finish_gup_hide(struct r0lab_raw_page *page);
 int r0lab_raw_begin_fork_hide(struct r0lab_raw_page *page, void *oldmm);
 int r0lab_raw_finish_fork_hide(struct r0lab_raw_page *page, void *oldmm);
+int r0lab_raw_saved_identity_matches(const struct r0lab_raw_page *page);
 int r0lab_raw_snapshot_live_pte(
     const struct r0lab_raw_page *page,
     struct r0lab_raw_live_pte_snapshot *snapshot);

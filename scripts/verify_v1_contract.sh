@@ -1306,7 +1306,7 @@ require_function_sha256 kpm/r0lab.c r0lab_control0 \
   b80363ddc9acc8113214a45876fded9a4c61fe6a9ed3dba04cb54cbb0320de0d
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  56ec74766dd25f01f58650aaffa7c147f21f7f46ce1050b86f0958859e882302
+  0c983cc390cb8c4faf230041428ed9142c8bb89763cf55374214a426e9a6573d
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_lock \
   d9b68a753737d4d3f8d6c247f1fb0f90b9edd387d3b8f88e6addf0967565a25e
@@ -1582,9 +1582,9 @@ require_text scripts/verify_v1_contract.sh \
   'D4-R3n plan packet contains a forbidden changed path'
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_full_abort_locked \
-  4e408d41443fae25faa27af8ba70a3e9a79db9a5c6e6c07dd94b0f7129e4fdb8
+  b8119f5f730f74f6d0ea192007002590048efa071d91d79c108047c9099fb26e
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  da0ef2e96bbd545e6b7ba2f5a48e5aee42d03e494934933aecbb51dd221efe23
+  279bf8f481ca6d8b20dd292a736a7b2a256d9f075d168ba0e284de4855b8fda5
 require_function_sha256 kpm/r0lab.c r0lab_raw_exit_mmap_before \
   c93284b7ea39e8923cd5161ea1871dcdc3106d51486596496746d385088fcca3
 require_function_sha256 kpm/r0lab.c r0lab_raw_unhook_page \
@@ -1838,7 +1838,7 @@ require_text kpm/r0lab.c 'bool abort_hook_iabt_route;'
 require_text kpm/r0lab.c 'raw slot arm abort-iabt-route '
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_readonly_locked \
-  f94e6f0b68312093a3b853261ebd6c648dcdaa3fd67c5754bbc470fd9cc73588
+  38df7a6196184e83e27ce2b17a0c2a294558dfadb6a444525322f5f4be941d65
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_iabt_route_compiler_witness \
   e7b4a45526d6cfeec9c5167ecfa7f19f9db93fc19df6e33331dc5b8482faa115
@@ -2017,7 +2017,7 @@ require_text kpm/r0lab.c 'bool abort_hook_iabt_transition;'
 require_text kpm/r0lab.c 'raw slot arm abort-iabt-transition '
 require_function_sha256 kpm/r0lab.c \
   r0lab_raw_hook_page_token_acquire_iabt_transition_locked \
-  eb0f1a957c0a3991029f1c2de0cef5440939769a0e980ef8d8be7e258f94874d
+  88c037f192440adcd35ea989ca0dd00218ebffa8a51b38566965f6873635d26a
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_iabt_transition \
   6be9918fbcbe39c2d7dc4c9ad704e56b1fde5767485f5a60c40bce468a3299fd
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort_full_iabt \
@@ -2042,7 +2042,7 @@ require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
   78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_lifetime_common \
-  56ec74766dd25f01f58650aaffa7c147f21f7f46ce1050b86f0958859e882302
+  0c983cc390cb8c4faf230041428ed9142c8bb89763cf55374214a426e9a6573d
 require_function_sha256 lab-app/src/main/cpp/labprobe.c \
   r0lab_raw_hold_abort_iabt_transition \
   12ecd7fadde7f3f38ff129c12e5366f98f1908926c60970fb4ff6b06c97b7826
@@ -2240,7 +2240,7 @@ require_text scripts/verify_d4_r3m_disassembly.sh \
 require_file_sha256 scripts/verify_d4_r3m_disassembly.sh \
   1c4deb9a5a6b3e54e1262ac352e62234873191c07696b38315bfa2021d3872ab
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  da0ef2e96bbd545e6b7ba2f5a48e5aee42d03e494934933aecbb51dd221efe23
+  279bf8f481ca6d8b20dd292a736a7b2a256d9f075d168ba0e284de4855b8fda5
 require_function_sha256 kpm/r0lab.c r0lab_raw_slot_ready \
   78992e7036b97f888201719227717da581112a44d325033698a413ec0facbb7b
 require_file scripts/test_raw_abort_inflight_passthrough_device.sh
@@ -2795,22 +2795,37 @@ require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold lifetime '
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=raw-hold-lifetime failures=%d'
 require_text lab-app/src/main/cpp/labprobe.c 'target_state=%s slots=%u raw_slots=%u page_records=%u'
 require_text kpm/r0lab_raw.h 'struct r0lab_raw_live_pte_snapshot'
+require_text kpm/r0lab_raw.h 'identity_match'
+require_text kpm/r0lab_raw.h 'r0lab_raw_saved_identity_matches'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_saved_identity_matches \
+  'page->source_pfn'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_saved_identity_matches \
+  'page->shadow_pfn'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_saved_identity_matches \
+  'r0lab_raw_active_pte_identity_matches'
 require_text kpm/r0lab_raw.h 'r0lab_raw_snapshot_live_pte'
 require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'mmap_read_lock(mm);'
 require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'r0lab_raw_walk_locked'
 require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'live_pte = READ_ONCE(*ptep);'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'vma->vm_flags'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'source_identity_match'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'shadow_identity_match'
+require_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'identity_match'
 reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'r0lab_raw_replace_locked'
 reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'flush_tlb'
 reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'set_pte_at'
 reject_function_text kpm/r0lab_raw_compat.c r0lab_raw_snapshot_live_pte 'memset'
 require_text kpm/r0lab.c 'raw slot live pte '
 require_text kpm/r0lab.c 'snapshot_stage=after_arm walk_rc=%d'
+require_text kpm/r0lab.c 'vma_match=%lu vma_flags=%lx'
+require_text kpm/r0lab.c 'source_identity_match=%lu shadow_identity_match=%lu identity_match=%lu'
 require_text kpm/r0lab.c 'page->record.backend == record_backend'
 require_text kpm/r0lab.c 'page->record.state == record_state'
 require_text kpm/r0lab.c 'record_backend=%s record_state=%s record_match=%u'
 require_text lab-app/src/main/cpp/labprobe.c 'r0lab_raw_hold_live_pte'
 require_text lab-app/src/main/cpp/labprobe.c 'raw raw-hold live-pte '
 require_text lab-app/src/main/cpp/labprobe.c 'raw mode=raw-hold-live-pte failures=%d'
+require_text lab-app/src/main/cpp/labprobe.c 'identity_match=1'
 require_text scripts/test_raw_live_pte_snapshot_device.sh 'RAW_LIVE_PTE_SNAPSHOT_IDLE_SECONDS'
 require_text scripts/test_raw_live_pte_snapshot_device.sh 'raw raw-hold live-pte $TOKEN'
 require_text scripts/test_raw_live_pte_snapshot_device.sh 'D4-R3e-L2-live-pte-mismatch-before-idle'
@@ -3013,13 +3028,13 @@ require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
 require_line_before scripts/test_raw_abort_wrapper_passthrough_device.sh \
   'ensure_clean_source' 'EXISTING=$(supercmd module list 2>&1) ||'
 require_function_sha256 kpm/r0lab.c r0lab_raw_before_abort \
-  da0ef2e96bbd545e6b7ba2f5a48e5aee42d03e494934933aecbb51dd221efe23
+  279bf8f481ca6d8b20dd292a736a7b2a256d9f075d168ba0e284de4855b8fda5
 require_function_sha256 kpm/r0lab.c r0lab_raw_arm_worker \
   874f8f12422ff744204799582b402d2541eab4e5447662f0a1eb4c377ad6e9a2
 require_file_sha256 kpm/r0lab_raw_compat.c \
-  6830e71cc1806d619fd75607c09ec1f3bfb4702b6adb45f3af5f597ffdb970c4
+  c3c23952d641819eb7093676a1c9819b3efd54c3161c2f481456d401ba2dae8d
 require_file_sha256 kpm/r0lab_raw.h \
-  436251b0273852fef930ef9b62e60a3492286caaf1ad2c51e9647c912a264b07
+  9c66a2260132be37ff15e372cc9778184302fbefa19b3a5f3e45d936b7af3c39
 require_text kpm/r0lab.c 'bool abort_hook_mmget;'
 require_text kpm/r0lab.c 'raw slot arm abort-mmget '
 require_function_text kpm/r0lab.c \
@@ -3297,7 +3312,9 @@ require_text kpm/r0lab.c 'r0lab_raw_fault_hook_users_locked'
 require_text kpm/r0lab.c 'R0LAB_RAW_HOOK_FAULT, vma_mm, address'
 require_text kpm/r0lab.c 'raw_hook_route_status slot=%u generation=%llu hook=all'
 require_text kpm/r0lab.c 'route_helper_ready=1 page_record_routed=0'
+require_text kpm/r0lab.c 'route_identity_mismatch=%u'
 require_text kpm/r0lab.c 'table_route_outside_page=%u'
+require_text kpm/r0lab.c 'table_route_identity_mismatch=%u'
 require_text kpm/r0lab.c 'migration=callbacks_slot0_compat'
 require_text kpm/r0lab.c 'raw hook route status '
 require_text "$FINAL_ROADMAP" 'Current status: implemented and gate-passed on Pixel 7'
@@ -3713,6 +3730,20 @@ require_text "$FINAL_ROADMAP" \
   'docs/wxshadow-final-lab-artifact.md'
 require_text "$FINAL_ROADMAP" \
   'wxshadow-final-lab-page-table-20260725'
+require_text "$FINAL_ROADMAP" \
+  'wxshadow-f5d2-route-identity-vma-20260725'
+require_text "$F8_ARTIFACT" \
+  'wxshadow-f5d2-route-identity-vma-20260725'
+require_text "$F8_ARTIFACT" \
+  'raw-live-pte-snapshot-20260725-133044.log'
+require_text "$F8_ARTIFACT" \
+  'raw-abort-read-cycle-20260725-133203.log'
+require_text "$F8_ARTIFACT" \
+  'raw-abort-write-release-20260725-133230.log'
+require_text "$F8_ARTIFACT" \
+  'raw-xom-read-fault-20260725-133253.log'
+require_text "$F8_ARTIFACT" \
+  'raw-prctl-hook-routing-20260725-133319.log'
 require_text "$DEVELOPMENT_SEQUENCE" '| 37 | F7-D0 | Final lifecycle stress plan gate |'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'not historical source-tagged R3o scripts'
@@ -3724,7 +3755,9 @@ require_text "$DEVELOPMENT_SEQUENCE" \
   'three child `status=pass evidence=` rows'
 require_text "$DEVELOPMENT_SEQUENCE" '| 40 | F8 | Final Lab artifact |'
 require_text "$DEVELOPMENT_SEQUENCE" \
-  'final milestone tag `wxshadow-final-lab-page-table-20260725`'
+  'base milestone tag `wxshadow-final-lab-page-table-20260725`'
+require_text "$DEVELOPMENT_SEQUENCE" \
+  'route-identity refresh tag `wxshadow-f5d2-route-identity-vma-20260725`'
 require_text "$DEVELOPMENT_SEQUENCE" \
   'F4.7, F5-D0, F6, and F7 are closed on the pinned Pixel 7 Lab environment'
 require_text "$KPM_COMPAT_MATRIX" \
@@ -3825,6 +3858,18 @@ require_text "$KPM_COMPAT_MATRIX" \
   'F5 selected hidden-read model'
 require_text "$KPM_COMPAT_MATRIX" \
   'Raw-XOM permission-DABT read-cycle'
+require_text "$KPM_COMPAT_MATRIX" \
+  'Raw route identity and VMA observer'
+require_text "$KPM_COMPAT_MATRIX" \
+  'raw-live-pte-snapshot-20260725-133044.log'
+require_text "$KPM_COMPAT_MATRIX" \
+  'raw-abort-read-cycle-20260725-133203.log'
+require_text "$KPM_COMPAT_MATRIX" \
+  'raw-abort-write-release-20260725-133230.log'
+require_text "$KPM_COMPAT_MATRIX" \
+  'raw-xom-read-fault-20260725-133253.log'
+require_text "$KPM_COMPAT_MATRIX" \
+  'raw-prctl-hook-routing-20260725-133319.log'
 require_text "$F6_BRK_STEP_PLAN" \
   'F6-D1 may edit only:'
 require_text "$F6_BRK_STEP_PLAN" \
@@ -4168,6 +4213,14 @@ require_text kpm/r0lab.c 'raw_slot_abort_probe_status slot=%u generation=%llu sy
 require_text kpm/r0lab.c 'R0LAB_EVENT_RAW_ABORT_READ_CYCLE_BEGIN'
 require_function_text kpm/r0lab.c r0lab_raw_before_abort \
   'r0lab_raw_hook_page_token_acquire_full_abort_locked'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort \
+  'shadow_rx_state'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort \
+  'shadow_xom_state'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort \
+  'translation_read && shadow_rx_state'
+require_function_text kpm/r0lab.c r0lab_raw_before_abort \
+  'permission_read && shadow_xom_state'
 require_function_text kpm/r0lab.c r0lab_raw_before_abort \
   'r0lab_raw_begin_fault_read_cycle(&fault_page->raw);'
 require_function_text kpm/r0lab.c r0lab_raw_before_abort \

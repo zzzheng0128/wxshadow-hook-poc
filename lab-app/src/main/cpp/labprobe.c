@@ -9346,8 +9346,14 @@ static int r0lab_raw_hold_lifetime_common(const char *args, char *output,
             strstr(live_pte_reply, "snapshot_stage=after_arm") &&
             strstr(live_pte_reply, "walk_rc=0") &&
             strstr(live_pte_reply, "live_match=1") &&
+            strstr(live_pte_reply, "pte_match=1") &&
+            strstr(live_pte_reply, "pfn_match=1") &&
             strstr(live_pte_reply, "live_state=source_uxn") &&
             strstr(live_pte_reply, "stored_state=source_uxn") &&
+            strstr(live_pte_reply, "vma_match=1") &&
+            strstr(live_pte_reply, "source_identity_match=1") &&
+            strstr(live_pte_reply, "shadow_identity_match=1") &&
+            strstr(live_pte_reply, "identity_match=1") &&
             strstr(live_pte_reply, "pte_lock=held") &&
             strstr(live_pte_reply, "mmap_lock=read") &&
             strstr(live_pte_reply, "record_backend=raw_two_pfn") &&
