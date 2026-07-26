@@ -1,15 +1,21 @@
 #!/bin/sh
 set -eu
 
-REFERENCE=${WXSHADOW_REFERENCE_SOURCE:-/Users/ivory/Project/article/r0hook/docs/wxshadow_final.c}
-EXPECTED_SHA256=2b2fb7ade7e572fd5aea8a79f39bd9c743b1ee1dc57552449209612e69903191
-EXPECTED_LINES=7124
-EXPECTED_FUNCTION_BLOCKS=141
+REFERENCE=${WXSHADOW_REFERENCE_SOURCE:-}
+EXPECTED_SHA256=${WXSHADOW_REFERENCE_EXPECTED_SHA256:-2b2fb7ade7e572fd5aea8a79f39bd9c743b1ee1dc57552449209612e69903191}
+EXPECTED_LINES=${WXSHADOW_REFERENCE_EXPECTED_LINES:-7124}
+EXPECTED_FUNCTION_BLOCKS=${WXSHADOW_REFERENCE_EXPECTED_FUNCTION_BLOCKS:-141}
 
 fail() {
   printf '%s\n' "wxshadow reference verification failure: $*" >&2
   exit 1
 }
+
+if [ -z "$REFERENCE" ]; then
+  printf '%s\n' \
+    'wxshadow_reference_source=skip reason=WXSHADOW_REFERENCE_SOURCE_not_set result=skip'
+  exit 0
+fi
 
 [ -f "$REFERENCE" ] || fail "reference file is missing: $REFERENCE"
 

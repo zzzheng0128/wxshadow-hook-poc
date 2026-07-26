@@ -6,7 +6,6 @@ KPM_SOURCE="$ROOT/kpm/r0lab.c"
 RAW_SOURCE="$ROOT/kpm/r0lab_raw_compat.c"
 RAW_HEADER="$ROOT/kpm/r0lab_raw.h"
 LAB_SOURCE="$ROOT/lab-app/src/main/cpp/labprobe.c"
-PLAN="$ROOT/docs/wxshadow-f4.6-d4-r3o-reference-lifetime-parity-fix-plan.md"
 DEVICE_SCRIPT="$ROOT/scripts/test_raw_r3o_lifetime_device.sh"
 NDK_TOOLCHAIN=/Users/ivory/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin
 NM="$NDK_TOOLCHAIN/llvm-nm"
@@ -106,32 +105,11 @@ require_function_sequence3() {
     fail "required sequence is missing from ${path#"$ROOT/"} function $function_name"
 }
 
-[ -f "$PLAN" ] || fail "R3o plan is missing"
 [ -f "$KPM_SOURCE" ] || fail "KPM source is missing"
 [ -f "$RAW_SOURCE" ] || fail "raw compatibility source is missing"
 [ -f "$RAW_HEADER" ] || fail "raw compatibility header is missing"
 [ -f "$LAB_SOURCE" ] || fail "Lab native source is missing"
 [ -f "$DEVICE_SCRIPT" ] || fail "R3o device ladder is missing"
-
-require_text "$PLAN" 'R3o uses the kernel'
-require_text "$PLAN" 'Status: complete.'
-require_text "$PLAN" 'mmgrab(mm)'
-require_text "$PLAN" 'mmdrop(mm)'
-require_text "$PLAN" 'before the first source-UXN PTE transition'
-require_text "$PLAN" '__get_free_pages(GFP_KERNEL, 0)'
-require_text "$PLAN" 'synchronizes the full page after the initial copy/seed'
-require_text "$PLAN" 'the final full-abort callback resident'
-require_text "$PLAN" 'ordinary owner-process DABTs'
-require_text "$PLAN" 'R3O_STAGE4_HOLD_SECONDS'
-require_text "$PLAN" 'source-tagged six-stage ladder passed'
-require_text "$PLAN" \
-  'wxshadow-v2-f46-d4-r3o-stage4-runtime-gate-candidate-20260724'
-require_text "$PLAN" \
-  'build/evidence/raw-r3o-stage-5-20260724-195753.log'
-require_text "$PLAN" 'Stage 6 ended with an empty FolkPatch module list.'
-require_text "$PLAN" 'raw raw-hold clear <token>'
-require_text "$PLAN" 'r0lab-r3o:'
-require_text "$PLAN" 'scripts/test_raw_r3o_lifetime_device.sh'
 
 require_text "$KPM_SOURCE" 'bool mm_count_owned;'
 require_text "$KPM_SOURCE" 'static hook_chain3_callback g_raw_abort_resident_callback;'

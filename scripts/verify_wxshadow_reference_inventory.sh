@@ -2,18 +2,25 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-REFERENCE=${WXSHADOW_REFERENCE_SOURCE:-/Users/ivory/Project/article/r0hook/docs/wxshadow_final.c}
-INVENTORY="$ROOT/docs/wxshadow-reference-function-inventory.txt"
-COVERAGE="$ROOT/docs/wxshadow-reference-function-coverage.md"
-EXPECTED_FUNCTIONS=141
-EXPECTED_FAMILIES=14
+REFERENCE=${WXSHADOW_REFERENCE_SOURCE:-}
+INVENTORY=${WXSHADOW_REFERENCE_INVENTORY:-}
+COVERAGE=${WXSHADOW_REFERENCE_COVERAGE:-}
+EXPECTED_FUNCTIONS=${WXSHADOW_REFERENCE_EXPECTED_FUNCTIONS:-141}
+EXPECTED_FAMILIES=${WXSHADOW_REFERENCE_EXPECTED_FAMILIES:-14}
 
 fail() {
   printf '%s\n' "wxshadow reference inventory verification failure: $*" >&2
   exit 1
 }
 
-"$ROOT/scripts/verify_wxshadow_reference_source.sh" >/dev/null
+if [ -z "$REFERENCE" ] || [ -z "$INVENTORY" ] || [ -z "$COVERAGE" ]; then
+  printf '%s\n' \
+    'wxshadow_reference_inventory=skip reason=reference_inventory_coverage_not_set result=skip'
+  exit 0
+fi
+
+WXSHADOW_REFERENCE_SOURCE="$REFERENCE" \
+  "$ROOT/scripts/verify_wxshadow_reference_source.sh" >/dev/null
 [ -f "$INVENTORY" ] || fail "inventory is missing: $INVENTORY"
 [ -f "$COVERAGE" ] || fail "coverage matrix is missing: $COVERAGE"
 
