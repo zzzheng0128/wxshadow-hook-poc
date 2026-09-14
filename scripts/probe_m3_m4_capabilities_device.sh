@@ -25,7 +25,7 @@ mkdir -p "$EVIDENCE_DIR"
   printf 'page_size=%s\n' "$(adb_device shell getconf PAGE_SIZE | tr -d '\r')"
   printf 'arm64_features=%s\n' "$(adb_device shell cat /proc/cpuinfo | tr -d '\r' | sed -n 's/^Features[[:space:]]*:[[:space:]]*//p' | sed -n '1p')"
   printf 'arm64_cpu_parts=%s\n' "$(adb_device shell cat /proc/cpuinfo | tr -d '\r' | sed -n 's/^CPU part[[:space:]]*:[[:space:]]*//p' | sort -u | paste -sd, -)"
-  printf 'kernelpatch_supercall_abi=0x0d01\n'
+  printf 'kernelpatch_supercall_abi=0x0d03\n'
   printf 'folkpatch_runtime_version=%s\n' "$(adb_device shell su -c '/system/bin/truncate su version' | tr -d '\r')"
   printf 'module_list=%s\n' "$(adb_device shell su -c '/system/bin/truncate su module list' | tr -d '\r')"
   printf '%s\n' 'symbols:'

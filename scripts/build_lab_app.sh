@@ -2,9 +2,9 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SDK=${ANDROID_SDK_ROOT:-/Users/ivory/Library/Android/sdk}
+SDK=${ANDROID_SDK_ROOT:-/Users/freeman/Library/Android/sdk}
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/29.0.14206865}
-BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-$SDK/build-tools/35.0.0}
+BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-$SDK/build-tools/34.0.0}
 OUT="$ROOT/build/lab-app"
 STAGE="$OUT/stage"
 KEYSTORE=${R0LAB_DEBUG_KEYSTORE:-$ROOT/lab-app/debug.keystore}
@@ -19,6 +19,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/classes" "$OUT/dex" "$STAGE"
 
 javac -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$OUT/classes" \
+  "$ROOT/lab-app/src/main/java/dev/r0hook/lab/LabCommandRunner.java" \
   "$ROOT/lab-app/src/main/java/dev/r0hook/lab/MainActivity.java"
 jar cf "$OUT/classes.jar" -C "$OUT/classes" .
 "$BUILD_TOOLS/d8" --lib "$ANDROID_JAR" --output "$OUT/dex" "$OUT/classes.jar"

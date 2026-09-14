@@ -137,10 +137,20 @@ lab-app/src/main/cpp/Android.mk
 lab-app/src/main/cpp/Application.mk
 lab-app/src/main/cpp/labprobe.c
 lab-app/src/main/java/dev/r0hook/lab/MainActivity.java
+lab-app/src/main/java/dev/r0hook/lab/LabCommandRunner.java
+lab-app/src/test/java/dev/r0hook/lab/LabCommandRunnerTest.java
 tools/r0lab_nonlab_control_probe.c
 scripts/build_kpm.sh
 scripts/build_lab_app.sh
 scripts/test_v1_device.sh
+scripts/verify_evidence_result.sh
+scripts/test_evidence_result_host.sh
+scripts/test_lab_command_runner_host.sh
+scripts/verify_run_continuity.sh
+scripts/test_run_continuity_host.sh
+scripts/test_runner_evidence_host.sh
+scripts/lib/evidence_run.sh
+scripts/lib/device_snapshot.sh
 scripts/probe_shadow_page_capabilities_device.sh
 scripts/probe_raw_xom_device.sh
 scripts/probe_raw_xom_preflight_device.sh
@@ -163,6 +173,10 @@ script_count=0
 for script in "$ROOT"/scripts/*.sh; do
   script_count=$((script_count + 1))
   require_executable "${script#"$ROOT/"}"
+  check_script_syntax "$script"
+done
+
+for script in "$ROOT"/scripts/lib/*.sh; do
   check_script_syntax "$script"
 done
 

@@ -9,12 +9,23 @@
 
 #include "r0lab_raw.h"
 
+#include <linux/version.h>
 #include <linux/mm.h>
 #include <linux/mm_types.h>
-#include <linux/mmap_lock.h>
-#include <linux/pgtable.h>
 #include <linux/sched/mm.h>
 #include <linux/spinlock.h>
+
+/*
+ * linux/mmap_lock.h (5.8+) and linux/pgtable.h (5.5+) do not exist on the
+ * 4.19 redfin kernel. Their declarations live directly in linux/mm.h and
+ * asm/pgtable.h there, so guard the includes by kernel version.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+#include <linux/mmap_lock.h>
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
+#include <linux/pgtable.h>
+#endif
 
 #include <asm/pgtable.h>
 #include <asm/pgtable-prot.h>
@@ -23,6 +34,55 @@
 #define R0LAB_RAW_EINVAL (-22)
 #define R0LAB_RAW_ENOENT (-2)
 #define R0LAB_RAW_EAGAIN (-11)
+
+/*
+ * pte_valid_user() exists on 4.19/5.10 but was removed in 6.1 (replaced by
+ * pte_valid_not_user() with inverted semantics). Express the "valid + user"
+ * predicate as raw pte bits so a single source compiles across 4.19..6.1.
+ */
+#define R0LAB_RAW_PTE_VALID_USER(pte) \
+    ((pte_val(pte) & (PTE_VALID | PTE_USER)) == (PTE_VALID | PTE_USER))
+
+/*
+ * pte_tagged() is only defined on arm64 kernels >= 5.x (MTE/hwtag). The 4.19
+ * redfin kernel has no tagged-PTE concept, so provide a constant-false fallback.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
+#define pte_tagged(pte) (false)
+#endif
+
+/*
+ * mmap lock field was renamed mmap_sem -> mmap_lock in 5.8. The mmap_*_lock()
+ * wrappers pull in tracepoint machinery (__tracepoint_mmap_lock_* and
+ * __mmap_lock_do_trace_*) that KP's symbol resolver cannot satisfy. Take the
+ * raw rw_semaphore directly so the KPM has no tracepoint symbol references.
+ *
+ * R0LAB_RAW_MM_LOCK_FIELD is supplied by the build (Makefile) per target:
+ *   oriole  (6.1)  -> mmap_lock
+ *   redfin  (4.19) -> mmap_sem
+ *   panther (5.10) -> mmap_lock
+ */
+#ifndef R0LAB_RAW_MM_LOCK_FIELD
+#define R0LAB_RAW_MM_LOCK_FIELD mmap_lock
+#endif
+#define R0LAB_RAW_MM_LOCK(mm) ((mm)->R0LAB_RAW_MM_LOCK_FIELD)
+#define R0LAB_RAW_MMAP_READ_LOCK(mm) down_read(&R0LAB_RAW_MM_LOCK(mm))
+#define R0LAB_RAW_MMAP_READ_UNLOCK(mm) up_read(&R0LAB_RAW_MM_LOCK(mm))
+
+/*
+ * flush_tlb_page()/set_pte_at() inline an ALTERNATIVE_CB that references
+ * alt_cb_patch_nops, an EXPORT_SYMBOL the KP resolver does not carry. The
+ * .altinstructions section is stripped at link time so this callback is never
+ * invoked; define a local stub so the symbol is internal, not undefined.
+ */
+void alt_cb_patch_nops(struct alt_instr *alt, __le32 *origptr,
+                       __le32 *updptr, int nr_inst)
+{
+    (void)alt;
+    (void)origptr;
+    (void)updptr;
+    (void)nr_inst;
+}
 
 unsigned long r0lab_raw_abi_page_size(void)
 {
@@ -157,7 +217,7 @@ static int r0lab_raw_walk_locked(struct mm_struct *mm, unsigned long address,
 
 static bool r0lab_raw_admits_original_pte(pte_t pte)
 {
-    return pte_present(pte) && pte_valid_user(pte) && pte_user_exec(pte) &&
+    return pte_present(pte) && R0LAB_RAW_PTE_VALID_USER(pte) && pte_user_exec(pte) &&
            !pte_write(pte) && !pte_special(pte) && !pte_cont(pte) &&
            !pte_devmap(pte) && !pte_tagged(pte);
 }
@@ -284,7 +344,7 @@ int r0lab_raw_capture(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -305,7 +365,7 @@ int r0lab_raw_capture(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -356,7 +416,7 @@ int r0lab_raw_snapshot_live_pte(
                                        page->shadow_pfn)))) ? 1UL : 0UL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -383,7 +443,7 @@ int r0lab_raw_snapshot_live_pte(
 
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -426,7 +486,7 @@ static int r0lab_raw_arm_source_uxn_common(struct r0lab_raw_page *page,
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -456,7 +516,7 @@ static int r0lab_raw_arm_source_uxn_common(struct r0lab_raw_page *page,
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -485,7 +545,7 @@ int r0lab_raw_activate_shadow(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -506,7 +566,7 @@ int r0lab_raw_activate_shadow(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -529,7 +589,7 @@ int r0lab_raw_activate_shadow_xom(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -554,7 +614,7 @@ int r0lab_raw_activate_shadow_xom(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -576,7 +636,7 @@ int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -603,7 +663,7 @@ int r0lab_raw_clear_shadow_access_flag(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -622,7 +682,7 @@ int r0lab_raw_begin_stepping(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -644,7 +704,7 @@ int r0lab_raw_begin_stepping(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -663,7 +723,7 @@ int r0lab_raw_finish_stepping(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -685,7 +745,7 @@ int r0lab_raw_finish_stepping(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -707,7 +767,7 @@ int r0lab_raw_begin_read_cycle(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -732,7 +792,7 @@ int r0lab_raw_begin_read_cycle(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -755,7 +815,7 @@ int r0lab_raw_begin_fault_read_cycle(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -783,7 +843,7 @@ int r0lab_raw_begin_fault_read_cycle(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -806,7 +866,7 @@ int r0lab_raw_begin_xom_read_cycle(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -833,7 +893,7 @@ int r0lab_raw_begin_xom_read_cycle(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -855,7 +915,7 @@ int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -883,7 +943,7 @@ int r0lab_raw_finish_read_cycle(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -927,7 +987,7 @@ int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -951,7 +1011,7 @@ int r0lab_raw_begin_gup_hide(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -972,7 +1032,7 @@ int r0lab_raw_finish_gup_hide(struct r0lab_raw_page *page)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -998,7 +1058,7 @@ int r0lab_raw_finish_gup_hide(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -1019,7 +1079,7 @@ int r0lab_raw_begin_fork_hide(struct r0lab_raw_page *page, void *oldmm)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)oldmm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -1043,7 +1103,7 @@ int r0lab_raw_begin_fork_hide(struct r0lab_raw_page *page, void *oldmm)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -1064,7 +1124,7 @@ int r0lab_raw_finish_fork_hide(struct r0lab_raw_page *page, void *oldmm)
         return R0LAB_RAW_EINVAL;
 
     mm = (struct mm_struct *)oldmm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -1090,7 +1150,7 @@ int r0lab_raw_finish_fork_hide(struct r0lab_raw_page *page, void *oldmm)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }
 
@@ -1123,7 +1183,7 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
     }
 
     mm = (struct mm_struct *)page->mm;
-    mmap_read_lock(mm);
+    R0LAB_RAW_MMAP_READ_LOCK(mm);
     result = r0lab_raw_walk_locked(mm, page->address, &vma, &ptep, &ptl);
     if (result)
         goto out_unlock_mmap;
@@ -1167,6 +1227,6 @@ int r0lab_raw_restore_original(struct r0lab_raw_page *page)
 out_unlock_pte:
     spin_unlock(ptl);
 out_unlock_mmap:
-    mmap_read_unlock(mm);
+    R0LAB_RAW_MMAP_READ_UNLOCK(mm);
     return result;
 }

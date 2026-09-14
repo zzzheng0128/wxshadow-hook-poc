@@ -9,8 +9,8 @@ M0_LOOPS=${M0_LOOPS:-100}
 LAB_PACKAGE=dev.r0hook.lab
 EVIDENCE_DIR="$ROOT/build/evidence"
 RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
-RUN_DIR="$EVIDENCE_DIR/f7-lifecycle-stress-$RUN_ID"
-MANIFEST="$RUN_DIR/manifest.log"
+. "$ROOT/scripts/lib/evidence_run.sh"
+. "$ROOT/scripts/lib/device_snapshot.sh"
 
 adb_device() {
   if [ -n "$SERIAL" ]; then
@@ -39,8 +39,12 @@ fail() {
   exit 1
 }
 
-read_warn_count() {
-  adb_device shell su -c cat /sys/kernel/warn_count | tr -d '\r'
+assert_device_continuity() {
+  r0lab_device_snapshot ||
+    fail device_transport_or_reboot "$1: could not capture a consistent device snapshot"
+  "$ROOT/scripts/verify_run_continuity.sh" \
+    "$BOOT_BEFORE" "$R0LAB_SNAPSHOT_BOOT" "$WARN_BEFORE" "$R0LAB_SNAPSHOT_WARN" ||
+    fail device_continuity_changed "$1: device rebooted or warn_count changed"
 }
 
 require_positive_integer() {
@@ -66,16 +70,14 @@ assert_expected_serial() {
 
 assert_clean_device() {
   phase=$1
+  assert_device_continuity "$phase"
   modules=$(supercmd module list 2>&1) ||
     fail device_transport_or_reboot "$phase: module list failed: $modules"
   [ -z "$modules" ] ||
     fail module_residue_after_child "$phase: resident KPM remains: $modules"
-  warn_now=$(read_warn_count) ||
-    fail device_transport_or_reboot "$phase: could not read warn_count"
-  [ "$warn_now" = "$WARN_BEFORE" ] ||
-    fail warn_count_drift "$phase: warn_count changed: $WARN_BEFORE -> $warn_now"
-  printf 'phase=%s modules=empty warn_count=%s\n' \
-    "$phase" "$warn_now" >> "$MANIFEST"
+  assert_device_continuity "$phase"
+  printf 'phase=%s modules=empty boot_id=%s warn_count=%s\n' \
+    "$phase" "$R0LAB_SNAPSHOT_BOOT" "$R0LAB_SNAPSHOT_WARN" >> "$MANIFEST"
 }
 
 run_child() {
@@ -83,6 +85,8 @@ run_child() {
   script=$2
   classification=$3
   phase_log="$RUN_DIR/$phase.log"
+  EVIDENCE_RUN_PHASE=$phase
+  assert_device_continuity "$phase: before run"
 
   adb_device shell am force-stop "$LAB_PACKAGE" >/dev/null 2>&1 ||
     fail device_transport_or_reboot "$phase: could not reset Lab app process"
@@ -109,15 +113,15 @@ run_child() {
   esac
   [ -f "$phase_evidence" ] ||
     fail "$classification" "$phase: evidence file does not exist: $phase_evidence"
-  grep -F -- 'result=pass' "$phase_evidence" >/dev/null ||
-    fail "$classification" "$phase: evidence does not report result=pass"
+  "$ROOT/scripts/verify_evidence_result.sh" "$phase_evidence" ||
+    fail "$classification" "$phase: evidence does not end with an unambiguous result=pass"
 
   printf 'phase=%s script=%s status=pass evidence=%s raw_log=%s\n' \
     "$phase" "$script" "$phase_evidence" "$phase_log" >> "$MANIFEST"
   assert_clean_device "$phase"
 }
 
-mkdir -p "$RUN_DIR"
+evidence_run_init "$EVIDENCE_DIR" f7-lifecycle-stress "$RUN_ID"
 require_positive_integer F7_REPEAT_COUNT "$F7_REPEAT_COUNT"
 require_positive_integer M0_LOOPS "$M0_LOOPS"
 assert_expected_serial
@@ -129,16 +133,20 @@ assert_expected_serial
   exit 1
 }
 
-adb_device get-state 2>/dev/null | grep -qx device ||
+r0lab_device_ready ||
   fail device_transport_or_reboot 'device is unavailable'
+
+r0lab_device_snapshot ||
+  fail device_transport_or_reboot 'could not capture initial device snapshot'
+BOOT_BEFORE=$R0LAB_SNAPSHOT_BOOT
+WARN_BEFORE=$R0LAB_SNAPSHOT_WARN
 
 modules_before=$(supercmd module list 2>&1) ||
   fail device_transport_or_reboot "module list failed before run: $modules_before"
 [ -z "$modules_before" ] ||
   fail resident_kpm_before_run "resident KPM before run: $modules_before"
 
-WARN_BEFORE=$(read_warn_count) ||
-  fail device_transport_or_reboot 'could not read initial warn_count'
+assert_device_continuity setup
 
 {
   printf 'run_id=%s\n' "$RUN_ID"
@@ -146,10 +154,11 @@ WARN_BEFORE=$(read_warn_count) ||
   printf 'expected_serial=%s\n' "$EXPECTED_SERIAL"
   printf 'repeat_count=%s\n' "$F7_REPEAT_COUNT"
   printf 'm0_loops=%s\n' "$M0_LOOPS"
+  printf 'boot_before=%s\n' "$BOOT_BEFORE"
   printf 'warn_before=%s\n' "$WARN_BEFORE"
   printf 'static_contract=%s\n' "$RUN_DIR/static-contract.log"
   printf 'child_phases=m5_faults,m5_lifecycle,v1_device\n'
-} > "$MANIFEST"
+} >> "$MANIFEST"
 
 iteration=1
 while [ "$iteration" -le "$F7_REPEAT_COUNT" ]; do
@@ -162,8 +171,7 @@ done
 
 run_child v1_device scripts/test_v1_device.sh full_runner_regression
 
-WARN_AFTER=$(read_warn_count) ||
-  fail device_transport_or_reboot 'could not read final warn_count'
+EVIDENCE_RUN_PHASE=final
 assert_clean_device final
-printf 'warn_after=%s result=pass\n' "$WARN_AFTER" >> "$MANIFEST"
+evidence_run_complete "$R0LAB_SNAPSHOT_WARN"
 printf '%s\n' "$MANIFEST"

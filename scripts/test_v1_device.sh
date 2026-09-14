@@ -7,8 +7,8 @@ M0_LOOPS=${M0_LOOPS:-100}
 LAB_PACKAGE=dev.r0hook.lab
 EVIDENCE_DIR="$ROOT/build/evidence"
 RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
-RUN_DIR="$EVIDENCE_DIR/v1-device-$RUN_ID"
-MANIFEST="$RUN_DIR/manifest.log"
+. "$ROOT/scripts/lib/evidence_run.sh"
+. "$ROOT/scripts/lib/device_snapshot.sh"
 
 adb_device() {
   if [ -n "$SERIAL" ]; then
@@ -33,24 +33,29 @@ fail() {
   exit 1
 }
 
-read_warn_count() {
-  adb_device shell su -c cat /sys/kernel/warn_count | tr -d '\r'
+assert_device_continuity() {
+  r0lab_device_snapshot || fail "$1: could not capture a consistent device snapshot"
+  "$ROOT/scripts/verify_run_continuity.sh" \
+    "$BOOT_BEFORE" "$R0LAB_SNAPSHOT_BOOT" "$WARN_BEFORE" "$R0LAB_SNAPSHOT_WARN" ||
+    fail "$1: device rebooted or warn_count changed"
 }
 
 assert_clean_device() {
   phase=$1
+  assert_device_continuity "$phase"
   modules=$(supercmd module list 2>&1) || fail "$phase: module list failed: $modules"
   [ -z "$modules" ] || fail "$phase: resident KPM remains: $modules"
-  warn_now=$(read_warn_count) || fail "$phase: could not read warn_count"
-  [ "$warn_now" = "$WARN_BEFORE" ] ||
-    fail "$phase: warn_count changed: $WARN_BEFORE -> $warn_now"
-  printf 'phase=%s modules=empty warn_count=%s\n' "$phase" "$warn_now" >> "$MANIFEST"
+  assert_device_continuity "$phase"
+  printf 'phase=%s modules=empty boot_id=%s warn_count=%s\n' \
+    "$phase" "$R0LAB_SNAPSHOT_BOOT" "$R0LAB_SNAPSHOT_WARN" >> "$MANIFEST"
 }
 
 run_phase() {
   phase=$1
   script=$2
   phase_log="$RUN_DIR/$phase.log"
+  EVIDENCE_RUN_PHASE=$phase
+  assert_device_continuity "$phase: before run"
 
   adb_device shell am force-stop "$LAB_PACKAGE" >/dev/null ||
     fail "$phase: could not reset Lab app process"
@@ -81,24 +86,28 @@ run_phase() {
     *) fail "$phase: final output is not an evidence path: $phase_evidence" ;;
   esac
   [ -f "$phase_evidence" ] || fail "$phase: evidence file does not exist: $phase_evidence"
-  grep -F -- 'result=pass' "$phase_evidence" >/dev/null ||
-    fail "$phase: evidence does not report result=pass"
+  "$ROOT/scripts/verify_evidence_result.sh" "$phase_evidence" ||
+    fail "$phase: evidence does not end with an unambiguous result=pass"
   printf 'phase=%s script=%s status=pass evidence=%s raw_log=%s\n' \
     "$phase" "$script" "$phase_evidence" "$phase_log" >> "$MANIFEST"
   assert_clean_device "$phase"
 }
 
-mkdir -p "$RUN_DIR"
+evidence_run_init "$EVIDENCE_DIR" v1-device "$RUN_ID"
 "$ROOT/scripts/verify_v1_contract.sh" >"$RUN_DIR/static-contract.log" 2>&1 || {
   sed -n '1,240p' "$RUN_DIR/static-contract.log" >&2
   printf 'result=fail reason=static_contract\n' > "$MANIFEST"
   exit 1
 }
 
-adb_device get-state 2>/dev/null | grep -qx device || {
+r0lab_device_ready || {
   printf 'result=fail reason=device_unavailable\n' > "$MANIFEST"
   exit 1
 }
+
+r0lab_device_snapshot || fail 'could not capture initial device snapshot'
+BOOT_BEFORE=$R0LAB_SNAPSHOT_BOOT
+WARN_BEFORE=$R0LAB_SNAPSHOT_WARN
 
 modules_before=$(supercmd module list 2>&1) || {
   printf 'result=fail reason=module_list_unavailable\n' > "$MANIFEST"
@@ -108,18 +117,16 @@ modules_before=$(supercmd module list 2>&1) || {
   printf 'result=fail reason=resident_module_before_run modules=%s\n' "$modules_before" > "$MANIFEST"
   exit 1
 }
-WARN_BEFORE=$(read_warn_count) || {
-  printf 'result=fail reason=warn_count_unavailable\n' > "$MANIFEST"
-  exit 1
-}
+assert_device_continuity setup
 
 {
   printf 'run_id=%s\n' "$RUN_ID"
   printf 'serial=%s\n' "${SERIAL:-default}"
   printf 'm0_loops=%s\n' "$M0_LOOPS"
+  printf 'boot_before=%s\n' "$BOOT_BEFORE"
   printf 'warn_before=%s\n' "$WARN_BEFORE"
   printf 'static_contract=%s\n' "$RUN_DIR/static-contract.log"
-} > "$MANIFEST"
+} >> "$MANIFEST"
 
 run_phase m0_environment scripts/test_m0_environment_device.sh
 run_phase m0_lifecycle scripts/test_m0_device.sh
@@ -151,7 +158,7 @@ run_phase raw_abort_read_cycle scripts/test_raw_abort_read_cycle_device.sh
 run_phase raw_abort_write_probe scripts/test_raw_abort_write_probe_device.sh
 run_phase raw_abort_write_release scripts/test_raw_abort_write_release_device.sh
 
-WARN_AFTER=$(read_warn_count) || fail 'final: could not read warn_count'
+EVIDENCE_RUN_PHASE=final
 assert_clean_device final
-printf 'warn_after=%s result=pass\n' "$WARN_AFTER" >> "$MANIFEST"
+evidence_run_complete "$R0LAB_SNAPSHOT_WARN"
 printf '%s\n' "$MANIFEST"

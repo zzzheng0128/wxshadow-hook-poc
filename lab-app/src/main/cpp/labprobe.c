@@ -30,8 +30,9 @@
 #endif
 
 #define R0LAB_SUPERCALL_NR 45
-#define R0LAB_KERNELPATCH_VERSION 0x0d01UL
+#define R0LAB_KERNELPATCH_VERSION 0x0d03UL
 #define R0LAB_SUPERCALL_MAGIC 0x1158UL
+#define R0LAB_SUPERCALL_KEY "amigo123"
 #define R0LAB_SUPERCALL_KPM_CONTROL 0x1022UL
 #define R0LAB_MODULE_NAME "r0lab-m1"
 #define R0LAB_M3_PAGE_SIZE 4096U
@@ -185,7 +186,7 @@ static long r0lab_control_raw(const char *args, char *reply, size_t reply_size)
     long result;
 
     pthread_mutex_lock(&g_r0lab_control_lock);
-    result = syscall(R0LAB_SUPERCALL_NR, "su",
+    result = syscall(R0LAB_SUPERCALL_NR, R0LAB_SUPERCALL_KEY,
                      r0lab_supercall_command(R0LAB_SUPERCALL_KPM_CONTROL),
                      R0LAB_MODULE_NAME, args, reply, reply_size);
     pthread_mutex_unlock(&g_r0lab_control_lock);

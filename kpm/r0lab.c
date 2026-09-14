@@ -43,6 +43,30 @@
 #define R0LAB_RAW_STATIC_KEY_SIZE 16U
 #define R0LAB_RAW_ARM64_NCAPS 76U
 #define R0LAB_S4_BRK_COMMENT 7U
+/*
+ * task_struct.usage byte offset. put_task_struct() is a static inline on
+ * both target kernels (never exported), so the module must perform the
+ * "decrement then release on zero" step itself and only fall back to
+ * __put_task_struct() for the final free. See the WARN_ON(atomic_read(&tsk->usage))
+ * guard inside __put_task_struct(): calling __put_task_struct directly without
+ * the decrement triggers that warning and frees a still-referenced task.
+ *
+ * The offset is NOT hardcoded: usage sits immediately after the 8-byte
+ * task->stack pointer, and stack's own offset varies with kernel config.
+ * In particular, redfin/oriole enable CONFIG_SHADOW_CALL_STACK, which adds a
+ * shadow_call_stack pointer to struct thread_info and shifts every following
+ * field by 8 bytes. On redfin 4.19 this makes stack=0x30/usage=0x38, while a
+ * build tree generated without SCS reports stack=0x28/usage=0x30. Hardcoding
+ * 0x30 therefore corrupts task->stack (decrementing the stack pointer by 1),
+ * which is exactly the arm-command panic: task_stack_end_corrupted() later
+ * dereferences the corrupted prev->stack. KernelPatch resolves the real
+ * stack offset at load time into stack_in_task_offset; derive usage from it.
+ */
+static inline int r0lab_usage_offset(void)
+{
+    /* extern int stack_in_task_offset; provided by KernelPatch (asm/current.h) */
+    return stack_in_task_offset + (int)sizeof(unsigned long);
+}
 #define R0LAB_FAULT_FLAG_WRITE 0x01U
 #define R0LAB_FAULT_FLAG_USER 0x40U
 #define R0LAB_FAULT_FLAG_REMOTE 0x80U
@@ -595,7 +619,7 @@ static r0lab_disable_hwbp_local_fn_t g_disable_hwbp_local;
 static r0lab_unregister_hwbp_fn_t g_unregister_hwbp;
 static r0lab_synchronize_rcu_fn_t g_synchronize_rcu;
 static r0lab_find_get_task_fn_t g_find_get_task;
-static r0lab_put_task_fn_t g_put_task;
+static r0lab_put_task_fn_t g_put_task_release;
 static r0lab_kthread_create_fn_t g_kthread_create;
 static r0lab_wake_up_process_fn_t g_wake_up_process;
 static r0lab_kthread_stop_fn_t g_kthread_stop;
@@ -736,6 +760,40 @@ static unsigned long r0lab_lock(void)
 static void r0lab_unlock(unsigned long flags)
 {
     g_unlock_irqrestore(&g_r0lab_lock.rlock, flags);
+}
+
+/*
+ * put_task_struct() is a static inline on both 4.19 (atomic_dec_and_test)
+ * and 6.1 (refcount_dec_and_test), so neither exports a symbol the module
+ * can resolve. Emulate its semantics here: decrement task->usage and only
+ * call __put_task_struct() once it reaches zero. task->usage is a 4-byte
+ * counter located immediately after task->stack (offset resolved at load
+ * time via KernelPatch's stack_in_task_offset, see r0lab_usage_offset()).
+ */
+static void r0lab_put_task(struct task_struct *task)
+{
+    int *usage = (int *)((char *)task + r0lab_usage_offset());
+    unsigned int old;
+    unsigned int result;
+    unsigned int tmp;
+
+    if (!task || !g_put_task_release)
+        return;
+
+    /* arm64 atomic decrement (load-linked / store-conditional). Avoids
+     * __sync_fetch_and_sub, which lowers to a libgcc __aarch64_ldadd4_sync
+     * helper that is unavailable inside a KPM. */
+    asm volatile(
+        "1: ldxr  %w[old], %[p]\n"
+        "   sub   %w[res], %w[old], #1\n"
+        "   stxr  %w[tmp], %w[res], %[p]\n"
+        "   cbnz  %w[tmp], 1b\n"
+        : [old] "=&r"(old), [res] "=&r"(result), [tmp] "=&r"(tmp),
+          [p] "+Q"(*usage)
+        : : "memory");
+
+    if (result == 0)
+        g_put_task_release(task);
 }
 
 static pid_t r0lab_current_tgid(void)
@@ -3228,7 +3286,9 @@ static long r0lab_arm(uint64_t token, char __user *out_msg, int outlen)
     char reply[R0LAB_OUTPUT_CAPACITY];
     unsigned long flags;
     int result = 0;
-    pid_t current_tgid = r0lab_current_tgid();
+    pid_t current_tgid;
+
+    current_tgid = r0lab_current_tgid();
 
     flags = r0lab_lock();
     if (g_session.active || g_workers_shutdown_requested)
@@ -3648,7 +3708,7 @@ static void r0lab_hwbp_run_slot(struct r0lab_hwbp_slot *slot)
         if (slot->target_task == target_task)
             memset(slot, 0, sizeof(*slot));
         r0lab_unlock(flags);
-        g_put_task(target_task);
+        r0lab_put_task(target_task);
         r0lab_record(R0LAB_EVENT_HWBP_CLEAR, 0);
         return;
     }
@@ -3660,7 +3720,7 @@ discard_cancelled:
     if (slot->target_task == target_task)
         memset(slot, 0, sizeof(*slot));
     r0lab_unlock(flags);
-    g_put_task(target_task);
+    r0lab_put_task(target_task);
     r0lab_record(R0LAB_EVENT_HWBP_CLEAR, 0);
     return;
 
@@ -3673,7 +3733,7 @@ discard:
         memset(slot, 0, sizeof(*slot));
     r0lab_unlock(flags);
     if (target_task)
-        g_put_task(target_task);
+        r0lab_put_task(target_task);
     r0lab_record(R0LAB_EVENT_REJECT, result);
     return;
 }
@@ -3741,7 +3801,7 @@ static long r0lab_hwbp_arm(uint64_t token, uint64_t entry_pc,
     flags = r0lab_lock();
     if (r0lab_raw_slot_count_locked() || r0lab_s4_slot_count_locked()) {
         r0lab_unlock(flags);
-        g_put_task(target_task);
+        r0lab_put_task(target_task);
         result = R0LAB_EBUSY;
         goto record;
     }
@@ -3749,7 +3809,7 @@ static long r0lab_hwbp_arm(uint64_t token, uint64_t entry_pc,
         if ((g_hwbp_slots[index].reserving || g_hwbp_slots[index].armed ||
              g_hwbp_slots[index].clearing) && g_hwbp_slots[index].tid == tid) {
             r0lab_unlock(flags);
-            g_put_task(target_task);
+            r0lab_put_task(target_task);
             result = R0LAB_EBUSY;
             goto record;
         }
@@ -3759,7 +3819,7 @@ static long r0lab_hwbp_arm(uint64_t token, uint64_t entry_pc,
     }
     if (!slot) {
         r0lab_unlock(flags);
-        g_put_task(target_task);
+        r0lab_put_task(target_task);
         result = R0LAB_EBUSY;
         goto record;
     }
@@ -3777,7 +3837,7 @@ static long r0lab_hwbp_arm(uint64_t token, uint64_t entry_pc,
         if (slot->target_task == target_task)
             memset(slot, 0, sizeof(*slot));
         r0lab_unlock(flags);
-        g_put_task(target_task);
+        r0lab_put_task(target_task);
         goto record;
     }
     snprintf(reply, sizeof(reply),
@@ -3922,7 +3982,7 @@ static bool r0lab_target_mm_live(pid_t owner_tgid, struct mm_struct *expected_mm
     if (!task)
         return false;
     task_mm = g_get_task_mm(task);
-    g_put_task(task);
+    r0lab_put_task(task);
     if (!task_mm)
         return false;
     live = task_mm == expected_mm;
@@ -3939,7 +3999,7 @@ static bool r0lab_target_task_live(pid_t owner_tgid)
     task = g_find_get_task(owner_tgid);
     if (!task)
         return false;
-    g_put_task(task);
+    r0lab_put_task(task);
     return true;
 }
 
@@ -12578,16 +12638,24 @@ static int r0lab_init_raw_bridge(void)
 
     kernel_memstart = (int64_t *)kallsyms_lookup_name("memstart_addr");
     kernel_hwcaps = (unsigned long *)kallsyms_lookup_name("cpu_hwcaps");
+    /*
+     * memstart_addr / cpu_hwcaps / mte_sync_tags are 5.x+ arm64 internals.
+     * The 4.19 redfin kernel has none of them (no MTE, different caps
+     * layout). They are snapshotted here but never read back by the module,
+     * so their absence is non-fatal: fall back to zero/NULL and continue.
+     */
     if (!g_vmalloc || !g_vfree || !g_vmalloc_to_page || !g_get_free_pages ||
         !g_free_pages || !g_mmdrop || !g_raw_down_read ||
         !g_raw_up_read || !g_raw_spin_lock || !g_raw_spin_unlock ||
         !g_raw_find_vma || !g_sync_icache_dcache ||
-        !g_sync_icache_aliases || !g_mte_sync_tags ||
-        !kernel_memstart || !kernel_hwcaps)
+        !g_sync_icache_aliases)
         return R0LAB_ENOSYS;
 
-    memstart_addr = *kernel_memstart;
-    memcpy(cpu_hwcaps, kernel_hwcaps, sizeof(cpu_hwcaps));
+    memstart_addr = kernel_memstart ? *kernel_memstart : 0;
+    if (kernel_hwcaps)
+        memcpy(cpu_hwcaps, kernel_hwcaps, sizeof(cpu_hwcaps));
+    else
+        memset(cpu_hwcaps, 0, sizeof(cpu_hwcaps));
     memset(arm64_const_caps_ready, 0, sizeof(arm64_const_caps_ready));
     memset(cpu_hwcap_keys, 0, sizeof(cpu_hwcap_keys));
 
@@ -13759,7 +13827,8 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
     g_unregister_hwbp = (r0lab_unregister_hwbp_fn_t)kallsyms_lookup_name("unregister_hw_breakpoint");
     g_synchronize_rcu = (r0lab_synchronize_rcu_fn_t)kallsyms_lookup_name("synchronize_rcu");
     g_find_get_task = (r0lab_find_get_task_fn_t)kallsyms_lookup_name("find_get_task_by_vpid");
-    g_put_task = (r0lab_put_task_fn_t)kallsyms_lookup_name("put_task_struct");
+    g_put_task_release = (r0lab_put_task_fn_t)
+        kallsyms_lookup_name("__put_task_struct");
     g_kthread_create = (r0lab_kthread_create_fn_t)kallsyms_lookup_name("kthread_create_on_node");
     g_wake_up_process = (r0lab_wake_up_process_fn_t)kallsyms_lookup_name("wake_up_process");
     g_kthread_stop = (r0lab_kthread_stop_fn_t)kallsyms_lookup_name("kthread_stop");
@@ -13802,7 +13871,7 @@ static long r0lab_init(const char *args, const char *event, void *reserved)
     if (!g_clock || !g_current_cpu || !g_task_pid || !g_lock_irqsave || !g_unlock_irqrestore ||
         !g_register_hwbp || (!g_disable_hwbp_inatomic && !g_disable_hwbp_local) ||
         !g_unregister_hwbp ||
-        !g_synchronize_rcu || !g_find_get_task || !g_put_task ||
+        !g_synchronize_rcu || !g_find_get_task || !g_put_task_release ||
         !g_kthread_create || !g_wake_up_process || !g_kthread_stop ||
         !g_kthread_should_stop || !g_msleep ||
         !g_get_task_mm || !g_mmput || !g_mmdrop || !g_get_free_pages ||
