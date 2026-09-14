@@ -10,9 +10,11 @@ ROOT_DIR := ..
 #   panther -> Pixel 7 (Android 14 GKI, kernel 5.10.x) [original target]
 TARGET ?= oriole
 
-# Kernel source trees (host-local). Override KERNEL_SRC/KERNEL_OUT per target.
-# On the build host these live under ~/kernel-src/.
-KERNEL_SRC_ROOT ?= $(HOME)/kernel-src
+# Kernel source trees (vendored in-repo under references/kernel-src, gitignored).
+# Only the header trees are needed (include/ + arch/arm64/include, with their
+# generated/ subdirs) for the raw compat ABI; the full kernel source is not
+# required. Override KERNEL_SRC_ROOT to point at a full checkout if desired.
+KERNEL_SRC_ROOT ?= $(ROOT_DIR)/references/kernel-src
 
 ifeq ($(TARGET),oriole)
   KERNEL_SRC := $(KERNEL_SRC_ROOT)/kernel-common-6.1
